@@ -1,0 +1,18 @@
+# NBA league-year salary cap parameters: 2025-26
+# Values are whole US dollars, verified against the NBA's official June 2025 release.
+league_year: "2025-26"
+effective_date: "2025-07-01"
+source_name: "NBA Communications — 2025-26 salary cap announcement (June 2025)"
+source_url: "https://pr.nba.com/nba-salary-cap-2025-26/"
+verified_at: "2026-07-20"
+notes: >
+  Cap figures announced by the NBA in late June 2025 and effective July 1, 2025.
+  Cross-referenced against Spotrac and Hoops Rumors CBA trackers.
+parameters:
+  salary_cap: 154647000
+  luxury_tax: 187895000
+  first_apron: 195945000
+  second_apron: 207824000
+  minimum_team_salary: 139182000   # 90% of the salary cap
+extras:
+  standard_traded_player_allowance: 250000

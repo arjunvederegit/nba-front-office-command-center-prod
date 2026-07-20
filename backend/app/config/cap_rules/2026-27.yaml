@@ -1,0 +1,23 @@
+# NBA league-year salary cap parameters: 2026-27
+# Values are whole US dollars, verified against the NBA's official June 2026 release
+# (as reported by Spotrac and Hoops Rumors on the day of the announcement).
+league_year: "2026-27"
+effective_date: "2026-07-01"
+source_name: "NBA Communications — 2026-27 salary cap announcement (June 2026)"
+source_url: "https://www.spotrac.com/news/_/id/3413/nba-officially-sets-2026-27-salary-cap-at-164961-million"
+verified_at: "2026-07-20"
+notes: >
+  Announced by the NBA in late June 2026, effective 12:01 a.m. ET July 1, 2026.
+  Secondary confirmation: https://www.hoopsrumors.com/2026/06/salary-cap-tax-line-set-for-2026-27-nba-season.html
+parameters:
+  salary_cap: 164961000
+  luxury_tax: 200428000
+  first_apron: 209015000
+  second_apron: 221686000
+  minimum_team_salary: 148465000   # 90% of the salary cap
+extras:
+  standard_traded_player_allowance: 250000
+  rookie_minimum: 1350000
+  two_year_minimum: 2440000
+  veteran_minimum: 3870000
+  two_way_salary: 678882
