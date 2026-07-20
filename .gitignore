@@ -1,0 +1,50 @@
+# Environments / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-probe/
+venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Databases & local data snapshots (provider-backed data is not redistributed)
+*.db
+*.sqlite
+*.sqlite3
+backend/tradelab.db
+data/snapshots/
+data/contracts/*.csv
+data/contracts/*.json
+
+# Model artifacts (regenerate with `make train`)
+models/artifacts/
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
