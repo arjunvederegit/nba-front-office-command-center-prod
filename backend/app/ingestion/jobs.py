@@ -394,11 +394,12 @@ def sync_all(db: Session) -> dict[str, Any]:
     """Full refresh in dependency order. Individual failures are recorded and do not
     abort later jobs — the last valid snapshot always survives."""
     results: dict[str, Any] = {}
+    history = get_settings().history_season_list
     steps = [
         ("sync_teams", lambda: sync_teams(db)),
         ("sync_players", lambda: sync_players(db)),
         ("sync_rosters", lambda: sync_rosters(db)),
-        ("sync_standings", lambda: sync_standings(db)),
+        ("sync_standings", lambda: sum(sync_standings(db, season) for season in history)),
         ("sync_team_stats", lambda: sync_team_stats(db)),
         ("sync_player_stats", lambda: sync_player_stats(db)),
         ("sync_games", lambda: sync_games(db)),

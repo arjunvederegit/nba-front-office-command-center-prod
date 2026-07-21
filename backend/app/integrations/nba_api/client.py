@@ -47,10 +47,10 @@ class NBAApiClient:
                 df = pd.DataFrame(cached["records"])
                 return df, {**cached["meta"], "from_cache": True}
 
-        common: dict[str, Any] = {
-            "headers": build_headers(),
-            "timeout": int(self.settings.nba_api_timeout_seconds),
-        }
+        common: dict[str, Any] = {"timeout": int(self.settings.nba_api_timeout_seconds)}
+        headers = build_headers()
+        if headers:
+            common["headers"] = headers
         proxy = build_proxy()
         if proxy:
             common["proxy"] = proxy
