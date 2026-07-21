@@ -17,6 +17,7 @@ class TeamOut(BaseModel):
     nba_team_id: int
     full_name: str
     abbreviation: str
+    nickname: str | None = None
     city: str
     conference: str | None = None
     division: str | None = None

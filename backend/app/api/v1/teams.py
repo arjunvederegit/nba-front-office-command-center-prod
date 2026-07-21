@@ -28,6 +28,7 @@ def _team_out(team: Team) -> TeamOut:
         nba_team_id=team.nba_team_id,
         full_name=team.full_name,
         abbreviation=team.abbreviation,
+        nickname=team.nickname,
         city=team.city,
         conference=team.conference,
         division=team.division,
