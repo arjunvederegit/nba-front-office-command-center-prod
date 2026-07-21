@@ -41,7 +41,7 @@ class CircuitBreaker:
                 self._failures[endpoint] = FAILURES_TO_OPEN - 1
                 return
         raise ProviderUnavailableError(
-            endpoint, f"circuit open after repeated failures; retrying after cooldown"
+            endpoint, "circuit open after repeated failures; retrying after cooldown"
         )
 
     def record_success(self, endpoint: str) -> None:

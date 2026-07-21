@@ -120,7 +120,13 @@ def sync_rosters(db: Session, season: str | None = None, provider=None) -> int:
                 db.add(player)
                 db.flush()
                 players[row["nba_player_id"]] = player
-            for field in ("position", "birth_date", "height_inches", "weight_lbs", "years_experience"):
+            for field in (
+                "position",
+                "birth_date",
+                "height_inches",
+                "weight_lbs",
+                "years_experience",
+            ):
                 if row.get(field) is not None:
                     setattr(player, field, row[field])
             db.add(

@@ -11,11 +11,9 @@ from itertools import combinations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.analytics.sensitivity import composite_utility
 from app.cba.builder import build_trade_context
 from app.cba.engine import TradeLegalityEngine
-from app.config import get_settings
-from app.db.models import RosterEntry, Team
+from app.db.models import Team
 from app.services.evaluation import DEFAULT_WEIGHTS, EvaluationService
 
 MAX_OUTGOING_PACKAGES = 12
@@ -35,7 +33,6 @@ def generate_candidates(
     preferred_outgoing_ids: list[str] | None = None,
     max_candidates: int = TOP_K,
 ) -> dict:
-    settings = get_settings()
     service = EvaluationService(db)
     untouchables = set(untouchable_player_ids or [])
     preferred = set(preferred_outgoing_ids or [])
@@ -52,7 +49,7 @@ def generate_candidates(
     outgoing_packages: list[list] = [[c] for c in tradeable[:MAX_OUTGOING_PACKAGES]]
     for pair in combinations(tradeable[:8], 2):
         outgoing_packages.append(list(pair))
-    outgoing_packages = outgoing_packages[:MAX_OUTGOING_PACKAGES * 2]
+    outgoing_packages = outgoing_packages[: MAX_OUTGOING_PACKAGES * 2]
 
     top_needs = sorted(focal_needs.items(), key=lambda kv: kv[1], reverse=True)[:3]
     need_skills = {kv[0] for kv in top_needs}
@@ -69,6 +66,7 @@ def generate_candidates(
         if evaluated >= EVALUATION_BUDGET:
             break
         other_roster = service._roster_cards(other.id)
+
         # incoming candidates: address the focal team's top needs, best first
         def need_score(card) -> float:
             return sum(card.skills.get(s, 0.0) for s in target_skills)
@@ -95,10 +93,18 @@ def generate_candidates(
                     continue
                 evaluated += 1
                 moves = [
-                    {"player_id": c.player_id, "from_team_id": focal_team_id, "to_team_id": other.id}
+                    {
+                        "player_id": c.player_id,
+                        "from_team_id": focal_team_id,
+                        "to_team_id": other.id,
+                    }
                     for c in outgoing
                 ] + [
-                    {"player_id": c.player_id, "from_team_id": other.id, "to_team_id": focal_team_id}
+                    {
+                        "player_id": c.player_id,
+                        "from_team_id": other.id,
+                        "to_team_id": focal_team_id,
+                    }
                     for c in incoming
                 ]
                 team_ids = [focal_team_id, other.id]
@@ -121,10 +127,19 @@ def generate_candidates(
                     continue
                 candidates.append(
                     {
-                        "counterparty": {"team_id": other.id, "abbreviation": other.abbreviation,
-                                         "name": other.full_name},
-                        "outgoing": [{"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in outgoing],
-                        "incoming": [{"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in incoming],
+                        "counterparty": {
+                            "team_id": other.id,
+                            "abbreviation": other.abbreviation,
+                            "name": other.full_name,
+                        },
+                        "outgoing": [
+                            {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)}
+                            for c in outgoing
+                        ],
+                        "incoming": [
+                            {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)}
+                            for c in incoming
+                        ],
                         "legality_status": legality["overall_status"],
                         "focal_utility": focal_eval["composite_utility"],
                         "counterparty_utility": other_eval["composite_utility"],

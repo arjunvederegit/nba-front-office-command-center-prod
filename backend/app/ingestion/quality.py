@@ -20,7 +20,9 @@ from app.db.models import (
 )
 
 
-def _record(db: Session, check: str, message: str, severity: str = "warning", entity: str | None = None) -> dict:
+def _record(
+    db: Session, check: str, message: str, severity: str = "warning", entity: str | None = None
+) -> dict:
     issue = DataQualityIssue(check_name=check, severity=severity, message=message, entity=entity)
     db.add(issue)
     return {"check": check, "severity": severity, "message": message}
@@ -41,9 +43,7 @@ def validate_data(db: Session) -> list[dict]:
 
     team_count = db.scalar(select(func.count(Team.id))) or 0
     if team_count != 30:
-        issues.append(
-            _record(db, "team_count", f"expected 30 teams, found {team_count}", "error")
-        )
+        issues.append(_record(db, "team_count", f"expected 30 teams, found {team_count}", "error"))
 
     dup_players = db.execute(
         select(Player.nba_player_id, func.count(Player.id))
@@ -52,7 +52,12 @@ def validate_data(db: Session) -> list[dict]:
     ).all()
     for nba_id, count in dup_players:
         issues.append(
-            _record(db, "duplicate_external_id", f"nba_player_id {nba_id} appears {count} times", "error")
+            _record(
+                db,
+                "duplicate_external_id",
+                f"nba_player_id {nba_id} appears {count} times",
+                "error",
+            )
         )
 
     multi_roster = db.execute(
@@ -91,37 +96,57 @@ def validate_data(db: Session) -> list[dict]:
                 )
             )
 
-    negative_minutes = db.scalar(
-        select(func.count(PlayerSeasonStats.id)).where(PlayerSeasonStats.minutes < 0)
-    ) or 0
+    negative_minutes = (
+        db.scalar(select(func.count(PlayerSeasonStats.id)).where(PlayerSeasonStats.minutes < 0))
+        or 0
+    )
     if negative_minutes:
         issues.append(
-            _record(db, "negative_minutes", f"{negative_minutes} season-stat rows with negative minutes", "error")
+            _record(
+                db,
+                "negative_minutes",
+                f"{negative_minutes} season-stat rows with negative minutes",
+                "error",
+            )
         )
 
-    bad_salaries = db.scalar(
-        select(func.count(ContractYear.id)).where(
-            (ContractYear.salary <= 0) | (ContractYear.salary > 100_000_000)
+    bad_salaries = (
+        db.scalar(
+            select(func.count(ContractYear.id)).where(
+                (ContractYear.salary <= 0) | (ContractYear.salary > 100_000_000)
+            )
         )
-    ) or 0
+        or 0
+    )
     if bad_salaries:
         issues.append(
-            _record(db, "impossible_salary", f"{bad_salaries} contract years with impossible salaries", "error")
+            _record(
+                db,
+                "impossible_salary",
+                f"{bad_salaries} contract years with impossible salaries",
+                "error",
+            )
         )
 
-    future_games = db.scalar(
-        select(func.count(Game.id)).where(
-            Game.game_date > (now + timedelta(days=365)).date(), Game.status == "final"
+    future_games = (
+        db.scalar(
+            select(func.count(Game.id)).where(
+                Game.game_date > (now + timedelta(days=365)).date(), Game.status == "final"
+            )
         )
-    ) or 0
+        or 0
+    )
     if future_games:
         issues.append(
-            _record(db, "future_dates", f"{future_games} final games dated more than a year ahead", "error")
+            _record(
+                db,
+                "future_dates",
+                f"{future_games} final games dated more than a year ahead",
+                "error",
+            )
         )
 
-    cap = db.scalar(
-        select(LeagueCapParameters).where(LeagueCapParameters.league_year == season)
-    )
+    cap = db.scalar(select(LeagueCapParameters).where(LeagueCapParameters.league_year == season))
     if cap is None:
         issues.append(
             _record(
@@ -133,22 +158,39 @@ def validate_data(db: Session) -> list[dict]:
         )
 
     stale_cutoff = now - timedelta(seconds=settings.nba_api_stale_after_seconds)
-    stale_standings = db.scalar(
-        select(func.count(Standing.id)).where(
-            Standing.season == season, Standing.source_retrieved_at < stale_cutoff
+    stale_standings = (
+        db.scalar(
+            select(func.count(Standing.id)).where(
+                Standing.season == season, Standing.source_retrieved_at < stale_cutoff
+            )
         )
-    ) or 0
+        or 0
+    )
     if stale_standings:
         issues.append(
-            _record(db, "stale_records", f"{stale_standings} standings rows older than the staleness TTL")
+            _record(
+                db,
+                "stale_records",
+                f"{stale_standings} standings rows older than the staleness TTL",
+            )
         )
 
-    malformed_seasons = db.scalar(
-        select(func.count(PlayerSeasonStats.id)).where(~PlayerSeasonStats.season.like("____-__"))
-    ) or 0
+    malformed_seasons = (
+        db.scalar(
+            select(func.count(PlayerSeasonStats.id)).where(
+                ~PlayerSeasonStats.season.like("____-__")
+            )
+        )
+        or 0
+    )
     if malformed_seasons:
         issues.append(
-            _record(db, "malformed_seasons", f"{malformed_seasons} stat rows with malformed season strings", "error")
+            _record(
+                db,
+                "malformed_seasons",
+                f"{malformed_seasons} stat rows with malformed season strings",
+                "error",
+            )
         )
 
     db.commit()

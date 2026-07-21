@@ -14,11 +14,13 @@ def normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     total = sum(max(w, 0.0) for w in weights.values())
     if total <= 0:
         n = len(weights)
-        return {k: 1.0 / n for k in weights}
+        return dict.fromkeys(weights, 1.0 / n)
     return {k: max(w, 0.0) / total for k, w in weights.items()}
 
 
-def composite_utility(components: dict[str, float], weights: dict[str, float]) -> float:
+def composite_utility(
+    components: dict[str, float | None], weights: dict[str, float]
+) -> float:
     """Components on 0..100; weights normalized. Missing components are excluded and
     remaining weights renormalized — absent data shrinks scope, it never fakes a
     score."""
@@ -30,7 +32,7 @@ def composite_utility(components: dict[str, float], weights: dict[str, float]) -
 
 
 def rank_stability(
-    alternatives: dict[str, dict[str, float]],
+    alternatives: dict[str, dict[str, float | None]],
     weights: dict[str, float],
     n_samples: int = N_SAMPLES,
     seed: int = RANDOM_SEED,
@@ -63,19 +65,19 @@ def rank_stability(
     return {
         "n_samples": n_samples,
         "first_place_share": {i: round(c / n_samples, 3) for i, c in first_counts.items()},
-        "rank_volatility": {
-            i: round(float(np.std(ranks)), 3) for i, ranks in rank_history.items()
-        },
+        "rank_volatility": {i: round(float(np.std(ranks)), 3) for i, ranks in rank_history.items()},
         "median_rank": {i: float(np.median(ranks)) for i, ranks in rank_history.items()},
     }
 
 
-def tornado(components: dict[str, float], weights: dict[str, float], swing: float = 0.5) -> list[dict]:
+def tornado(
+    components: dict[str, float | None], weights: dict[str, float], swing: float = 0.5
+) -> list[dict]:
     """One-at-a-time weight perturbation (+/- swing fraction) → utility deltas,
     sorted by magnitude for a tornado chart."""
     weights = normalize_weights(weights)
     base = composite_utility(components, weights)
-    bars = []
+    bars: list[dict] = []
     for key in weights:
         if components.get(key) is None:
             continue
@@ -91,5 +93,5 @@ def tornado(components: dict[str, float], weights: dict[str, float], swing: floa
                 "base": round(base, 2),
             }
         )
-    bars.sort(key=lambda b: abs(b["utility_high"] - b["utility_low"]), reverse=True)
+    bars.sort(key=lambda b: abs(float(b["utility_high"]) - float(b["utility_low"])), reverse=True)
     return bars

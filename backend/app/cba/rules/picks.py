@@ -9,7 +9,9 @@ from ..context import RuleResult, TradeContext
 
 class StepienRule:
     code = "STEPIEN_FUTURE_FIRSTS"
-    description = "Teams may not leave themselves without first-round picks in consecutive future drafts"
+    description = (
+        "Teams may not leave themselves without first-round picks in consecutive future drafts"
+    )
 
     def evaluate(self, context: TradeContext) -> list[RuleResult]:
         results = []

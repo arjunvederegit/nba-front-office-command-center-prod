@@ -6,7 +6,6 @@ reproducibility."""
 
 import subprocess
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import joblib
@@ -40,7 +39,10 @@ def _code_commit() -> str | None:
         return (
             subprocess.run(
                 ["git", "rev-parse", "--short", "HEAD"],
-                capture_output=True, text=True, cwd=BACKEND_DIR, timeout=5,
+                capture_output=True,
+                text=True,
+                cwd=BACKEND_DIR,
+                timeout=5,
             ).stdout.strip()
             or None
         )
@@ -49,8 +51,15 @@ def _code_commit() -> str | None:
 
 
 def _register_model(
-    db: Session, name: str, version: str, algorithm: str, training_period: str,
-    features: list[str], target: str | None, metrics: dict, artifact_path: str | None,
+    db: Session,
+    name: str,
+    version: str,
+    algorithm: str,
+    training_period: str,
+    features: list[str],
+    target: str | None,
+    metrics: dict,
+    artifact_path: str | None,
 ) -> ModelVersion:
     for old in db.scalars(
         select(ModelVersion).where(ModelVersion.model_name == name, ModelVersion.is_active)
@@ -101,8 +110,11 @@ def train_all(db: Session) -> dict[str, Any]:
         training_period=training_period,
         features=result.feature_names,
         target=result.validation.get("target") if isinstance(result.validation, dict) else None,
-        metrics={**result.validation, "chosen_model": result.chosen_model,
-                 "coefficients": {k: round(float(v), 4) for k, v in result.coefficients.items()}},
+        metrics={
+            **result.validation,
+            "chosen_model": result.chosen_model,
+            "coefficients": {k: round(float(v), 4) for k, v in result.coefficients.items()},
+        },
         artifact_path=artifact_path,
     )
 
@@ -112,8 +124,7 @@ def train_all(db: Session) -> dict[str, Any]:
 
     availability = availability_from_history(season_df, seasons).set_index("player_id")
     rostered_ids = {
-        r.player_id
-        for r in db.scalars(select(RosterEntry).where(RosterEntry.is_current)).all()
+        r.player_id for r in db.scalars(select(RosterEntry).where(RosterEntry.is_current)).all()
     }
 
     written = 0
@@ -169,11 +180,14 @@ def train_all(db: Session) -> dict[str, Any]:
             training_period=training_period,
             features=archetype_meta["features"],
             target=None,
-            metrics={"silhouette": archetype_meta["silhouette"], "labels": archetype_meta["labels"]},
+            metrics={
+                "silhouette": archetype_meta["silhouette"],
+                "labels": archetype_meta["labels"],
+            },
             artifact_path=None,
         )
         for _, row in assignments.iterrows():
-            existing = db.scalar(
+            existing_archetype = db.scalar(
                 select(PlayerArchetype).where(
                     PlayerArchetype.player_id == row["player_id"],
                     PlayerArchetype.season == settings.current_season,
@@ -186,11 +200,11 @@ def train_all(db: Session) -> dict[str, Any]:
                 "label": str(row["label"]),
                 "distances": {"own_cluster": round(float(row["distance"]), 3)},
             }
-            if existing is None:
+            if existing_archetype is None:
                 db.add(PlayerArchetype(**values))
             else:
                 for k, v in values.items():
-                    setattr(existing, k, v)
+                    setattr(existing_archetype, k, v)
             archetype_written += 1
 
     # Wins-per-net-rating calibration from ingested team seasons
@@ -222,10 +236,15 @@ def train_all(db: Session) -> dict[str, Any]:
     db.commit()
     summary = {
         "version": version,
-        "impact": {"chosen": result.chosen_model, "players_scored": written,
-                   "validation": result.validation},
-        "archetypes": {"players_labeled": archetype_written,
-                       "silhouette": archetype_meta.get("silhouette")},
+        "impact": {
+            "chosen": result.chosen_model,
+            "players_scored": written,
+            "validation": result.validation,
+        },
+        "archetypes": {
+            "players_labeled": archetype_written,
+            "silhouette": archetype_meta.get("silhouette"),
+        },
         "wins_mapping": mapping,
     }
     logger.info("training complete: %s", summary["version"])

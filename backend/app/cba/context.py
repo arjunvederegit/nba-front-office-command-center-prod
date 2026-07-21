@@ -13,7 +13,9 @@ from datetime import date
 from typing import Literal, Protocol
 
 RuleStatus = Literal["pass", "fail", "warning", "unavailable"]
-LegalityStatus = Literal["verified_legal", "verified_illegal", "conditionally_valid", "not_evaluated"]
+LegalityStatus = Literal[
+    "verified_legal", "verified_illegal", "conditionally_valid", "not_evaluated"
+]
 
 
 @dataclass
@@ -98,17 +100,25 @@ class TeamContext:
     def outgoing_salary(self) -> int | None:
         if any(p.salary is None for p in self.outgoing):
             return None
-        return sum(p.salary or 0 for p in self.outgoing if (p.contract_type or "standard") != "two-way")
+        return sum(
+            p.salary or 0 for p in self.outgoing if (p.contract_type or "standard") != "two-way"
+        )
 
     @property
     def incoming_salary(self) -> int | None:
         if any(p.salary is None for p in self.incoming):
             return None
-        return sum(p.salary or 0 for p in self.incoming if (p.contract_type or "standard") != "two-way")
+        return sum(
+            p.salary or 0 for p in self.incoming if (p.contract_type or "standard") != "two-way"
+        )
 
     @property
     def payroll_after(self) -> int | None:
-        if self.payroll_before is None or self.outgoing_salary is None or self.incoming_salary is None:
+        if (
+            self.payroll_before is None
+            or self.outgoing_salary is None
+            or self.incoming_salary is None
+        ):
             return None
         return self.payroll_before - self.outgoing_salary + self.incoming_salary
 

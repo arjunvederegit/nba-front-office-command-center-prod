@@ -118,5 +118,7 @@ def calibrate_wins_per_net_rating(team_seasons: pd.DataFrame) -> dict:
     }
 
 
-def net_rating_delta_to_wins(delta_net: float, mapping: dict, games_remaining: float = GAMES) -> float:
+def net_rating_delta_to_wins(
+    delta_net: float, mapping: dict, games_remaining: float = GAMES
+) -> float:
     return float(mapping["slope"]) * delta_net * (games_remaining / GAMES)

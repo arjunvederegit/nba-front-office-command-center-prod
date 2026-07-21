@@ -17,8 +17,21 @@ RANDOM_SEED = 20260720
 
 # Advanced-table columns kept as features.
 ADVANCED_COLS = [
-    "OFF_RATING", "DEF_RATING", "NET_RATING", "AST_PCT", "AST_TO", "OREB_PCT",
-    "DREB_PCT", "REB_PCT", "TM_TOV_PCT", "EFG_PCT", "TS_PCT", "USG_PCT", "PACE", "PIE", "POSS",
+    "OFF_RATING",
+    "DEF_RATING",
+    "NET_RATING",
+    "AST_PCT",
+    "AST_TO",
+    "OREB_PCT",
+    "DREB_PCT",
+    "REB_PCT",
+    "TM_TOV_PCT",
+    "EFG_PCT",
+    "TS_PCT",
+    "USG_PCT",
+    "PACE",
+    "PIE",
+    "POSS",
 ]
 BASE_COLS = ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FGA", "FG3A", "FTA", "PLUS_MINUS", "AGE"]
 ESTIMATED_COLS = ["E_OFF_RATING", "E_DEF_RATING", "E_NET_RATING", "E_USG_PCT"]
@@ -78,8 +91,14 @@ def build_player_season_features(db: Session) -> pd.DataFrame:
     df["total_minutes"] = df["GP"].astype(float) * df["MIN"].astype(float)
 
     # Derived rates (per-minute to sidestep pace-of-play distortion in per-game stats)
-    for col, name in (("PTS", "pts_per_min"), ("STL", "stl_per_min"), ("BLK", "blk_per_min"),
-                      ("REB", "reb_per_min"), ("AST", "ast_per_min"), ("TOV", "tov_per_min")):
+    for col, name in (
+        ("PTS", "pts_per_min"),
+        ("STL", "stl_per_min"),
+        ("BLK", "blk_per_min"),
+        ("REB", "reb_per_min"),
+        ("AST", "ast_per_min"),
+        ("TOV", "tov_per_min"),
+    ):
         df[name] = pd.to_numeric(df[col], errors="coerce") / df["MIN"].astype(float)
     fga = pd.to_numeric(df["FGA"], errors="coerce")
     df["fg3a_rate"] = pd.to_numeric(df["FG3A"], errors="coerce") / fga.replace(0, np.nan)
@@ -92,8 +111,21 @@ def build_player_season_features(db: Session) -> pd.DataFrame:
 
 
 MODEL_FEATURES = [
-    "pts_per75", "TS_PCT", "USG_PCT", "AST_PCT", "TM_TOV_PCT", "OREB_PCT", "DREB_PCT",
-    "stl_per_min", "blk_per_min", "fg3a_rate", "fta_rate", "MIN", "GP", "AGE", "PIE",
+    "pts_per75",
+    "TS_PCT",
+    "USG_PCT",
+    "AST_PCT",
+    "TM_TOV_PCT",
+    "OREB_PCT",
+    "DREB_PCT",
+    "stl_per_min",
+    "blk_per_min",
+    "fg3a_rate",
+    "fta_rate",
+    "MIN",
+    "GP",
+    "AGE",
+    "PIE",
     "NET_RATING",
 ]
 
@@ -167,3 +199,21 @@ def recency_weighted_features(
                 record[col] = None
         records.append(record)
     return pd.DataFrame(records)
+
+
+def build_features(db: Session) -> dict:
+    """CLI entry (`make build-features`): materialize the feature frame and report
+    coverage so operators can sanity-check before training."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    season_df = build_player_season_features(db)
+    if season_df.empty:
+        return {"error": "no ingested player stats; run `make sync-data` first"}
+    weighted = recency_weighted_features(season_df, settings.history_season_list)
+    return {
+        "player_seasons": int(len(season_df)),
+        "seasons": sorted(season_df["season"].unique().tolist()),
+        "players_with_window_features": int(len(weighted)),
+        "feature_columns": [c for c in MODEL_FEATURES if c in season_df.columns],
+    }

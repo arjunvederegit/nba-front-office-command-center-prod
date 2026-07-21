@@ -38,7 +38,11 @@ class RecentlySignedRule:
                     continue
                 three_months = player.signed_date + timedelta(days=90)
                 season_gate = date(player.signed_date.year, 12, 15)
-                eligible_on = max(three_months, season_gate) if player.signed_date.month >= 7 else three_months
+                eligible_on = (
+                    max(three_months, season_gate)
+                    if player.signed_date.month >= 7
+                    else three_months
+                )
                 restricted = self.today < eligible_on
                 results.append(
                     RuleResult(

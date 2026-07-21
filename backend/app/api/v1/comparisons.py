@@ -50,7 +50,7 @@ def create_comparison(payload: ComparisonIn, db: Session = Depends(get_db)) -> d
 
 @router.get("/{comparison_id}")
 def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
-    from app.api.v1.trades import _scenario_weights, _trade_detail
+    from app.api.v1.trades import _trade_detail
 
     comparison = db.get(ComparisonSet, comparison_id)
     if comparison is None:
@@ -91,9 +91,7 @@ def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
         )
 
     _pareto_flags(rows)
-    stability = rank_stability(
-        {r["trade_id"]: r["components"] for r in rows}, weights
-    )
+    stability = rank_stability({r["trade_id"]: r["components"] for r in rows}, weights)
     rows.sort(key=lambda r: r["composite_utility"] or 0, reverse=True)
     return {
         "id": comparison.id,

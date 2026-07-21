@@ -51,12 +51,12 @@ def simulate_delta_wins(
     slope_draws = rng.normal(slope, slope_sigma, n_draws)
     delta_wins = delta_net * slope_draws
 
-    drivers = []
+    drivers: list[dict] = []
     for label, players in (("incoming", incoming), ("outgoing", outgoing)):
         for p in players:
             spread = p.minutes_share * max(p.tei_sigma, 0.3) * abs(slope)
             drivers.append({"side": label, "spread_wins": round(float(spread), 2)})
-    drivers.sort(key=lambda d: d["spread_wins"], reverse=True)
+    drivers.sort(key=lambda d: float(d["spread_wins"]), reverse=True)
 
     return {
         "n_draws": n_draws,

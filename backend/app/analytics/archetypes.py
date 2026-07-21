@@ -13,8 +13,16 @@ from sklearn.preprocessing import StandardScaler
 from .features import RANDOM_SEED
 
 ARCHETYPE_FEATURES = [
-    "USG_PCT", "AST_PCT", "fg3a_rate", "TS_PCT", "OREB_PCT", "DREB_PCT",
-    "stl_per_min", "blk_per_min", "pts_per75", "height_inches",
+    "USG_PCT",
+    "AST_PCT",
+    "fg3a_rate",
+    "TS_PCT",
+    "OREB_PCT",
+    "DREB_PCT",
+    "stl_per_min",
+    "blk_per_min",
+    "pts_per75",
+    "height_inches",
 ]
 
 N_CLUSTERS = 8
@@ -105,7 +113,13 @@ def fit_archetypes(weighted: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 # Skill dimensions used by roster-fit; derived from the same feature space so that
 # team needs and player skills are directly comparable.
 SKILL_KEYS = [
-    "shooting", "creation", "perimeter_defense", "rim_protection", "rebounding", "size", "scoring",
+    "shooting",
+    "creation",
+    "perimeter_defense",
+    "rim_protection",
+    "rebounding",
+    "size",
+    "scoring",
 ]
 
 

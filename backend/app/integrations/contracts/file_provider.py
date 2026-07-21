@@ -12,7 +12,14 @@ from . import ContractRecord
 
 logger = get_logger(__name__)
 
-REQUIRED_COLUMNS = {"player_name", "team_abbreviation", "season", "salary", "source_name", "source_date"}
+REQUIRED_COLUMNS = {
+    "player_name",
+    "team_abbreviation",
+    "season",
+    "salary",
+    "source_name",
+    "source_date",
+}
 
 
 def _parse_date(value: str | None) -> date | None:

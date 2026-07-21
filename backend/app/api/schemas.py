@@ -64,7 +64,9 @@ class ScenarioWeightsIn(BaseModel):
 class ScenarioIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     focal_team_id: str
-    strategy: Literal["contend", "improve", "retool", "rebuild", "youth", "cap_relief", "custom"] = "custom"
+    strategy: Literal[
+        "contend", "improve", "retool", "rebuild", "youth", "cap_relief", "custom"
+    ] = "custom"
     horizon_years: int = Field(ge=1, le=5, default=1)
     risk_tolerance: Literal["conservative", "balanced", "aggressive"] = "balanced"
     max_added_payroll: int | None = None
@@ -102,13 +104,10 @@ class PickMove(BaseModel):
     is_hypothetical: bool = True
 
 
-class TradeIn(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    scenario_id: str | None = None
+class ValidateRequest(BaseModel):
     team_ids: list[str] = Field(min_length=2, max_length=3)
     player_moves: list[PlayerMove] = []
     pick_moves: list[PickMove] = []
-    notes: str | None = None
 
     @field_validator("player_moves")
     @classmethod
@@ -122,10 +121,10 @@ class TradeIn(BaseModel):
         return v
 
 
-class ValidateRequest(BaseModel):
-    team_ids: list[str] = Field(min_length=2, max_length=3)
-    player_moves: list[PlayerMove] = []
-    pick_moves: list[PickMove] = []
+class TradeIn(ValidateRequest):
+    name: str = Field(min_length=1, max_length=120)
+    scenario_id: str | None = None
+    notes: str | None = None
 
 
 class EvaluateRequest(ValidateRequest):

@@ -37,7 +37,9 @@ def load_cap_params(db: Session, league_year: str) -> CapParams:
     )
 
 
-def _player_salary(db: Session, player_id: str, league_year: str) -> tuple[int | None, Contract | None]:
+def _player_salary(
+    db: Session, player_id: str, league_year: str
+) -> tuple[int | None, Contract | None]:
     contract = db.scalar(select(Contract).where(Contract.player_id == player_id))
     if contract is None:
         return None, None
@@ -49,7 +51,9 @@ def _player_salary(db: Session, player_id: str, league_year: str) -> tuple[int |
     return (year.salary if year else None), contract
 
 
-def _team_payroll(db: Session, team_id: str, season: str, league_year: str) -> tuple[int | None, int, int]:
+def _team_payroll(
+    db: Session, team_id: str, season: str, league_year: str
+) -> tuple[int | None, int, int]:
     """(payroll or None, players_with_known_salary, roster_size). Payroll is only
     reported when every rostered player has a known salary — partial sums would
     understate payroll and silently skew apron status."""

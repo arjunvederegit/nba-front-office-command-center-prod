@@ -54,9 +54,7 @@ def create_scenario(payload: ScenarioIn, db: Session = Depends(get_db)) -> dict:
     weights = payload.weights.model_dump()
     total = sum(weights.values()) or 1.0
     for component, weight in weights.items():
-        db.add(
-            ScenarioWeight(scenario_id=scenario.id, component=component, weight=weight / total)
-        )
+        db.add(ScenarioWeight(scenario_id=scenario.id, component=component, weight=weight / total))
     db.commit()
     db.refresh(scenario)
     return _scenario_out(scenario)
@@ -66,7 +64,10 @@ def create_scenario(payload: ScenarioIn, db: Session = Depends(get_db)) -> dict:
 def list_scenarios(db: Session = Depends(get_db)) -> list[dict]:
     from sqlalchemy import select
 
-    return [_scenario_out(s) for s in db.scalars(select(Scenario).order_by(Scenario.created_at.desc())).all()]
+    return [
+        _scenario_out(s)
+        for s in db.scalars(select(Scenario).order_by(Scenario.created_at.desc())).all()
+    ]
 
 
 @router.get("/{scenario_id}")

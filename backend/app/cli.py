@@ -15,6 +15,7 @@ Commands
 
 import json
 import sys
+from collections.abc import Callable
 from datetime import date, datetime
 
 import yaml
@@ -72,7 +73,7 @@ def main() -> None:
 
     from app.ingestion import jobs
 
-    single_jobs = {
+    single_jobs: dict[str, Callable[..., int]] = {
         "sync-teams": jobs.sync_teams,
         "sync-players": jobs.sync_players,
         "sync-rosters": jobs.sync_rosters,

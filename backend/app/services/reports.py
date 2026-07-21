@@ -52,8 +52,14 @@ def build_report_markdown(
     perf = focal.get("detail", {}).get("performance", {})
     excluded = focal.get("excluded_components", [])
 
-    verdict = "Proceed with further diligence" if (utility or 0) >= 55 else (
-        "Neutral — depends on strategic priorities" if (utility or 0) >= 45 else "Do not proceed as constructed"
+    verdict = (
+        "Proceed with further diligence"
+        if (utility or 0) >= 55
+        else (
+            "Neutral — depends on strategic priorities"
+            if (utility or 0) >= 45
+            else "Do not proceed as constructed"
+        )
     )
     if status == "verified_illegal":
         verdict = "Do not proceed — the trade fails implemented CBA rules"
@@ -61,13 +67,17 @@ def build_report_markdown(
     lines: list[str] = []
     lines.append(f"# Executive Trade Recommendation: {trade_name}")
     lines.append("")
-    lines.append(f"*Prepared for {focal_team_name} · strategy: {strategy} · "
-                 f"generated {datetime.now(UTC).strftime('%B %d, %Y %H:%M UTC')}*")
+    lines.append(
+        f"*Prepared for {focal_team_name} · strategy: {strategy} · "
+        f"generated {datetime.now(UTC).strftime('%B %d, %Y %H:%M UTC')}*"
+    )
     lines.append("")
     lines.append("## 1. Recommendation")
     lines.append("")
-    lines.append(f"**{verdict}.** Composite utility for {focal_team_name}: "
-                 f"**{_fmt_score(utility)}** (confidence: {focal.get('confidence', 'unknown')}).")
+    lines.append(
+        f"**{verdict}.** Composite utility for {focal_team_name}: "
+        f"**{_fmt_score(utility)}** (confidence: {focal.get('confidence', 'unknown')})."
+    )
     lines.append("")
     lines.append(f"Legality: **{LEGALITY_LABELS.get(status, status)}**")
     lines.append("")
@@ -82,17 +92,25 @@ def build_report_markdown(
     lines.append("## 3. Basketball impact")
     lines.append("")
     if perf.get("delta_wins") is not None:
-        lines.append(f"- Projected regular-season impact: **{perf['delta_wins']:+.1f} wins** "
-                     f"(net-rating change {perf.get('delta_net_rating', 0):+.2f}, converted at "
-                     f"{perf.get('wins_mapping', {}).get('slope', 0):.2f} wins per point, calibrated on "
-                     f"{perf.get('wins_mapping', {}).get('n', '?')} team-seasons).")
+        lines.append(
+            f"- Projected regular-season impact: **{perf['delta_wins']:+.1f} wins** "
+            f"(net-rating change {perf.get('delta_net_rating', 0):+.2f}, converted at "
+            f"{perf.get('wins_mapping', {}).get('slope', 0):.2f} wins per point, calibrated on "
+            f"{perf.get('wins_mapping', {}).get('n', '?')} team-seasons)."
+        )
     if uncertainty:
-        lines.append(f"- Uncertainty (Monte Carlo, {uncertainty.get('n_draws', 0)} draws): median "
-                     f"{uncertainty.get('median', 0):+.1f} wins, 10th–90th percentile "
-                     f"[{uncertainty.get('p10', 0):+.1f}, {uncertainty.get('p90', 0):+.1f}], "
-                     f"P(positive) = {uncertainty.get('prob_positive', 0):.0%}.")
-    incoming = ", ".join(f"{p['name']} (TEI {p['tei']:+.1f})" for p in focal.get("incoming", [])) or "none"
-    outgoing = ", ".join(f"{p['name']} (TEI {p['tei']:+.1f})" for p in focal.get("outgoing", [])) or "none"
+        lines.append(
+            f"- Uncertainty (Monte Carlo, {uncertainty.get('n_draws', 0)} draws): median "
+            f"{uncertainty.get('median', 0):+.1f} wins, 10th–90th percentile "
+            f"[{uncertainty.get('p10', 0):+.1f}, {uncertainty.get('p90', 0):+.1f}], "
+            f"P(positive) = {uncertainty.get('prob_positive', 0):.0%}."
+        )
+    incoming = (
+        ", ".join(f"{p['name']} (TEI {p['tei']:+.1f})" for p in focal.get("incoming", [])) or "none"
+    )
+    outgoing = (
+        ", ".join(f"{p['name']} (TEI {p['tei']:+.1f})" for p in focal.get("outgoing", [])) or "none"
+    )
     lines.append(f"- Incoming: {incoming}")
     lines.append(f"- Outgoing: {outgoing}")
     lines.append("")
@@ -101,25 +119,35 @@ def build_report_markdown(
     lines.append("")
     team_legality = focal.get("legality", {})
     if team_legality.get("payroll_after") is not None:
-        lines.append(f"- Post-trade payroll: {_fmt_money(team_legality['payroll_after'])} "
-                     f"(apron status: {team_legality.get('apron_status_after', 'unknown')}).")
-        lines.append(f"- Salary in: {_fmt_money(team_legality.get('incoming_salary'))}; "
-                     f"salary out: {_fmt_money(team_legality.get('outgoing_salary'))}.")
+        lines.append(
+            f"- Post-trade payroll: {_fmt_money(team_legality['payroll_after'])} "
+            f"(apron status: {team_legality.get('apron_status_after', 'unknown')})."
+        )
+        lines.append(
+            f"- Salary in: {_fmt_money(team_legality.get('incoming_salary'))}; "
+            f"salary out: {_fmt_money(team_legality.get('outgoing_salary'))}."
+        )
     else:
-        lines.append("- **Contract data unavailable from the configured provider.** Payroll, tax and "
-                     "apron consequences cannot be verified, and the contract-value component was "
-                     "excluded from the composite (weights renormalized).")
+        lines.append(
+            "- **Contract data unavailable from the configured provider.** Payroll, tax and "
+            "apron consequences cannot be verified, and the contract-value component was "
+            "excluded from the composite (weights renormalized)."
+        )
     lines.append("")
 
     lines.append("## 5. Key risks")
     lines.append("")
     if uncertainty.get("prob_positive") is not None:
-        lines.append(f"- {1 - uncertainty['prob_positive']:.0%} of simulations produce a negative win impact.")
+        lines.append(
+            f"- {1 - uncertainty['prob_positive']:.0%} of simulations produce a negative win impact."
+        )
     risk_detail = focal.get("detail", {}).get("risk", {})
     if risk_detail.get("incoming_availability") is not None:
-        lines.append(f"- Historical availability of incoming players: "
-                     f"{risk_detail['incoming_availability']:.0%} of team games "
-                     "(availability is historical games played, not a medical prediction).")
+        lines.append(
+            f"- Historical availability of incoming players: "
+            f"{risk_detail['incoming_availability']:.0%} of team games "
+            "(availability is historical games played, not a medical prediction)."
+        )
     warnings = [r for r in legality.get("rule_results", []) if r.get("status") == "warning"]
     for w in warnings[:4]:
         lines.append(f"- Rule warning ({w['rule_code']}): {w['message']}")
@@ -127,10 +155,14 @@ def build_report_markdown(
 
     lines.append("## 6. Assumptions")
     lines.append("")
-    lines.append("- Player impact uses TradeLab Estimated Impact (TEI), a portfolio-model estimate "
-                 "with documented validation — not a proprietary metric.")
-    lines.append("- Post-trade minutes are reallocated by the rotation model; a coach's actual "
-                 "rotation will differ.")
+    lines.append(
+        "- Player impact uses TradeLab Estimated Impact (TEI), a portfolio-model estimate "
+        "with documented validation — not a proprietary metric."
+    )
+    lines.append(
+        "- Post-trade minutes are reallocated by the rotation model; a coach's actual "
+        "rotation will differ."
+    )
     if excluded:
         lines.append(f"- Components excluded for missing data: {', '.join(excluded)}.")
     lines.append("")
@@ -139,30 +171,46 @@ def build_report_markdown(
     lines.append("")
     if alternatives:
         for alt in alternatives[:5]:
-            lines.append(f"- **{alt['name']}** — utility {_fmt_score(alt.get('composite_utility'))}, "
-                         f"legality: {alt.get('legality_status', 'unknown')}")
+            lines.append(
+                f"- **{alt['name']}** — utility {_fmt_score(alt.get('composite_utility'))}, "
+                f"legality: {alt.get('legality_status', 'unknown')}"
+            )
     else:
-        lines.append("- No saved alternatives in this comparison. Use the comparison view to add 2–5.")
+        lines.append(
+            "- No saved alternatives in this comparison. Use the comparison view to add 2–5."
+        )
     lines.append("")
 
     lines.append("## 8. Implementation questions")
     lines.append("")
-    lines.append("- Are the incoming players' medicals acceptable? (This tool does not model injuries.)")
-    lines.append("- Does the locker-room / role fit survive contact with the coaching staff's plans?")
+    lines.append(
+        "- Are the incoming players' medicals acceptable? (This tool does not model injuries.)"
+    )
+    lines.append(
+        "- Does the locker-room / role fit survive contact with the coaching staff's plans?"
+    )
     if status == "conditionally_valid":
-        lines.append("- Verify salary matching with authoritative contract data before any commitment.")
+        lines.append(
+            "- Verify salary matching with authoritative contract data before any commitment."
+        )
     lines.append("")
 
     lines.append("## 9. Data freshness and limitations")
     lines.append("")
     freshness = data_freshness or {}
-    lines.append(f"- Source: NBA.com via `nba_api` · rosters/stats last synced: "
-                 f"{freshness.get('last_sync', 'unknown')} · season {settings.current_season}.")
-    lines.append(f"- Cap parameters: {legality.get('cap_parameters_source', 'unknown')} "
-                 f"(league year {legality.get('league_year')}).")
-    lines.append("- This is an analytical portfolio project, not an official NBA cap-management "
-                 "product; legality coverage is a documented subset of the CBA "
-                 "(see docs/cba-rule-coverage.md).")
+    lines.append(
+        f"- Source: NBA.com via `nba_api` · rosters/stats last synced: "
+        f"{freshness.get('last_sync', 'unknown')} · season {settings.current_season}."
+    )
+    lines.append(
+        f"- Cap parameters: {legality.get('cap_parameters_source', 'unknown')} "
+        f"(league year {legality.get('league_year')})."
+    )
+    lines.append(
+        "- This is an analytical portfolio project, not an official NBA cap-management "
+        "product; legality coverage is a documented subset of the CBA "
+        "(see docs/cba-rule-coverage.md)."
+    )
     lines.append("")
     return "\n".join(lines)
 

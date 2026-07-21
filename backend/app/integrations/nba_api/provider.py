@@ -4,7 +4,7 @@ Domain code depends on the protocol, never on nba_api directly; the concrete pro
 returns normalized records plus provenance meta. nba_api is synchronous, so the async
 protocol methods delegate to worker threads."""
 
-from typing import Any, Protocol
+from typing import Protocol
 
 import anyio
 
@@ -58,7 +58,9 @@ class SwarNBAApiProvider:
     async def fetch_standings(self, season: str) -> list[dict]:
         df, meta = await anyio.to_thread.run_sync(ep.fetch_standings, season)
         provenance = nz.provenance_from_meta(meta)
-        return [{**nz.normalize_standing_row(row, season), **provenance} for _, row in df.iterrows()]
+        return [
+            {**nz.normalize_standing_row(row, season), **provenance} for _, row in df.iterrows()
+        ]
 
     async def fetch_player_stats(self, season: str) -> list[dict]:
         rows: list[dict] = []

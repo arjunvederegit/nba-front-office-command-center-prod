@@ -14,13 +14,14 @@ CBA_REF = "2023 CBA Art. VII §6; cbaguide.com/transactions/trades/tpe"
 
 
 def max_incoming_below_first_apron(outgoing: float, params: CapParams) -> float:
-    """Expanded TPE ("greater of" bands, so no discontinuities)."""
-    candidates = [1.25 * outgoing + params.allowance]
+    """Expanded TPE bands. The CBA's dollar boundaries make the three formulas exactly
+    continuous at the band edges (2x + $250K meets x + band2_add at band1_max, which
+    meets 125% + $250K at band2_max)."""
     if outgoing <= params.tpe_band1_max:
-        candidates.append(2.0 * outgoing + params.allowance)
+        return 2.0 * outgoing + params.allowance
     if outgoing <= params.tpe_band2_max:
-        candidates.append(outgoing + params.tpe_band2_add)
-    return max(candidates)
+        return outgoing + params.tpe_band2_add
+    return 1.25 * outgoing + params.allowance
 
 
 def max_incoming_at_or_above_first_apron(outgoing: float, params: CapParams) -> float:
@@ -205,7 +206,9 @@ class SecondApronAggregationRule:
 
 class MinimumTeamSalaryRule:
     code = "MINIMUM_TEAM_SALARY"
-    description = "Post-trade payroll below 90% of the cap triggers a warning (not illegal mid-season)"
+    description = (
+        "Post-trade payroll below 90% of the cap triggers a warning (not illegal mid-season)"
+    )
 
     def evaluate(self, context: TradeContext) -> list[RuleResult]:
         results = []

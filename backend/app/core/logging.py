@@ -14,7 +14,9 @@ REDACT_PATTERNS = [
 
 def _redact(message: str) -> str:
     for pattern in REDACT_PATTERNS:
-        message = pattern.sub(lambda m: m.group(0).split("=")[0].split(":")[0] + "=<redacted>", message)
+        message = pattern.sub(
+            lambda m: m.group(0).split("=")[0].split(":")[0] + "=<redacted>", message
+        )
     return message
 
 

@@ -6,6 +6,7 @@ CPU-light I/O batches on a small schedule, and every job is safe to re-run.
 Schedules are configurable via environment variables."""
 
 import os
+from collections.abc import Callable
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -19,7 +20,7 @@ logger = get_logger(__name__)
 def run_job(job_name: str) -> None:
     from app.ingestion import jobs
 
-    job_map = {
+    job_map: dict[str, Callable[..., int]] = {
         "sync_rosters": jobs.sync_rosters,
         "sync_standings": jobs.sync_standings,
         "sync_player_stats": jobs.sync_player_stats,
@@ -46,9 +47,7 @@ def main() -> None:
     scheduler.add_job(run_job, "interval", hours=stats_hours, args=["sync_team_stats"])
     scheduler.add_job(run_job, "interval", hours=stats_hours, args=["sync_games"])
     scheduler.add_job(run_job, "interval", hours=stats_hours, args=["sync_contracts"])
-    logger.info(
-        "worker started (rosters/standings every %dh, stats/games daily)", roster_hours
-    )
+    logger.info("worker started (rosters/standings every %dh, stats/games daily)", roster_hours)
     scheduler.start()
 
 

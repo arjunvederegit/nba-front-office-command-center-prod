@@ -86,9 +86,7 @@ def fetch_league_game_log(season: str) -> tuple[pd.DataFrame, dict]:
     def build(common: dict[str, Any]):
         from nba_api.stats.endpoints import leaguegamelog
 
-        return leaguegamelog.LeagueGameLog(
-            season=season, player_or_team_abbreviation="T", **common
-        )
+        return leaguegamelog.LeagueGameLog(season=season, player_or_team_abbreviation="T", **common)
 
     return get_client().fetch_dataframe("LeagueGameLog", build, cache_key=f"gamelog:{season}")
 

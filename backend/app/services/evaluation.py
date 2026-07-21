@@ -35,18 +35,66 @@ from app.db.models import (
     Player,
     PlayerImpactEstimate,
     RosterEntry,
-    Team,
     TeamNeed,
 )
 
 DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
-    "contend": {"performance": 0.32, "fit": 0.20, "contract": 0.08, "timeline": 0.12, "assets": 0.08, "risk": 0.20},
-    "improve": {"performance": 0.25, "fit": 0.20, "contract": 0.12, "timeline": 0.13, "assets": 0.15, "risk": 0.15},
-    "retool": {"performance": 0.20, "fit": 0.18, "contract": 0.14, "timeline": 0.18, "assets": 0.18, "risk": 0.12},
-    "rebuild": {"performance": 0.08, "fit": 0.10, "contract": 0.17, "timeline": 0.25, "assets": 0.28, "risk": 0.12},
-    "youth": {"performance": 0.10, "fit": 0.14, "contract": 0.14, "timeline": 0.28, "assets": 0.22, "risk": 0.12},
-    "cap_relief": {"performance": 0.10, "fit": 0.10, "contract": 0.30, "timeline": 0.12, "assets": 0.26, "risk": 0.12},
-    "custom": {"performance": 0.22, "fit": 0.18, "contract": 0.14, "timeline": 0.16, "assets": 0.15, "risk": 0.15},
+    "contend": {
+        "performance": 0.32,
+        "fit": 0.20,
+        "contract": 0.08,
+        "timeline": 0.12,
+        "assets": 0.08,
+        "risk": 0.20,
+    },
+    "improve": {
+        "performance": 0.25,
+        "fit": 0.20,
+        "contract": 0.12,
+        "timeline": 0.13,
+        "assets": 0.15,
+        "risk": 0.15,
+    },
+    "retool": {
+        "performance": 0.20,
+        "fit": 0.18,
+        "contract": 0.14,
+        "timeline": 0.18,
+        "assets": 0.18,
+        "risk": 0.12,
+    },
+    "rebuild": {
+        "performance": 0.08,
+        "fit": 0.10,
+        "contract": 0.17,
+        "timeline": 0.25,
+        "assets": 0.28,
+        "risk": 0.12,
+    },
+    "youth": {
+        "performance": 0.10,
+        "fit": 0.14,
+        "contract": 0.14,
+        "timeline": 0.28,
+        "assets": 0.22,
+        "risk": 0.12,
+    },
+    "cap_relief": {
+        "performance": 0.10,
+        "fit": 0.10,
+        "contract": 0.30,
+        "timeline": 0.12,
+        "assets": 0.26,
+        "risk": 0.12,
+    },
+    "custom": {
+        "performance": 0.22,
+        "fit": 0.18,
+        "contract": 0.14,
+        "timeline": 0.16,
+        "assets": 0.15,
+        "risk": 0.15,
+    },
 }
 
 TEI_SIGMA_DEFAULT = 1.5  # index points; refined by per-player bands when available
@@ -83,15 +131,15 @@ class EvaluationService:
                     ModelVersion.model_name == "player_impact", ModelVersion.is_active
                 )
             )
-            rows = (
-                self.db.scalars(
-                    select(PlayerImpactEstimate).where(
-                        PlayerImpactEstimate.model_version_id == (model.id if model else "")
-                    )
-                ).all()
-                if model
-                else []
-            )
+            rows: list[PlayerImpactEstimate] = []
+            if model is not None:
+                rows = list(
+                    self.db.scalars(
+                        select(PlayerImpactEstimate).where(
+                            PlayerImpactEstimate.model_version_id == model.id
+                        )
+                    ).all()
+                )
             self._impact_cache = {r.player_id: r for r in rows}
         return self._impact_cache
 
@@ -104,9 +152,7 @@ class EvaluationService:
                 self._skills_cache = cached
             else:
                 season_df = build_player_season_features(self.db)
-                weighted = recency_weighted_features(
-                    season_df, self.settings.history_season_list
-                )
+                weighted = recency_weighted_features(season_df, self.settings.history_season_list)
                 skills = {}
                 for _, row in weighted.iterrows():
                     skills[row["player_id"]] = player_skill_vector(row, weighted)
@@ -210,7 +256,15 @@ class EvaluationService:
             return None, {"unavailable": "team needs not computed; run `make score`"}
         top_rotation = sorted(roster, key=lambda c: c.minutes, reverse=True)[:9]
         roster_strengths: dict[str, float] = {}
-        for key in ("shooting", "creation", "perimeter_defense", "rim_protection", "rebounding", "size", "scoring"):
+        for key in (
+            "shooting",
+            "creation",
+            "perimeter_defense",
+            "rim_protection",
+            "rebounding",
+            "size",
+            "scoring",
+        ):
             values = [c.skills.get(key, 0.5) for c in top_rotation if c.skills]
             roster_strengths[key] = sorted(values)[-3] if len(values) >= 3 else 0.5
         score, detail = fit_score(
@@ -298,9 +352,7 @@ class EvaluationService:
     def _risk(
         self, incoming: list[PlayerCard], outgoing: list[PlayerCard], uncertainty: dict
     ) -> tuple[float, dict]:
-        avail_in = (
-            sum(c.availability for c in incoming) / len(incoming) if incoming else 0.85
-        )
+        avail_in = sum(c.availability for c in incoming) / len(incoming) if incoming else 0.85
         prob_positive = uncertainty.get("prob_positive", 0.5)
         score = max(0.0, min(100.0, 60.0 * prob_positive + 40.0 * avail_in))
         return score, {
@@ -320,11 +372,20 @@ class EvaluationService:
         weights: dict[str, float] | None = None,
         legality: dict | None = None,
     ) -> dict:
-        weights = normalize_weights(weights or DEFAULT_WEIGHTS.get(strategy, DEFAULT_WEIGHTS["custom"]))
+        weights = normalize_weights(
+            weights or DEFAULT_WEIGHTS.get(strategy, DEFAULT_WEIGHTS["custom"])
+        )
         roster = self._roster_cards(team_id)
         incoming_ids = [m["player_id"] for m in player_moves if m["to_team_id"] == team_id]
         outgoing_ids = [m["player_id"] for m in player_moves if m["from_team_id"] == team_id]
-        incoming = [self._card(p) for p in self.db.scalars(select(Player).where(Player.id.in_(incoming_ids))).all()] if incoming_ids else []
+        incoming = (
+            [
+                self._card(p)
+                for p in self.db.scalars(select(Player).where(Player.id.in_(incoming_ids))).all()
+            ]
+            if incoming_ids
+            else []
+        )
         outgoing = [c for c in roster if c.player_id in set(outgoing_ids)]
 
         if legality is None:
@@ -388,16 +449,17 @@ class EvaluationService:
         utility = composite_utility(components, weights)
         excluded = [k for k, v in components.items() if v is None]
 
-        drivers = sorted(
-            (
-                {"component": k, "score": round(v, 1), "weight": weights.get(k, 0),
-                 "contribution": round((v - 50.0) * weights.get(k, 0), 2)}
-                for k, v in components.items()
-                if v is not None
-            ),
-            key=lambda d: abs(d["contribution"]),
-            reverse=True,
-        )
+        driver_rows: list[dict[str, Any]] = [
+            {
+                "component": k,
+                "score": round(v, 1),
+                "weight": weights.get(k, 0),
+                "contribution": round((v - 50.0) * weights.get(k, 0), 2),
+            }
+            for k, v in components.items()
+            if v is not None
+        ]
+        drivers = sorted(driver_rows, key=lambda d: abs(float(d["contribution"])), reverse=True)
 
         confidence = "high"
         if excluded:
@@ -408,8 +470,11 @@ class EvaluationService:
             "legality": team_legality,
             "composite_utility": round(utility, 2),
             "confidence": confidence,
-            "components": {k: (round(v, 2) if v is not None else None) for k, v in components.items()},
+            "components": {
+                k: (round(v, 2) if v is not None else None) for k, v in components.items()
+            },
             "excluded_components": excluded,
+            "drivers": drivers,
             "weights": weights,
             "detail": {
                 "performance": perf_detail,
@@ -421,7 +486,11 @@ class EvaluationService:
             },
             "uncertainty": uncertainty,
             "sensitivity_tornado": tornado(components, weights),
-            "incoming": [{"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in incoming],
-            "outgoing": [{"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in outgoing],
+            "incoming": [
+                {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in incoming
+            ],
+            "outgoing": [
+                {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in outgoing
+            ],
             "evaluated_at": datetime.now(UTC).isoformat(),
         }

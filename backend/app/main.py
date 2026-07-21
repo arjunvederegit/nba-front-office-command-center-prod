@@ -63,8 +63,13 @@ def observability(request: Request, call_next):
         if len(window) >= RATE_LIMIT_PER_MINUTE:
             return JSONResponse(
                 status_code=429,
-                content={"error": {"code": "rate_limited", "message": "Too many requests",
-                                   "request_id": request_id}},
+                content={
+                    "error": {
+                        "code": "rate_limited",
+                        "message": "Too many requests",
+                        "request_id": request_id,
+                    }
+                },
             )
         window.append(now)
 

@@ -38,7 +38,11 @@ def _scenario_weights(db: Session, scenario_id: str | None) -> tuple[str, dict |
     scenario = db.get(Scenario, scenario_id)
     if scenario is None:
         raise NotFoundError(f"scenario {scenario_id} not found")
-    return scenario.strategy, {w.component: w.weight for w in scenario.weights}, scenario.focal_team_id
+    return (
+        scenario.strategy,
+        {w.component: w.weight for w in scenario.weights},
+        scenario.focal_team_id,
+    )
 
 
 @router.post("/validate")
@@ -191,7 +195,9 @@ def _trade_detail(db: Session, trade_id: str, persist_results: bool = False) -> 
                     trade_id=trade.id,
                     scenario_id=trade.scenario_id,
                     team_id=team_id,
-                    legality_status=evaluation["legality"].get("status", legality["overall_status"]),
+                    legality_status=evaluation["legality"].get(
+                        "status", legality["overall_status"]
+                    ),
                     composite_utility=evaluation["composite_utility"],
                     components=evaluation["components"],
                     uncertainty=evaluation["uncertainty"],
@@ -257,9 +263,7 @@ def get_trade(trade_id: str, db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/{trade_id}/report")
-def get_trade_report(
-    trade_id: str, format: str = "markdown", db: Session = Depends(get_db)
-):
+def get_trade_report(trade_id: str, format: str = "markdown", db: Session = Depends(get_db)):
     detail = _trade_detail(db, trade_id)
     trade = db.get(TradeProposal, trade_id)
     assert trade is not None

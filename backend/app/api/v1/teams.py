@@ -217,7 +217,10 @@ def get_player_season_stats(team_id: str, db: Session = Depends(get_db)) -> dict
             pid: {
                 "GP": by_player[pid].games_played,
                 "MIN": by_player[pid].minutes,
-                **{k: (by_player[pid].stats or {}).get(k) for k in ("PTS", "REB", "AST", "STL", "BLK", "FG3_PCT", "FG_PCT")},
+                **{
+                    k: (by_player[pid].stats or {}).get(k)
+                    for k in ("PTS", "REB", "AST", "STL", "BLK", "FG3_PCT", "FG_PCT")
+                },
             }
             for pid in player_ids
             if pid in by_player

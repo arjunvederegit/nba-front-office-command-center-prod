@@ -116,7 +116,7 @@ def get_player(player_id: str, db: Session = Depends(get_db)) -> dict:
     )
 
     comparables = []
-    if archetype and impact:
+    if archetype and impact and impact_model is not None:
         peers = db.scalars(
             select(PlayerArchetype).where(
                 PlayerArchetype.season == settings.current_season,
@@ -188,12 +188,19 @@ def get_player_stats(player_id: str, db: Session = Depends(get_db)) -> dict:
     for row in rows:
         entry = seasons.setdefault(
             row.season,
-            {"season": row.season, "source_retrieved_at": row.source_retrieved_at.isoformat()
-             if row.source_retrieved_at else None},
+            {
+                "season": row.season,
+                "source_retrieved_at": row.source_retrieved_at.isoformat()
+                if row.source_retrieved_at
+                else None,
+            },
         )
         entry[row.stat_type] = {"GP": row.games_played, "MIN": row.minutes, **(row.stats or {})}
-    return {"player_id": player.id, "seasons": list(seasons.values()),
-            "source": "NBA.com via nba_api (LeagueDashPlayerStats)"}
+    return {
+        "player_id": player.id,
+        "seasons": list(seasons.values()),
+        "source": "NBA.com via nba_api (LeagueDashPlayerStats)",
+    }
 
 
 @router.get("/{player_id}/contract")

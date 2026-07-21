@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core.cache import get_cache
 from app.db.models import (
+    Base,
     Contract,
     DataQualityIssue,
     DataSyncRun,
@@ -34,13 +35,20 @@ def data_health(db: Session) -> dict:
     stale_cutoff = now - timedelta(seconds=settings.nba_api_stale_after_seconds)
 
     tables = {}
+    model: type[Base]
     for model, name in [
-        (Team, "teams"), (Player, "players"), (RosterEntry, "rosters"),
-        (Standing, "standings"), (PlayerSeasonStats, "player_season_stats"),
-        (TeamSeasonStats, "team_season_stats"), (Game, "games"), (Contract, "contracts"),
-        (PlayerImpactEstimate, "player_impact_estimates"), (TeamNeed, "team_needs"),
+        (Team, "teams"),
+        (Player, "players"),
+        (RosterEntry, "rosters"),
+        (Standing, "standings"),
+        (PlayerSeasonStats, "player_season_stats"),
+        (TeamSeasonStats, "team_season_stats"),
+        (Game, "games"),
+        (Contract, "contracts"),
+        (PlayerImpactEstimate, "player_impact_estimates"),
+        (TeamNeed, "team_needs"),
     ]:
-        count = db.scalar(select(func.count(model.id))) or 0
+        count = db.scalar(select(func.count()).select_from(model)) or 0
         last_retrieved = None
         stale = None
         if hasattr(model, "source_retrieved_at"):

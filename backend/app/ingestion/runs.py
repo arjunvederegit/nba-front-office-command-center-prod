@@ -30,7 +30,9 @@ def sync_run(db: Session, job_name: str) -> Iterator[DataSyncRun]:
         db.add(run)
         db.commit()
         logger.error(
-            "sync failed: %s (%s)", job_name, type(exc).__name__,
+            "sync failed: %s (%s)",
+            job_name,
+            type(exc).__name__,
             extra={"job": job_name, "run_id": run.id},
         )
         raise
@@ -40,6 +42,8 @@ def sync_run(db: Session, job_name: str) -> Iterator[DataSyncRun]:
         db.add(run)
         db.commit()
         logger.info(
-            "sync succeeded: %s rows=%d", job_name, run.rows_written,
+            "sync succeeded: %s rows=%d",
+            job_name,
+            run.rows_written,
             extra={"job": job_name, "run_id": run.id},
         )

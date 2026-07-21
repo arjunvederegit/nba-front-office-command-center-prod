@@ -439,7 +439,9 @@ class ScenarioWeight(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     scenario_id: Mapped[str] = mapped_column(ForeignKey("scenarios.id"), index=True)
-    component: Mapped[str] = mapped_column(String(30))  # performance|fit|contract|timeline|assets|risk
+    component: Mapped[str] = mapped_column(
+        String(30)
+    )  # performance|fit|contract|timeline|assets|risk
     weight: Mapped[float] = mapped_column(Float)
 
     scenario: Mapped[Scenario] = relationship(back_populates="weights")

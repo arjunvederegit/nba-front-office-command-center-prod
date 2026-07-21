@@ -126,9 +126,7 @@ def normalize_standing_row(row: pd.Series, season: str) -> dict[str, Any]:
     }
 
 
-def normalize_player_stat_row(
-    row: pd.Series, season: str, stat_type: str
-) -> dict[str, Any]:
+def normalize_player_stat_row(row: pd.Series, season: str, stat_type: str) -> dict[str, Any]:
     r = _row_dict(row)
     return {
         "nba_player_id": int(r["PLAYER_ID"]),

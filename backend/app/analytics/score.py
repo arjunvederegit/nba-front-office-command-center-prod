@@ -28,9 +28,7 @@ logger = get_logger(__name__)
 def _league_stats_frame(db: Session, season: str) -> pd.DataFrame:
     """One row per team; columns prefixed base_/advanced_."""
     rows: dict[str, dict[str, Any]] = {}
-    for stats in db.scalars(
-        select(TeamSeasonStats).where(TeamSeasonStats.season == season)
-    ).all():
+    for stats in db.scalars(select(TeamSeasonStats).where(TeamSeasonStats.season == season)).all():
         entry = rows.setdefault(stats.team_id, {"team_id": stats.team_id})
         for key, value in (stats.stats or {}).items():
             entry[f"{stats.stat_type}_{key}"] = value

@@ -40,14 +40,38 @@ OFFENSE_KEYS = ["z_pts_per75", "z_TS_PCT", "z_AST_PCT", "z_TM_TOV_PCT", "z_USG_P
 DEFENSE_KEYS = ["z_DREB_PCT", "z_stl_per_min", "z_blk_per_min"]
 
 RIDGE_FEATURES = [
-    "z_pts_per75", "z_TS_PCT", "z_USG_PCT", "z_AST_PCT", "z_TM_TOV_PCT", "z_OREB_PCT",
-    "z_DREB_PCT", "z_stl_per_min", "z_blk_per_min", "z_fg3a_rate", "z_fta_rate",
-    "z_MIN", "z_PIE", "z_NET_RATING", "AGE",
+    "z_pts_per75",
+    "z_TS_PCT",
+    "z_USG_PCT",
+    "z_AST_PCT",
+    "z_TM_TOV_PCT",
+    "z_OREB_PCT",
+    "z_DREB_PCT",
+    "z_stl_per_min",
+    "z_blk_per_min",
+    "z_fg3a_rate",
+    "z_fta_rate",
+    "z_MIN",
+    "z_PIE",
+    "z_NET_RATING",
+    "AGE",
 ]
 
 Z_SOURCE_COLS = [
-    "pts_per75", "TS_PCT", "USG_PCT", "AST_PCT", "TM_TOV_PCT", "OREB_PCT", "DREB_PCT",
-    "stl_per_min", "blk_per_min", "fg3a_rate", "fta_rate", "MIN", "PIE", "NET_RATING",
+    "pts_per75",
+    "TS_PCT",
+    "USG_PCT",
+    "AST_PCT",
+    "TM_TOV_PCT",
+    "OREB_PCT",
+    "DREB_PCT",
+    "stl_per_min",
+    "blk_per_min",
+    "fg3a_rate",
+    "fta_rate",
+    "MIN",
+    "PIE",
+    "NET_RATING",
 ]
 
 TEI_SCALE = 2.5  # index points per z-unit; elite seasons land around +5
@@ -123,7 +147,7 @@ def train_impact_models(df: pd.DataFrame, seasons: list[str]) -> ImpactTrainingR
     ridge: Ridge | None = None
     chosen = "baseline_index"
     algorithm = "weighted z-score index"
-    coefficients: dict = {k: v for k, v in INDEX_WEIGHTS.items()}
+    coefficients: dict = dict(INDEX_WEIGHTS)
 
     if not transitions.empty and transitions["transition"].nunique() >= 2:
         transition_names = sorted(transitions["transition"].unique())
@@ -183,7 +207,7 @@ def score_players(
     weighted = add_zscores(weighted)
 
     if result.chosen_model == "ridge" and result.ridge is not None:
-        X = weighted[[f for f in result.feature_names]].fillna(0.0).to_numpy()
+        X = weighted[list(result.feature_names)].fillna(0.0).to_numpy()
         tei = result.ridge.predict(X) * TEI_SCALE
     else:
         tei = baseline_index(weighted).to_numpy()

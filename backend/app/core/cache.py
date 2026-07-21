@@ -3,6 +3,7 @@
 Cache keys embed a data-version namespace so evaluations computed against an older
 snapshot are invalidated after each ingestion run (see bump_data_version)."""
 
+import contextlib
 import json
 import threading
 import time
@@ -94,10 +95,8 @@ class Cache:
     def bump_data_version(self) -> None:
         version = str(int(time.time()))
         if self._redis is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._redis.set("tradelab:data_version", version)
-            except Exception:
-                pass
         self._local.set("tradelab:data_version", version, ttl_seconds=10 * 365 * 86400)
 
     def versioned_key(self, *parts: str) -> str:
