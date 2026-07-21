@@ -1,0 +1,298 @@
+from fastapi import APIRouter, Depends
+from fastapi.responses import HTMLResponse, PlainTextResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.schemas import EvaluateRequest, GenerateRequest, TradeIn, ValidateRequest
+from app.cba.builder import build_trade_context
+from app.cba.engine import TradeLegalityEngine
+from app.core.errors import DomainError, NotFoundError
+from app.db.base import get_db
+from app.db.models import (
+    DataSyncRun,
+    GeneratedReport,
+    Scenario,
+    Team,
+    TradeAsset,
+    TradeEvaluation,
+    TradeProposal,
+    TradeRuleResult,
+    TradeTeam,
+)
+from app.services.candidates import generate_candidates
+from app.services.evaluation import EvaluationService
+from app.services.reports import build_report_markdown, report_to_html
+
+router = APIRouter(prefix="/trades", tags=["trades"])
+
+
+def _moves_from_payload(payload: ValidateRequest) -> tuple[list[dict], list[dict]]:
+    player_moves = [m.model_dump() for m in payload.player_moves]
+    pick_moves = [m.model_dump() for m in payload.pick_moves]
+    return player_moves, pick_moves
+
+
+def _scenario_weights(db: Session, scenario_id: str | None) -> tuple[str, dict | None, str | None]:
+    if not scenario_id:
+        return "custom", None, None
+    scenario = db.get(Scenario, scenario_id)
+    if scenario is None:
+        raise NotFoundError(f"scenario {scenario_id} not found")
+    return scenario.strategy, {w.component: w.weight for w in scenario.weights}, scenario.focal_team_id
+
+
+@router.post("/validate")
+def validate_trade(payload: ValidateRequest, db: Session = Depends(get_db)) -> dict:
+    """Backend-authoritative legality check (the frontend never decides legality)."""
+    player_moves, pick_moves = _moves_from_payload(payload)
+    context = build_trade_context(db, payload.team_ids, player_moves, pick_moves)
+    return TradeLegalityEngine().evaluate(context)
+
+
+@router.post("/evaluate")
+def evaluate_trade(payload: EvaluateRequest, db: Session = Depends(get_db)) -> dict:
+    player_moves, pick_moves = _moves_from_payload(payload)
+    strategy, weights, _ = _scenario_weights(db, payload.scenario_id)
+    if payload.weights is not None:
+        weights = payload.weights.model_dump()
+    if payload.strategy != "custom":
+        strategy = payload.strategy
+
+    context = build_trade_context(db, payload.team_ids, player_moves, pick_moves)
+    legality = TradeLegalityEngine().evaluate(context)
+    service = EvaluationService(db)
+    evaluations = {
+        team_id: service.evaluate_for_team(
+            team_id, payload.team_ids, player_moves, pick_moves, strategy, weights, legality
+        )
+        for team_id in payload.team_ids
+    }
+    return {"legality": legality, "evaluations": evaluations}
+
+
+@router.post("/generate")
+def generate_trades(payload: GenerateRequest, db: Session = Depends(get_db)) -> dict:
+    strategy, weights, scenario_focal = _scenario_weights(db, payload.scenario_id)
+    focal_team_id = payload.focal_team_id or scenario_focal
+    if not focal_team_id:
+        raise DomainError("focal_team_id or scenario_id is required")
+    untouchables: list[str] = []
+    preferred: list[str] = []
+    if payload.scenario_id:
+        scenario = db.get(Scenario, payload.scenario_id)
+        if scenario:
+            untouchables = scenario.untouchable_player_ids or []
+            preferred = scenario.preferred_outgoing_player_ids or []
+    if payload.strategy != "custom":
+        strategy = payload.strategy
+    return generate_candidates(
+        db,
+        focal_team_id,
+        strategy=strategy,
+        weights=weights,
+        untouchable_player_ids=untouchables,
+        preferred_outgoing_ids=preferred,
+        max_candidates=payload.max_candidates,
+    )
+
+
+@router.post("", status_code=201)
+def create_trade(payload: TradeIn, db: Session = Depends(get_db)) -> dict:
+    trade = TradeProposal(name=payload.name, scenario_id=payload.scenario_id, notes=payload.notes)
+    db.add(trade)
+    db.flush()
+    for team_id in payload.team_ids:
+        if db.get(Team, team_id) is None:
+            raise NotFoundError(f"team {team_id} not found")
+        db.add(TradeTeam(trade_id=trade.id, team_id=team_id))
+    for move in payload.player_moves:
+        db.add(
+            TradeAsset(
+                trade_id=trade.id,
+                asset_type="player",
+                from_team_id=move.from_team_id,
+                to_team_id=move.to_team_id,
+                player_id=move.player_id,
+            )
+        )
+    for pick in payload.pick_moves:
+        db.add(
+            TradeAsset(
+                trade_id=trade.id,
+                asset_type="pick",
+                from_team_id=pick.from_team_id,
+                to_team_id=pick.to_team_id,
+                draft_year=pick.draft_year,
+                round_number=pick.round_number,
+                protections=pick.protections,
+                is_hypothetical=True,
+            )
+        )
+    db.commit()
+    return _trade_detail(db, trade.id, persist_results=True)
+
+
+def _trade_moves(trade: TradeProposal) -> tuple[list[str], list[dict], list[dict]]:
+    team_ids = [t.team_id for t in trade.teams]
+    player_moves = [
+        {"player_id": a.player_id, "from_team_id": a.from_team_id, "to_team_id": a.to_team_id}
+        for a in trade.assets
+        if a.asset_type == "player" and a.player_id
+    ]
+    pick_moves = [
+        {
+            "from_team_id": a.from_team_id,
+            "to_team_id": a.to_team_id,
+            "draft_year": a.draft_year,
+            "round_number": a.round_number,
+            "protections": a.protections,
+            "is_hypothetical": a.is_hypothetical,
+        }
+        for a in trade.assets
+        if a.asset_type == "pick"
+    ]
+    return team_ids, player_moves, pick_moves
+
+
+def _trade_detail(db: Session, trade_id: str, persist_results: bool = False) -> dict:
+    trade = db.get(TradeProposal, trade_id)
+    if trade is None:
+        raise NotFoundError(f"trade {trade_id} not found")
+    team_ids, player_moves, pick_moves = _trade_moves(trade)
+    strategy, weights, _ = _scenario_weights(db, trade.scenario_id)
+
+    context = build_trade_context(db, team_ids, player_moves, pick_moves)
+    legality = TradeLegalityEngine().evaluate(context)
+    service = EvaluationService(db)
+    evaluations = {
+        team_id: service.evaluate_for_team(
+            team_id, team_ids, player_moves, pick_moves, strategy, weights, legality
+        )
+        for team_id in team_ids
+    }
+
+    if persist_results:
+        for rule in legality["rule_results"]:
+            db.add(
+                TradeRuleResult(
+                    trade_id=trade.id,
+                    rule_code=rule["rule_code"],
+                    team_id=rule["team_id"],
+                    status=rule["status"],
+                    message=rule["message"],
+                    calculation=rule.get("calculation", {}),
+                    source_reference=rule.get("source_reference"),
+                    confidence=rule.get("confidence", "high"),
+                )
+            )
+        for team_id, evaluation in evaluations.items():
+            db.add(
+                TradeEvaluation(
+                    trade_id=trade.id,
+                    scenario_id=trade.scenario_id,
+                    team_id=team_id,
+                    legality_status=evaluation["legality"].get("status", legality["overall_status"]),
+                    composite_utility=evaluation["composite_utility"],
+                    components=evaluation["components"],
+                    uncertainty=evaluation["uncertainty"],
+                    sensitivity={"tornado": evaluation["sensitivity_tornado"]},
+                    explanation={"drivers": evaluation["detail"]},
+                )
+            )
+        db.commit()
+
+    assets = [
+        {
+            "asset_type": a.asset_type,
+            "from_team_id": a.from_team_id,
+            "to_team_id": a.to_team_id,
+            "player_id": a.player_id,
+            "player_name": a.player.full_name if a.player else None,
+            "draft_year": a.draft_year,
+            "round_number": a.round_number,
+            "protections": a.protections,
+            "is_hypothetical": a.is_hypothetical,
+        }
+        for a in trade.assets
+    ]
+    return {
+        "id": trade.id,
+        "name": trade.name,
+        "scenario_id": trade.scenario_id,
+        "notes": trade.notes,
+        "created_at": trade.created_at.isoformat(),
+        "teams": [
+            {"team_id": t.team_id, "abbreviation": t.team.abbreviation, "name": t.team.full_name}
+            for t in trade.teams
+        ],
+        "assets": assets,
+        "legality": legality,
+        "evaluations": evaluations,
+    }
+
+
+@router.get("")
+def list_trades(scenario_id: str | None = None, db: Session = Depends(get_db)) -> list[dict]:
+    stmt = select(TradeProposal).order_by(TradeProposal.created_at.desc())
+    if scenario_id:
+        stmt = stmt.where(TradeProposal.scenario_id == scenario_id)
+    trades = db.scalars(stmt.limit(100)).all()
+    return [
+        {
+            "id": t.id,
+            "name": t.name,
+            "scenario_id": t.scenario_id,
+            "created_at": t.created_at.isoformat(),
+            "teams": [tt.team.abbreviation for tt in t.teams],
+            "n_players": len([a for a in t.assets if a.asset_type == "player"]),
+            "n_picks": len([a for a in t.assets if a.asset_type == "pick"]),
+        }
+        for t in trades
+    ]
+
+
+@router.get("/{trade_id}")
+def get_trade(trade_id: str, db: Session = Depends(get_db)) -> dict:
+    return _trade_detail(db, trade_id)
+
+
+@router.get("/{trade_id}/report")
+def get_trade_report(
+    trade_id: str, format: str = "markdown", db: Session = Depends(get_db)
+):
+    detail = _trade_detail(db, trade_id)
+    trade = db.get(TradeProposal, trade_id)
+    assert trade is not None
+    strategy, _, scenario_focal = _scenario_weights(db, trade.scenario_id)
+    focal_team_id = scenario_focal or detail["teams"][0]["team_id"]
+    focal_team_name = next(
+        (t["name"] for t in detail["teams"] if t["team_id"] == focal_team_id),
+        detail["teams"][0]["name"],
+    )
+
+    last_sync = db.scalar(
+        select(DataSyncRun.finished_at)
+        .where(DataSyncRun.status == "succeeded")
+        .order_by(DataSyncRun.finished_at.desc())
+    )
+    markdown_text = build_report_markdown(
+        trade_name=detail["name"],
+        focal_team_name=focal_team_name,
+        strategy=strategy,
+        legality=detail["legality"],
+        evaluations=detail["evaluations"],
+        focal_team_id=focal_team_id,
+        data_freshness={"last_sync": last_sync.isoformat() if last_sync else "never"},
+    )
+    report = GeneratedReport(
+        trade_id=trade.id,
+        scenario_id=trade.scenario_id,
+        format=format,
+        content=markdown_text,
+        llm_enhanced=False,
+    )
+    db.add(report)
+    db.commit()
+    if format == "html":
+        return HTMLResponse(report_to_html(markdown_text))
+    return PlainTextResponse(markdown_text, media_type="text/markdown")
