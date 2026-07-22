@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import { COMPONENT_LABEL, NEED_LABEL, height, money, pct, tei } from "@/lib/format";
+import { NEED_LABEL, height, money, pct, tei } from "@/lib/format";
 import { teamTheme, teamThemeVars } from "@/lib/teamTheme";
 import type {
   PayrollResponse,

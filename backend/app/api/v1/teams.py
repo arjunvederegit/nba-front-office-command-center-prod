@@ -226,3 +226,111 @@ def get_player_season_stats(team_id: str, db: Session = Depends(get_db)) -> dict
             if pid in by_player
         },
     }
+
+
+@router.get("/{team_id}/cap-outlook")
+def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
+    """Multi-season payroll picture for Cap Lab. Fully honest: with no contract data
+    imported it returns available=False with the exact import instructions."""
+    from app.db.models import Contract, ContractYear, LeagueCapParameters
+    from app.integrations.contracts import get_contract_provider
+
+    settings = get_settings()
+    team = _get_team(db, team_id)
+    entries = db.scalars(
+        select(RosterEntry).where(
+            RosterEntry.team_id == team.id,
+            RosterEntry.season == settings.current_season,
+            RosterEntry.is_current,
+        )
+    ).all()
+    roster_ids = {e.player_id: e.player.full_name for e in entries}
+
+    contracts = db.scalars(
+        select(Contract).where(Contract.player_id.in_(list(roster_ids))).limit(500)
+    ).all()
+    if not contracts:
+        configured = get_contract_provider() is not None
+        return {
+            "team_id": team.id,
+            "available": False,
+            "reason": (
+                "Contract data is configured but no contracts matched this roster yet — "
+                "run `make sync-data`."
+                if configured
+                else "Contract data isn't imported. Download the Basketball-Reference "
+                "player-contracts page to data/imports/contracts/players.html, set "
+                "CONTRACT_DATA_PROVIDER=bbref_snapshot in .env, then run `make sync-data`."
+            ),
+            "contract_provider_configured": configured,
+        }
+
+    by_season: dict[str, dict] = {}
+    player_rows = []
+    for contract in contracts:
+        years = db.scalars(
+            select(ContractYear).where(ContractYear.contract_id == contract.id)
+        ).all()
+        seasons_payload = []
+        for year in sorted(years, key=lambda y: y.season):
+            bucket = by_season.setdefault(year.season, {"total": 0, "players": 0})
+            bucket["total"] += year.salary
+            bucket["players"] += 1
+            seasons_payload.append(
+                {
+                    "season": year.season,
+                    "salary": year.salary,
+                    "player_option": year.player_option,
+                    "team_option": year.team_option,
+                }
+            )
+        if seasons_payload:
+            final_season = seasons_payload[-1]["season"]
+            player_rows.append(
+                {
+                    "player_id": contract.player_id,
+                    "name": roster_ids.get(contract.player_id, "?"),
+                    "seasons": seasons_payload,
+                    "expiring": final_season == settings.cap_league_year,
+                    "no_trade_clause": contract.no_trade_clause,
+                    "source_name": contract.source_name,
+                    "source_date": contract.source_date.isoformat()
+                    if contract.source_date
+                    else None,
+                }
+            )
+
+    def _current_year_salary(row: dict) -> int:
+        seasons: list[dict] = row["seasons"]
+        for entry in seasons:
+            if entry["season"] == settings.cap_league_year:
+                return int(entry["salary"])
+        return 0
+
+    player_rows.sort(key=lambda r: -_current_year_salary(r))
+    cap_row = db.scalar(
+        select(LeagueCapParameters).where(
+            LeagueCapParameters.league_year == settings.cap_league_year
+        )
+    )
+    covered = sum(1 for pid in roster_ids if any(c.player_id == pid for c in contracts))
+    return {
+        "team_id": team.id,
+        "available": True,
+        "cap_league_year": settings.cap_league_year,
+        "roster_size": len(roster_ids),
+        "players_with_contracts": covered,
+        "complete": covered == len(roster_ids),
+        "seasons": [{"season": season, **bucket} for season, bucket in sorted(by_season.items())],
+        "players": player_rows,
+        "cap_parameters": {
+            "salary_cap": cap_row.salary_cap,
+            "luxury_tax": cap_row.luxury_tax,
+            "first_apron": cap_row.first_apron,
+            "second_apron": cap_row.second_apron,
+        }
+        if cap_row
+        else None,
+        "note": "Cap/apron position is only computed when every rostered player has a "
+        "known salary — partial payrolls are never presented as complete.",
+    }

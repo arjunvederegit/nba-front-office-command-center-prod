@@ -247,3 +247,57 @@ def get_player_contract(player_id: str, db: Session = Depends(get_db)) -> dict:
         ],
         "note": "Contract data is user-imported (not NBA.com data); provenance shown above.",
     }
+
+
+@router.get("/season-totals/{season}")
+def list_season_totals(season: str, db: Session = Depends(get_db)) -> dict:
+    """Imported season totals (user CSV) for the Player Lab directory: raw totals plus
+    safely derived per-game values, with provenance. One request instead of N."""
+    rows = db.scalars(
+        select(PlayerSeasonStats).where(
+            PlayerSeasonStats.season == season, PlayerSeasonStats.stat_type == "totals"
+        )
+    ).all()
+    settings = get_settings()
+    roster_team: dict[str, str] = {}
+    for entry in db.scalars(
+        select(RosterEntry).where(
+            RosterEntry.season == settings.current_season, RosterEntry.is_current
+        )
+    ).all():
+        roster_team[entry.player_id] = entry.team.abbreviation
+    imported_at = None
+    players = []
+    for row in rows:
+        player = db.get(Player, row.player_id)
+        if player is None:
+            continue
+        imported_at = row.source_retrieved_at or imported_at
+        players.append(
+            {
+                "player_id": player.id,
+                "nba_player_id": player.nba_player_id,
+                "name": player.full_name,
+                "position": player.position,
+                "team_abbr": roster_team.get(player.id),
+                "gp": row.games_played,
+                "totals": {
+                    k: v
+                    for k, v in (row.stats or {}).items()
+                    if k not in ("per_game", "rates", "source_file")
+                },
+                "per_game": (row.stats or {}).get("per_game", {}),
+                "rates": (row.stats or {}).get("rates", {}),
+            }
+        )
+    return {
+        "season": season,
+        "count": len(players),
+        "players": players,
+        "available": len(players) > 0,
+        "source": "user-imported season totals CSV (raw totals; per-game derived using GP)",
+        "imported_at": imported_at.isoformat() if imported_at else None,
+        "note": None
+        if players
+        else "No totals imported for this season — run `make import-stats-csv`.",
+    }

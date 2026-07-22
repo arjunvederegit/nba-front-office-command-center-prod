@@ -46,7 +46,7 @@ app.add_middleware(
 # Simple in-process rate limiter (per client IP, sliding minute window). A demo-scale
 # guard, not a substitute for infrastructure rate limiting in production.
 _request_log: dict[str, deque] = defaultdict(deque)
-RATE_LIMIT_PER_MINUTE = 240
+RATE_LIMIT_PER_MINUTE = 600
 
 
 @app.middleware("http")
@@ -57,10 +57,13 @@ def observability(request: Request, call_next):
 
         client_ip = request.client.host if request.client else "unknown"
         now = time.monotonic()
+        # Asset serving (photos/logos) is cheap, cacheable, and fired dozens of times
+        # per page — it is exempt from the API rate window.
+        is_asset = request.url.path.startswith(f"{API}/assets/")
         window = _request_log[client_ip]
         while window and window[0] < now - 60:
             window.popleft()
-        if len(window) >= RATE_LIMIT_PER_MINUTE:
+        if not is_asset and len(window) >= RATE_LIMIT_PER_MINUTE:
             return JSONResponse(
                 status_code=429,
                 content={
@@ -71,7 +74,8 @@ def observability(request: Request, call_next):
                     }
                 },
             )
-        window.append(now)
+        if not is_asset:
+            window.append(now)
 
         response = await call_next(request)
         response.headers["x-request-id"] = request_id
