@@ -47,6 +47,24 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
 
+    # --- Local media asset roots (user-supplied datasets; gitignored) ---
+    asset_logos_dir: str = ""  # default: <repo>/nbalogos
+    asset_player_images_dir: str = ""  # default: <repo>/nbaplayerimages
+    # --- Kaggle historical dataset cache (kagglehub) ---
+    kaggle_data_dir: str = ""  # default: kagglehub's own cache; override for CI/servers
+
+    @property
+    def logos_dir(self) -> Path:
+        return Path(self.asset_logos_dir) if self.asset_logos_dir else BACKEND_DIR.parent / "nbalogos"
+
+    @property
+    def player_images_dir(self) -> Path:
+        return (
+            Path(self.asset_player_images_dir)
+            if self.asset_player_images_dir
+            else BACKEND_DIR.parent / "nbaplayerimages"
+        )
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

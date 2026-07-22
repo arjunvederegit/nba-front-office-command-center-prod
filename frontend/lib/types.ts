@@ -134,6 +134,7 @@ export interface TeamEvaluation {
   confidence: string;
   components: Record<string, number | null>;
   excluded_components: string[];
+  drivers?: { component: string; score: number; weight: number; contribution: number }[];
   weights: Record<string, number>;
   detail: Record<string, Record<string, unknown>>;
   uncertainty: Uncertainty;

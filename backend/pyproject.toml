@@ -20,6 +20,9 @@ dependencies = [
     "pyyaml>=6.0",
     "apscheduler>=3.10",
     "markdown>=3.6",
+    "beautifulsoup4>=4.12",
+    "kagglehub>=0.3",
+    "pillow>=10.0",
 ]
 
 [project.optional-dependencies]

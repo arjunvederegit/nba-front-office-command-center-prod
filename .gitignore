@@ -48,3 +48,8 @@ frontend/playwright-report/
 .idea/
 .vscode/
 *.log
+
+# User-supplied local asset datasets (never committed; indexed + served locally)
+nbalogos/
+nbaplayerimages/
+data/imports/

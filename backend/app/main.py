@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
-from app.api.v1 import comparisons, health, players, scenarios, teams, trades
+from app.api.v1 import assets, comparisons, health, players, scenarios, teams, trades
 from app.config import get_settings
 from app.core.errors import (
     DomainError,
@@ -94,6 +94,7 @@ app.include_router(players.router, prefix=API)
 app.include_router(scenarios.router, prefix=API)
 app.include_router(trades.router, prefix=API)
 app.include_router(comparisons.router, prefix=API)
+app.include_router(assets.router, prefix=API)
 
 
 @app.get("/")

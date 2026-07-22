@@ -11,6 +11,10 @@ Commands
   train            Train impact model + archetypes; persist model versions
   score            Score current players, compute availability and team needs
   validate-data    Run data-quality checks
+  index-assets     Index local player photos / team logos into the media manifest
+  import-stats-csv <path>  Import the user-supplied season-totals CSV (default
+                   data/imports/nba_player_stats_2026.csv)
+  import-kaggle    Import historical enrichment from the Kaggle basketball dataset
 """
 
 import json
@@ -94,6 +98,25 @@ def main() -> None:
         with SessionLocal() as db:
             rows = single_jobs[command](db)
         print(f"{command}: {rows} rows")
+    elif command == "index-assets":
+        from app.assets.indexer import index_assets
+
+        with SessionLocal() as db:
+            summary = index_assets(db)
+        print(json.dumps(summary, indent=2, default=str))
+    elif command == "import-stats-csv":
+        from app.ingestion.stats_csv import import_stats_csv
+
+        csv_path = sys.argv[2] if len(sys.argv) > 2 else "../data/imports/nba_player_stats_2026.csv"
+        with SessionLocal() as db:
+            summary = import_stats_csv(db, csv_path)
+        print(json.dumps(summary, indent=2, default=str))
+    elif command == "import-kaggle":
+        from app.integrations.kaggle_nba.importer import import_history
+
+        with SessionLocal() as db:
+            summary = import_history(db)
+        print(json.dumps(summary, indent=2, default=str))
     elif command == "validate-data":
         from app.ingestion.quality import validate_data
 

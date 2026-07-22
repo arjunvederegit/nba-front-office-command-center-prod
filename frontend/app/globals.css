@@ -1,31 +1,48 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0f1a;
-  --panel: #101827;
-  --panel-2: #16202f;
-  --border: #223047;
-  --foreground: #e5ecf6;
-  --muted: #8fa1b8;
+  /* Surfaces */
+  --background: #0a0e17;
+  --panel: #101625;
+  --panel-2: #161e30;
+  --panel-3: #1d2740;
+  --border: #24304b;
+  /* Text */
+  --foreground: #e8edf6;
+  --muted: #8fa0b8;
+  /* Brand (RosterLab basketball orange) + data-viz accent */
+  --brand: #f97316;
+  --brand-soft: #fdba74;
   --accent: #38bdf8;
+  /* Status */
   --pass: #34d399;
   --fail: #f87171;
   --warn: #fbbf24;
   --unavail: #94a3b8;
+  /* Team theme defaults (overridden per subtree via teamThemeVars) */
+  --team-primary: #334155;
+  --team-secondary: #64748b;
+  --team-bright: #94a3b8;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-panel: var(--panel);
   --color-panel2: var(--panel-2);
+  --color-panel3: var(--panel-3);
   --color-line: var(--border);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brandsoft: var(--brand-soft);
   --color-accent: var(--accent);
   --color-pass: var(--pass);
   --color-fail: var(--fail);
   --color-warn: var(--warn);
   --color-unavail: var(--unavail);
+  --color-teamprimary: var(--team-primary);
+  --color-teamsecondary: var(--team-secondary);
+  --color-teambright: var(--team-bright);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -37,7 +54,12 @@ body {
 }
 
 ::selection {
-  background: rgba(56, 189, 248, 0.3);
+  background: rgba(249, 115, 22, 0.35);
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .scroll-thin::-webkit-scrollbar {
@@ -47,4 +69,34 @@ body {
 .scroll-thin::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 4px;
+}
+
+/* Skeleton shimmer for loading states */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel-2);
+  border-radius: 6px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(143, 160, 184, 0.12), transparent);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
 }

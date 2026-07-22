@@ -548,3 +548,31 @@ class GeneratedReport(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text)
     llm_enhanced: Mapped[bool] = mapped_column(Boolean, default=False)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MediaAsset(Base, ProvenanceMixin):
+    """Asset manifest for user-supplied local images (player photos, team logos).
+
+    Files stay outside git and outside the frontend bundle; the backend serves them
+    by stable NBA id with deterministic fallbacks. `match_method`/`confidence`
+    record how a name-keyed file was resolved to an identity — unmatched files are
+    kept for review, never guessed into a player."""
+
+    __tablename__ = "media_assets"
+    __table_args__ = (
+        UniqueConstraint("entity_type", "file_path", name="uq_media_asset_path"),
+        Index("ix_media_entity", "entity_type", "nba_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
+    entity_type: Mapped[str] = mapped_column(String(20))  # player | team
+    player_id: Mapped[str | None] = mapped_column(ForeignKey("players.id"))
+    team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"))
+    nba_id: Mapped[int | None] = mapped_column(Integer)
+    file_path: Mapped[str] = mapped_column(String(500))  # relative to the asset root dir
+    content_type: Mapped[str] = mapped_column(String(50), default="image/jpeg")
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
+    match_method: Mapped[str] = mapped_column(String(30))  # nba_id|exact_name|normalized_name|abbreviation|manual
+    confidence: Mapped[str] = mapped_column(String(20), default="high")  # high|medium|unmatched
+    source_label: Mapped[str] = mapped_column(String(100))  # e.g. folder name the file came from
+    alt_text: Mapped[str] = mapped_column(String(200))

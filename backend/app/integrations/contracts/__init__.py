@@ -42,4 +42,10 @@ def get_contract_provider() -> "ContractProvider | None":
         from .file_provider import FileContractProvider
 
         return FileContractProvider(settings.contract_data_file)
+    if settings.contract_data_provider == "bbref_snapshot":
+        from .bbref_provider import BasketballReferenceSnapshotProvider
+
+        return BasketballReferenceSnapshotProvider(
+            settings.contract_data_file or "data/imports/contracts/players.html"
+        )
     return None

@@ -116,10 +116,108 @@ def data_health(db: Session) -> dict:
     contract_provider = get_contract_provider()
     import nba_api as nba_api_pkg
 
+    from app.assets.indexer import coverage as asset_coverage
+
+    assets = asset_coverage(db)
+
+    def latest_run(job: str) -> dict | None:
+        for run in recent_runs:
+            if run["job"] == job and run["status"] == "succeeded":
+                return run
+        return None
+
+    nba_fresh = (
+        last_success is not None
+        and (now - last_success.replace(tzinfo=UTC))
+        < timedelta(seconds=settings.nba_api_stale_after_seconds * 2)
+        if last_success
+        else False
+    )
+
+    csv_run = latest_run("import_stats_csv")
+    kaggle_run = latest_run("import_kaggle_history")
+    assets_run = latest_run("index_assets")
+    contracts_run = latest_run("sync_contracts")
+    contracts_rows = int(tables.get("contracts", {}).get("rows") or 0)
+
+    # Fan-readable source cards: status ∈ fresh|stale|derived|incomplete|unavailable|failed
+    source_cards = [
+        {
+            "key": "current_nba_data",
+            "title": "Current NBA data",
+            "status": "fresh" if nba_fresh else ("stale" if last_success else "unavailable"),
+            "last_update": last_success.isoformat() if last_success else None,
+            "coverage": f"{tables.get('rosters', {}).get('rows', 0)} roster spots · "
+            f"{tables.get('player_season_stats', {}).get('rows', 0)} stat rows",
+            "source": f"NBA.com via nba_api {nba_api_pkg.__version__}",
+            "action": None if nba_fresh else "Run `make sync-data` to refresh from NBA.com.",
+        },
+        {
+            "key": "contracts",
+            "title": "Contracts & salaries",
+            "status": "fresh"
+            if contract_provider is not None and contracts_rows > 0
+            else "unavailable",
+            "last_update": contracts_run["finished_at"] if contracts_run else None,
+            "coverage": f"{contracts_rows} contracts on file",
+            "source": contract_provider.name if contract_provider else "not configured",
+            "action": None
+            if contract_provider is not None and contracts_rows > 0
+            else "Download the Basketball-Reference contracts page to "
+            "data/imports/contracts/players.html, set CONTRACT_DATA_PROVIDER=bbref_snapshot, "
+            "then run `make sync-data`. Salary rules stay unavailable until then.",
+        },
+        {
+            "key": "player_photos",
+            "title": "Player photos",
+            "status": "derived"
+            if assets.get("rostered_players_with_photo", 0) > 0
+            else "unavailable",
+            "last_update": assets_run["finished_at"] if assets_run else None,
+            "coverage": f"{round(100 * assets.get('player_photo_coverage', 0))}% of rostered players",
+            "source": "local image dataset (name→ID resolved; unmatched kept for review)",
+            "action": None
+            if assets.get("rostered_players_with_photo", 0) > 0
+            else "Place image folders at ./nbaplayerimages and run `make index-assets`.",
+        },
+        {
+            "key": "team_logos",
+            "title": "Team logos",
+            "status": "derived" if assets.get("teams_with_logo", 0) >= 30 else "incomplete",
+            "last_update": assets_run["finished_at"] if assets_run else None,
+            "coverage": f"{assets.get('teams_with_logo', 0)}/30 teams",
+            "source": "local logo dataset (CC0)",
+            "action": None
+            if assets.get("teams_with_logo", 0) >= 30
+            else "Run `make index-assets`.",
+        },
+        {
+            "key": "historical_database",
+            "title": "Historical database",
+            "status": "derived" if kaggle_run else "unavailable",
+            "last_update": kaggle_run["finished_at"] if kaggle_run else None,
+            "coverage": "player bio/draft enrichment"
+            + (" + current-season totals CSV" if csv_run else ""),
+            "source": "Kaggle wyattowalsh/basketball + user CSV import",
+            "action": None if kaggle_run else "Run `make import-kaggle` (multi-GB download).",
+        },
+        {
+            "key": "models",
+            "title": "Models & evaluation",
+            "status": "fresh" if models else "unavailable",
+            "last_update": models[0]["trained_at"] if models else None,
+            "coverage": f"{len(models)} active models",
+            "source": "trained locally on ingested data (validation metrics below)",
+            "action": None if models else "Run `make train && make score`.",
+        },
+    ]
+
     return {
         "generated_at": now.isoformat(),
         "current_season": settings.current_season,
         "cap_league_year": settings.cap_league_year,
+        "source_cards": source_cards,
+        "asset_coverage": assets,
         "providers": {
             "nba_api": {
                 "configured": True,
