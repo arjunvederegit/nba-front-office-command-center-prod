@@ -1,76 +1,85 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Full decision flow: open a team → create a scenario → construct a trade →
- * validate → save → compare → export report. Requires an ingested local database
- * (`make sync-data && make train && make score`).
+ * Core RosterLab flows against a live local stack with an ingested database
+ * (`make sync-data && make train && make score`, plus `make index-assets` /
+ * `make import-stats-csv` for full coverage). No NBA.com calls happen here.
  */
 
-test("landing shows honest data status", async ({ page }) => {
+test("home shows brand, honest data badges, and the team picker", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Structured decisions")).toBeVisible();
-  await expect(page.getByText(/data synced|full data health/).first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "RosterLab home" })).toBeVisible();
+  await expect(page.getByText("Run your front office", { exact: false })).toBeVisible();
+  await expect(page.getByText(/NBA data synced|no data synced/).first()).toBeVisible();
+  // 30-team picker grid
+  await expect(page.getByRole("button", { name: /Boston Celtics/ })).toBeVisible();
 });
 
-test("data health page reports providers and tables", async ({ page }) => {
-  await page.goto("/data-health");
-  await expect(page.getByRole("heading", { name: "Data health" })).toBeVisible();
-  await expect(page.getByText("nba api", { exact: false }).first()).toBeVisible();
-  // contracts provider is honestly reported as not configured by default
-  await expect(page.getByText("not configured").first()).toBeVisible();
+test("data status reports source cards and honest gaps", async ({ page }) => {
+  await page.goto("/data-status");
+  await expect(page.getByText("Current NBA data").first()).toBeVisible();
+  await expect(page.getByText("Contracts", { exact: false }).first()).toBeVisible();
+  // contracts are not imported by default — the page must say so, not show all-green
+  await expect(page.getByText(/not configured|unavailable/i).first()).toBeVisible();
 });
 
-test("decision room → scenario → trade builder → validate → save → report", async ({
-  page,
-}) => {
-  // 1. Decision room: pick a focal team
-  await page.goto("/decision-room");
-  const teamSelect = page.getByLabel("Focal team").or(page.locator("select").first());
-  await teamSelect.selectOption({ index: 2 });
-  await expect(page.getByText("Roster diagnosis", { exact: false })).toBeVisible();
-
-  // 2. Save scenario
-  await page.getByPlaceholder(/win-now push/).fill("E2E scenario");
-  await page.getByRole("button", { name: "Save scenario" }).click();
-  await expect(page.getByText("Scenario saved", { exact: false })).toBeVisible({
+test("player lab lists imported totals with per-game toggle", async ({ page }) => {
+  await page.goto("/player-lab");
+  await expect(page.getByRole("heading", { name: /Player Lab/i })).toBeVisible({
     timeout: 15_000,
   });
+  // either real imported data or the honest empty state — both mention season totals
+  await expect(page.getByText(/season totals/i).first()).toBeVisible({ timeout: 20_000 });
+});
 
-  // 3. Trade builder: two teams
-  await page.goto("/trade-builder");
+test("full flow: team hub → strategy → trade machine → rules → save → compare", async ({
+  page,
+}) => {
+  // 1. Team Hub: open a team
+  await page.goto("/team-hub");
+  await page.getByRole("link", { name: /Celtics/ }).first().click();
+  await expect(page.getByText("Choose your team strategy")).toBeVisible({ timeout: 20_000 });
+
+  // 2. Save a strategy
+  await page.getByRole("button", { name: "Save strategy" }).click();
+  await expect(page.getByText(/Strategy saved/).first()).toBeVisible({ timeout: 15_000 });
+
+  // 3. Trade Machine via the header CTA (carries ?team=)
+  await page.getByRole("link", { name: "Start a trade" }).click();
+  await expect(page.getByRole("heading", { name: "Trade Machine" })).toBeVisible();
   const addTeam = page.getByLabel("Add team to trade");
   await addTeam.selectOption({ index: 1 });
-  await addTeam.selectOption({ index: 1 });
-  await expect(page.locator("header span.font-mono").first()).toBeVisible({ timeout: 20_000 });
 
-  // 4. Move a player each way using the accessible buttons
-  const sendButtons = page.getByRole("button", { name: /Send .* to/ });
+  // 4. Move a player with the accessible buttons
   await page.locator(".group").first().hover();
-  await sendButtons.first().click();
+  await page.getByRole("button", { name: /Send .* to/ }).first().click();
   await expect(page.getByText("Outgoing")).toBeVisible();
 
-  // 5. Backend validation appears (never frontend-decided)
-  await expect(page.getByText("Legality (backend-authoritative)")).toBeVisible();
+  // 5. Live rules check (backend-authoritative, honest states)
+  await expect(page.getByText("Trade rules check")).toBeVisible();
   await expect(
-    page
-      .getByText(/Verified legal|Conditionally valid|Verified illegal|Not evaluated/)
-      .first(),
+    page.getByText(/Passes rules check|Fails rules check|Incomplete check|Not checked/).first(),
   ).toBeVisible({ timeout: 20_000 });
 
-  // 6. Save and open full evaluation
-  await page.getByLabel("Trade name").fill("E2E test deal");
-  await page.getByRole("button", { name: /Save & open full evaluation/ }).click();
-  await expect(page.getByRole("heading", { name: "E2E test deal" })).toBeVisible({
+  // 6. Inline evaluation with fan verdict
+  await page.getByRole("button", { name: "Evaluate this deal" }).click();
+  await expect(page.getByText("Deal evaluation")).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByText(/Strong fit|Mixed outcome|High-risk upside|Poor strategic fit|Cannot fully evaluate/).first(),
+  ).toBeVisible();
+
+  // 7. Advanced analysis discloses
+  await page.getByRole("button", { name: "Show advanced analysis" }).click();
+  await expect(page.getByText("Component scores")).toBeVisible();
+
+  // 8. Save the deal → full report page
+  await page.getByLabel("Deal name").fill("E2E RosterLab deal");
+  await page.getByRole("button", { name: "Save deal" }).click();
+  await expect(page.getByRole("heading", { name: "E2E RosterLab deal" })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByText("Composite utility", { exact: false })).toBeVisible();
-  await expect(page.getByText("Rule-by-rule legality")).toBeVisible();
 
-  // 7. Report export links exist
-  await expect(page.getByRole("link", { name: "Report (MD)" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Report (print)" })).toBeVisible();
-
-  // 8. Compare page lists the saved trade
+  // 9. Compare page lists it
   await page.goto("/compare");
-  await expect(page.getByText("E2E test deal").first()).toBeVisible();
+  await expect(page.getByText("E2E RosterLab deal").first()).toBeVisible();
 });

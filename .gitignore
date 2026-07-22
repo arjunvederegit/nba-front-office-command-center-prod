@@ -52,4 +52,8 @@ frontend/playwright-report/
 # User-supplied local asset datasets (never committed; indexed + served locally)
 nbalogos/
 nbaplayerimages/
-data/imports/
+data/imports/*
+!data/imports/README.md
+!data/imports/contracts/
+data/imports/contracts/*
+!data/imports/contracts/.gitkeep

@@ -5,7 +5,8 @@ PY := $(BACKEND)/.venv/bin/python
 PIP := $(BACKEND)/.venv/bin/pip
 
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
-        sync-data build-features train score seed-config migrate e2e help
+        sync-data build-features train score seed-config migrate e2e help \
+        index-assets import-stats-csv import-kaggle
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | sed 's/:.*//' | sort -u
@@ -65,3 +66,12 @@ score: ## Score current players and compute team needs
 
 seed-config: ## Load salary-cap parameter YAML into the database
 	cd $(BACKEND) && .venv/bin/python -m app.cli seed-config
+
+index-assets: ## Index local player photos / team logos into the media manifest
+	cd $(BACKEND) && .venv/bin/python -m app.cli index-assets
+
+import-stats-csv: ## Import the user-supplied season-totals CSV (data/imports/)
+	cd $(BACKEND) && .venv/bin/python -m app.cli import-stats-csv
+
+import-kaggle: ## Import historical enrichment from the Kaggle basketball dataset
+	cd $(BACKEND) && .venv/bin/python -m app.cli import-kaggle

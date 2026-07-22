@@ -16,27 +16,19 @@ async function shot(path, name, extraWait = 1500) {
   console.log(`captured ${name}`);
 }
 
-await shot("/", "landing");
+await shot("/", "landing", 2500);
 
-// Decision room with a focal team selected
-await page.goto("http://localhost:3000/decision-room", { waitUntil: "networkidle" });
-await page.locator("select").first().selectOption({ index: 2 });
-await page.waitForTimeout(2500);
-await page.screenshot({ path: `${OUT}decision-room.png` });
-console.log("captured decision-room");
-
-// Team page (first team from API)
 const teams = await (await fetch("http://localhost:8000/api/v1/teams")).json();
 const bos = teams.find((t) => t.abbreviation === "BOS") ?? teams[0];
-await shot(`/teams/${bos.id}`, "team-page", 2500);
+await shot(`/team-hub/${bos.id}`, "team-page", 3000);
 
-// Trade detail (existing saved trade)
 const trades = await (await fetch("http://localhost:8000/api/v1/trades")).json();
 if (trades.length > 0) {
-  await shot(`/trades/${trades[trades.length - 1].id}`, "trade-evaluation", 3500);
+  await shot(`/trades/${trades[0].id}`, "trade-evaluation", 3500);
 }
 
-await shot("/trade-builder", "trade-builder", 1500);
-await shot("/data-health", "data-health", 2000);
+await shot(`/trade-machine?team=${bos.id}`, "trade-builder", 3000);
+await shot("/player-lab", "player-lab", 3000);
+await shot("/data-status", "data-health", 2500);
 
 await browser.close();

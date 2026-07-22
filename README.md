@@ -1,154 +1,109 @@
-# TradeLab — NBA Trade Deadline Decision Room
+# RosterLab — NBA Front Office Simulator
 
-**A decision-support system that turns "should we make this trade?" into a structured, honest, explainable analysis** — built on real NBA data from NBA.com via [`nba_api`](https://github.com/swar/nba_api), a CBA-aware legality engine, and a multi-component evaluation framework with quantified uncertainty.
+**Run your front office: build trades against live NBA rosters, get an honest trade-rules check, and see projected impact with uncertainty — every number traceable to its source.**
 
-![TradeLab decision room](docs/screenshots/landing.png)
+RosterLab is a full-stack front-office simulator: real provider-backed NBA data, a CBA-aware rules engine with a four-state honesty standard, validated player-impact modeling, and a fan-friendly product layer (team logos, player photos, plain-language verdicts) over serious, inspectable analytics.
 
-> **Live demo:** _placeholder — see [Deployment](#deployment)_ · **Status:** fully functional local build; all data below ingested live from NBA.com on July 20, 2026.
+![RosterLab home](docs/screenshots/landing.png)
+
+> **Status:** fully functional local build. Data below was ingested live from NBA.com (July 2026), enriched from a user CSV, the Kaggle basketball database, and local image datasets. **Not affiliated with the NBA.**
 
 ---
 
-## The problem
+## The tool suite
 
-NBA front offices don't evaluate trades with one number. A single deal simultaneously affects current performance, rotation balance, positional fit, salary-cap and apron law, luxury-tax exposure, competitive timelines, asset optionality, and downside risk — and the right answer depends on *which* of those the organization currently values. Public trade machines collapse this into a binary "works/doesn't work." TradeLab instead models the actual decision:
+| Tool | What it does | Status |
+| --- | --- | --- |
+| **Team Hub** | Roster with photos grouped by position, model-derived strengths & needs, competitive window, payroll honesty, strategy setup | available |
+| **Trade Machine** | 2–3-team trades: drag-and-drop with accessible fallbacks, live backend rules check, fan verdict + advanced analytics, save/share links | available |
+| **Compare Deals** | Saved deals side by side: component matrix, live priority sliders that re-rank on the fly, Pareto frontier, rank-stability | available |
+| **Player Lab** | 573 imported 2025-26 stat lines: photos, totals *and* derived per-game (never mixed), league percentiles, 2–4-player comparison | available |
+| **Cap Lab** | Payroll by season, top/expiring contracts, option markers, cap reference lines — activates when contracts are imported | needs contract import |
+| **Salary Predictor** | Deliberately **coming soon**: needs historical contract data before a validated model can exist — RosterLab ships no fake models | roadmap |
 
-> Given this team's roster, timeline, financial position, strategic priorities, and risk tolerance, which trade alternative creates the strongest organizational outcome — and does that conclusion survive changed assumptions?
+## Data sources & hierarchy
 
-## Who it's for
+Five sources, joined by **stable NBA IDs** with recorded confidence (see [docs/identity-resolution.md](docs/identity-resolution.md)); conflicts are logged, never silently overwritten:
 
-- **Basketball-operations analysts** — construct legal or near-legal structures, compare alternatives, surface assumptions, export an executive memo.
-- **Executives** — a concise recommendation with tradeoffs, cap consequences, upside/downside scenarios, and confidence.
-- **Portfolio reviewers** — a demonstration of structured decision-making under complex constraints (see [docs/interview-guide.md](docs/interview-guide.md)).
+1. **NBA.com via [`nba_api`](https://github.com/swar/nba_api)** (authoritative): teams, players, rosters, standings, stats, games — hardened client with rate limiting, retries, circuit breaker, schema contracts.
+2. **User CSV** (`data/imports/nba_player_stats_2026.csv`): 2025-26 season **totals**, imported by official `PLAYER_ID` (573/582 matched; 9 unmatched recorded), per-game derived safely via GP.
+3. **Kaggle [`wyattowalsh/basketball`](https://www.kaggle.com/datasets/wyattowalsh/basketball)** via `kagglehub`: historical bio/draft enrichment — fills only NULL fields (4,516 players enriched; 273 conflicts preserved un-overwritten).
+4. **Basketball-Reference contracts snapshot** (user-downloaded page, parsed locally — no live scraping): salaries by league year with option markers; enables salary-matching rules and Cap Lab.
+5. **Local image datasets** (gitignored): 30/30 team logos, 2,196/2,476 player-image folders resolved to identities by name→ID matching (280 unmatched kept for review); served by the backend with deterministic fallbacks.
 
-## Key capabilities
+**Data Status** shows six plain-language source cards (fresh / stale / derived / incomplete / unavailable) with coverage and the exact next step for anything missing.
 
-| Capability | How |
-| --- | --- |
-| **Real, current NBA data** | Teams, players, rosters, standings, stats, games from NBA.com via `nba_api` 1.11.4 — provenance (provider, endpoint, timestamps, run ID) stored on every record, freshness badged on every screen |
-| **Trade legality** | Modular 2023-CBA rules engine: expanded/standard TPE salary-matching bands, first/second-apron limits, aggregation prohibition, roster limits, recently-signed windows, no-trade clauses, two-way exclusions |
-| **Four-state honesty** | `verified_legal` · `verified_illegal` · `conditionally_valid` · `not_evaluated` — partial validation is **never** presented as legal |
-| **Player impact** | TradeLab Estimated Impact (TEI): ridge model vs transparent index, chosen by time-aware validation (no season leakage), with uncertainty bands |
-| **Evaluation** | U = w·(performance, fit, contract, timeline, flexibility, risk) on 0–100; unavailable components are excluded and weights renormalized — never faked |
-| **Uncertainty** | 2,000-draw Monte Carlo over impact, availability, minutes, and wins-conversion; median / p10–p90 / P(positive) |
-| **Sensitivity** | Dirichlet-sampled weight perturbation → first-place share and rank volatility; tornado charts |
-| **Recommendation search** | Constrained beam search over real rosters with both-sides utility floors — clearly labeled model exploration, not predictions |
+## Honesty guarantees
 
-## Architecture
+- A trade is **never** labeled legal from partial validation: `passes / fails / incomplete (data missing) / not checked`.
+- Missing salaries, injuries, or pick ownership are explicit unavailable states — never estimated.
+- Season totals are never presented as per-game values; proxies are labeled as proxies.
+- Every screen shows source + last-updated; every model shows its validation numbers.
 
-```
-Next.js 16 (App Router, Tailwind, TanStack Query, dnd-kit, Recharts)
-        │  /api/v1 (rewrite)
-        ▼
-FastAPI ──┬─ api/v1: teams · players · scenarios · trades · comparisons · data-health
-          ├─ cba/: TradeRule engine + TradeContext builder (backend-authoritative)
-          ├─ services/: evaluation · candidates · reports · payroll · data health
-          ├─ analytics/: features · TEI · archetypes · needs · fit · projection ·
-          │              uncertainty · sensitivity  (scikit-learn, fixed seeds)
-          ├─ ingestion/: idempotent jobs + run bookkeeping + quality checks
-          ├─ db/: SQLAlchemy 2 (31 tables, UUID PKs, provenance columns) + Alembic
-          └─ integrations/
-              ├─ nba_api/: client (rate limit · retry+jitter · circuit breaker ·
-              │            cache · schema validation · health) → NBA.com
-              └─ contracts/: ContractProvider interface (optional; none bundled)
-Postgres 16 + Redis 7 (docker compose) · SQLite + in-process cache (local dev)
-```
+## The analytics (validated, inspectable)
 
-Details: [docs/architecture.md](docs/architecture.md) · rationale: [docs/decision-log.md](docs/decision-log.md)
+- **TEI (estimated player impact)**: ridge model over recency-weighted 3-season features, time-aware validation — held-out **MAE 0.637 vs 0.717 persistence**; uncertainty bands from residuals. [Model card](docs/model-card-player-impact.md).
+- **Wins projection**: 240-minute rotation reallocation with availability discounting; net-rating→wins slope **calibrated on 90 team-seasons (2.24, R²=0.95)**; 2,000-draw Monte Carlo per evaluation.
+- **Decision score**: six weighted components (missing components excluded, weights renormalized) + Dirichlet rank-stability and tornado sensitivity.
+- **CBA engine**: expanded/standard TPE bands (verified 2025-26 & 2026-27 figures), apron restrictions, aggregation prohibition, roster limits, recently-signed windows. [Rule-by-rule coverage](docs/cba-rule-coverage.md).
 
-## Data sources and freshness
-
-- **NBA.com via `nba_api`** (required, primary): identity, rosters, standings, stats, games. Live-game endpoints (cdn.nba.com) are supported but disabled by default (offseason) and surface classified errors when unreachable.
-- **Contracts**: `nba_api` does not provide contract data. TradeLab ships **no** contract provider; salary features honestly report *unavailable* until you configure one (see [data/contracts/README.md](data/contracts/README.md)). Missing salaries are never estimated.
-- **Cap parameters**: version-controlled YAML verified against official NBA releases ([2025-26](backend/app/config/cap_rules/2025-26.yaml), [2026-27](backend/app/config/cap_rules/2026-27.yaml)).
-- **Injuries / verified pick ownership**: no provider bundled → labeled unavailable; availability uses historical games played; picks are hypothetical and labeled.
-
-Every screen shows `Source: NBA.com via nba_api · Updated <timestamp>` plus stale badges past TTL; `/data-health` shows per-table freshness, sync history, quality issues, and model versions.
-
-![Data health](docs/screenshots/data-health.png)
-
-## The math (summary)
-
-- **Composite utility** `U = Σ w_k·C_k`, components normalized to 0–100 (50 = neutral), user-controlled weights with `Σw=1`; unavailable components excluded + weights renormalized.
-- **TEI**: recency-weighted (λ=0.7, minutes-weighted) 3-season features → ridge regression predicting next-season `0.6·z(PIE)+0.4·z(NET_RATING)`; validated on the held-out 2024-25→2025-26 transition (**MAE 0.637 vs 0.717 persistence baseline**); transparent weighted-index fallback.
-- **Wins**: `ΔW ≈ slope·ΔNetRating·(G/82)` with slope **calibrated on 90 ingested team-seasons (2.24 wins/point, R²=0.95)** — not a hard-coded constant.
-- **Rotation**: 240 minutes reallocated proportionally with caps, user overrides, availability discounting, replacement-level fill-in.
-- **Fit**: `F = Σ n_k·Δs_k − γ·Σ max(0, r_k)` over percentile skill vectors vs transparent, rule-based team needs.
-
-Full write-up with formulas and limitations: [docs/methodology.md](docs/methodology.md) · model cards: [impact](docs/model-card-player-impact.md), [market value](docs/model-card-market-value.md), [team projection](docs/model-card-team-projection.md)
-
-## Trade legality scope
-
-Implemented and unit-tested: salary-data availability, expanded TPE (200%+$250K / +$9.096M band / 125%+$250K, scaled per league year), standard TPE for apron teams (100%+$250K), second-apron aggregation prohibition, minimum team salary, roster limits (with honest two-way ambiguity), recently-signed windows, no-trade clauses, two-way exclusions, Stepien (reports unavailable without authoritative pick data).
-
-**Not implemented** (documented, never silently faked): sign-and-trades, trade exceptions, cash, base-year compensation, hard-cap triggers. Rule-by-rule coverage with formulas, sources, and tests: [docs/cba-rule-coverage.md](docs/cba-rule-coverage.md).
-
-> TradeLab is an analytical portfolio project — **not** an official NBA cap-management product.
+Full write-up: [docs/methodology.md](docs/methodology.md) · in-product: `/methodology` (plain-language layer + technical layer).
 
 ## Screenshots
 
-| Decision room | Trade evaluation |
+| Team Hub | Trade Machine |
 | --- | --- |
-| ![Decision room](docs/screenshots/decision-room.png) | ![Trade evaluation](docs/screenshots/trade-evaluation.png) |
+| ![Team Hub](docs/screenshots/team-page.png) | ![Trade Machine](docs/screenshots/trade-builder.png) |
 
-| Team page | Trade builder |
+| Deal evaluation | Data Status |
 | --- | --- |
-| ![Team page](docs/screenshots/team-page.png) | ![Trade builder](docs/screenshots/trade-builder.png) |
+| ![Evaluation](docs/screenshots/trade-evaluation.png) | ![Data Status](docs/screenshots/data-health.png) |
 
 ## Getting started
 
 ```bash
-git clone <this repo> && cd <repo>
 make setup          # backend venv + frontend npm install + .env from template
-make migrate        # Alembic → SQLite by default (Postgres via DATABASE_URL)
-make seed-config    # load verified salary-cap parameters
-make sync-data      # ingest current NBA data from NBA.com via nba_api (network)
-make train          # features → TEI + archetypes + wins calibration
-make score          # team needs
+make migrate        # Alembic (SQLite by default; Postgres via DATABASE_URL)
+make seed-config    # verified salary-cap parameters (2025-26 + 2026-27)
+make sync-data      # live NBA data from NBA.com via nba_api (network)
+make train && make score
 make dev            # backend :8000 + frontend :3000
 ```
 
-Or containerized (Postgres + Redis + API + worker + frontend):
+### Optional data imports
 
 ```bash
-docker compose up --build
+make index-assets      # player photos (./nbaplayerimages) + team logos (./nbalogos)
+make import-stats-csv  # 2025-26 season totals (data/imports/nba_player_stats_2026.csv)
+make import-kaggle     # Kaggle basketball DB enrichment (~700MB download; no auth for
+                       # public datasets — see docs/kaggle-setup.md)
+# Contracts: save basketball-reference.com/contracts/players.html to
+# data/imports/contracts/players.html, set CONTRACT_DATA_PROVIDER=bbref_snapshot,
+# then: make sync-data   (see data/imports/README.md)
 ```
 
-### Environment variables
-
-See [.env.example](.env.example). Notables: `DATABASE_URL`, `REDIS_URL` (optional), `NBA_API_*` throttling safeguards, `CURRENT_SEASON`, `CAP_LEAGUE_YEAR`, `CONTRACT_DATA_PROVIDER` (optional), `ADMIN_TOKEN` (protects `/api/v1/admin/sync`), `LIVE_DATA_ENABLED`.
+Containerized: `docker compose up --build` (Postgres 16 + Redis 7 + API + worker + frontend).
 
 ### Testing
 
 ```bash
-make test       # backend pytest (76 tests) + frontend vitest (14 tests)
-make lint       # ruff + mypy + eslint + tsc — all clean
-make e2e        # Playwright (3 specs) against the local stack
+make test    # backend pytest (114) + frontend vitest
+make lint    # ruff + mypy + eslint + tsc
+make e2e     # Playwright core flows against the local stack
 ```
 
-API docs: http://localhost:8000/docs (OpenAPI).
+## Repository policy
 
-## Deployment
-
-- **Frontend**: Vercel (`frontend/`, set `NEXT_PUBLIC_API_URL`).
-- **Backend**: any container host (Render/Railway/Fly.io) using `backend/Dockerfile`; run `alembic upgrade head` on release; managed Postgres + Redis; run `python -m app.worker` as a background service for scheduled syncs.
-- The app **fails safely without credentials**: no contract provider → salary features unavailable; NBA.com unreachable → classified errors, last snapshot retained, stale badges shown. A demo deployment should state its snapshot date (the UI's freshness lines do this automatically).
-
-## Limitations (honest scope)
-
-No bundled contract/injury/pick providers; TEI is box-score-based; CBA coverage is a documented subset; single-season wins mapping assumes roster-context stability. Full list: [docs/limitations.md](docs/limitations.md).
-
-## Roadmap
-
-Lineup-level on/off ingestion → TEI v2 · contract-provider adapters + market-salary model with historical data · three-team candidate search · draft-pick valuation with authoritative ownership · report PDF export.
+No NBA data, images, or licensed datasets are committed — everything is fetched or imported locally by the operator with provenance. Test fixtures are tiny, clearly-marked synthetic records. See [data/README.md](data/README.md).
 
 ## Documentation
 
-[Product requirements](docs/product-requirements.md) · [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) · [CBA coverage](docs/cba-rule-coverage.md) · [Data sources](docs/data-sources.md) · [Data dictionary](docs/data-dictionary.md) · [Decision log (ADRs)](docs/decision-log.md) · [Limitations](docs/limitations.md) · [Demo script](docs/demo-script.md) · [Resume bullets](docs/resume-bullets.md) · [Interview guide](docs/interview-guide.md)
+[Enhancement plan](docs/rosterlab-enhancement-plan.md) · [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) · [CBA coverage](docs/cba-rule-coverage.md) · [Data sources](docs/data-sources.md) · [Data dictionary](docs/data-dictionary.md) · [Identity resolution](docs/identity-resolution.md) · [Kaggle setup](docs/kaggle-setup.md) · [Decision log](docs/decision-log.md) · [Model cards](docs/model-card-player-impact.md) · [Limitations](docs/limitations.md) · [Demo script](docs/demo-script.md) · [Interview guide](docs/interview-guide.md)
+
+## Roadmap
+
+Salary Predictor (once historical contract data exists) · Free Agency Planner · Draft Fit · Rotation Builder · Extension Simulator — represented in the product as honest "coming soon" states, never fake functionality.
 
 ## Disclaimer
 
-Independent portfolio project; not affiliated with or endorsed by the NBA or NBPA. NBA data is retrieved at runtime from NBA.com under its terms and is not redistributed here. Team names/trademarks belong to their owners. No player photography is used (initials avatars only). Nothing here is professional cap or investment advice.
-
-## Resume-ready summary
-
-Built a full-stack NBA trade decision-support platform (Next.js, FastAPI, PostgreSQL, Redis, scikit-learn) on live provider-backed NBA data with a modular CBA legality engine, validated player-impact modeling, Monte Carlo uncertainty, and weight-sensitivity analysis — engineered for data honesty end to end: provenance on every record, explicit unavailable states, and a four-state legality standard that never overstates certainty.
+Independent portfolio project; not affiliated with or endorsed by the NBA or NBPA. NBA data is retrieved at runtime under the source sites' terms and is not redistributed. Team names/logos and player images belong to their owners and are used locally for identification. This is an analytical simulator, not professional cap-management or investment advice.

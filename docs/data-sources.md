@@ -59,3 +59,17 @@ legality caps at `conditionally_valid`.**
 No NBA data is committed to this repository; everything is fetched at runtime by the
 operator under NBA.com's terms. Test fixtures are small synthetic records clearly
 marked as fixtures. Logs avoid wholesale provider payloads.
+
+## User-imported and enrichment sources (RosterLab, July 2026)
+
+| Source | Domain | Join key | Import |
+| --- | --- | --- | --- |
+| `data/imports/nba_player_stats_2026.csv` | 2025-26 season totals (573/582 imported; 9 unmatched ids recorded) | `PLAYER_ID` exact | `make import-stats-csv` |
+| Kaggle `wyattowalsh/basketball` (nba.sqlite via kagglehub) | historical bio/draft enrichment — NULL-fill only, 273 conflicts preserved | `person_id == nba_player_id` | `make import-kaggle` ([setup](kaggle-setup.md)) |
+| Basketball-Reference contracts page (user-downloaded snapshot) | salaries by league year + option markers | name (+ mapped team code), unmatched preserved | `CONTRACT_DATA_PROVIDER=bbref_snapshot` + `make sync-data` |
+| `./nbalogos` + `./nbaplayerimages` (local, gitignored) | presentation only — logos + photos | abbreviation / resolved name→`PLAYER_ID` (confidence recorded) | `make index-assets` |
+
+Precedence and conflict policy: see [identity-resolution.md](identity-resolution.md).
+Nothing in these directories is committed or redistributed; the backend serves images
+locally and Data Status reports coverage (30/30 logos, ~84% of rostered players with
+photos as of the July 2026 index run).
