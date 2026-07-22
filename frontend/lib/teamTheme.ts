@@ -60,13 +60,35 @@ export function teamThemeVars(abbreviation: string | null | undefined): React.CS
   } as React.CSSProperties;
 }
 
-/** Favorite-team persistence (browser only). */
+/** Favorite-team persistence (browser only), exposed as an external store so React
+ * components can subscribe without setState-in-effect patterns. */
+import { useSyncExternalStore } from "react";
+
 const FAVORITE_KEY = "rosterlab.favoriteTeam";
+const favoriteListeners = new Set<() => void>();
+
+function subscribeFavorite(callback: () => void): () => void {
+  favoriteListeners.add(callback);
+  return () => favoriteListeners.delete(callback);
+}
+
+function favoriteSnapshot(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(FAVORITE_KEY);
+}
 
 export function getFavoriteTeam(): { id: string; abbreviation: string } | null {
-  if (typeof window === "undefined") return null;
+  const raw = favoriteSnapshot();
   try {
-    const raw = window.localStorage.getItem(FAVORITE_KEY);
+    return raw ? (JSON.parse(raw) as { id: string; abbreviation: string }) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function useFavoriteTeam(): { id: string; abbreviation: string } | null {
+  const raw = useSyncExternalStore(subscribeFavorite, favoriteSnapshot, () => null);
+  try {
     return raw ? (JSON.parse(raw) as { id: string; abbreviation: string }) : null;
   } catch {
     return null;
@@ -77,4 +99,5 @@ export function setFavoriteTeam(team: { id: string; abbreviation: string } | nul
   if (typeof window === "undefined") return;
   if (team === null) window.localStorage.removeItem(FAVORITE_KEY);
   else window.localStorage.setItem(FAVORITE_KEY, JSON.stringify(team));
+  for (const listener of favoriteListeners) listener();
 }

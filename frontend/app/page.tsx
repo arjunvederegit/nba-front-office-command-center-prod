@@ -2,10 +2,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
-import { getFavoriteTeam, setFavoriteTeam, teamTheme } from "@/lib/teamTheme";
+import { setFavoriteTeam, teamTheme, useFavoriteTeam } from "@/lib/teamTheme";
 import type { DataHealth, Scenario, Team, TradeSummary } from "@/lib/types";
 import { CourtLines } from "@/components/brand";
 import { TeamLogo } from "@/components/media";
@@ -48,15 +47,10 @@ export default function HomePage() {
     queryFn: () => api.get<Scenario[]>("/scenarios"),
   });
 
-  const [favorite, setFavorite] = useState<{ id: string; abbreviation: string } | null>(null);
-  useEffect(() => {
-    setFavorite(getFavoriteTeam());
-  }, []);
+  const favorite = useFavoriteTeam();
 
   function pickFavorite(team: Team) {
-    const value = { id: team.id, abbreviation: team.abbreviation };
-    setFavoriteTeam(value);
-    setFavorite(value);
+    setFavoriteTeam({ id: team.id, abbreviation: team.abbreviation });
     toast("success", `${team.full_name} set as your team.`);
   }
 
@@ -117,10 +111,7 @@ export default function HomePage() {
           {favorite && teams && (
             <FavoriteCard
               team={teams.find((t) => t.id === favorite.id)}
-              onClear={() => {
-                setFavoriteTeam(null);
-                setFavorite(null);
-              }}
+              onClear={() => setFavoriteTeam(null)}
             />
           )}
         </div>

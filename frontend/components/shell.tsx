@@ -32,10 +32,11 @@ function DataStatusChip() {
     queryFn: () => api.get<DataHealth>("/data-health"),
     staleTime: 120_000,
   });
+  const [now] = useState(() => Date.now());
   if (!data) return null;
   const synced = !!data.last_successful_sync;
   const ageHours = synced
-    ? (Date.now() - new Date(data.last_successful_sync as string).getTime()) / 3_600_000
+    ? (now - new Date(data.last_successful_sync as string).getTime()) / 3_600_000
     : Infinity;
   const fresh = ageHours < 48;
   return (
@@ -130,6 +131,7 @@ function GlobalSearch() {
         type="search"
         role="combobox"
         aria-expanded={open && results.length > 0}
+        aria-controls="global-search-results"
         aria-label="Search players and teams"
         placeholder="Search players & teams…"
         value={query}
@@ -142,6 +144,7 @@ function GlobalSearch() {
       />
       {open && results.length > 0 && (
         <ul
+          id="global-search-results"
           role="listbox"
           className="absolute right-0 top-10 z-50 w-72 overflow-hidden rounded-lg border border-line bg-panel shadow-xl"
         >

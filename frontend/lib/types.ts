@@ -276,6 +276,19 @@ export interface DataHealth {
     trained_at: string | null;
     validation: Record<string, unknown>;
   }[];
+  source_cards: SourceCard[];
+  asset_coverage: Record<string, number>;
+}
+
+/** Fan-readable data-source summary card served by /data-health. */
+export interface SourceCard {
+  key: string;
+  title: string;
+  status: "fresh" | "stale" | "derived" | "incomplete" | "unavailable" | "failed";
+  last_update: string | null;
+  coverage: string;
+  source: string;
+  action: string | null;
 }
 
 export interface GeneratedCandidate {
@@ -288,3 +301,71 @@ export interface GeneratedCandidate {
   focal_components: Record<string, number | null>;
   rationale: string;
 }
+
+export interface SeasonTotalsPlayer {
+  player_id: string;
+  nba_player_id: number;
+  name: string;
+  position: string | null;
+  team_abbr: string | null;
+  gp: number;
+  totals: Record<string, number | null>;
+  per_game: Record<string, number | null>;
+  rates: Record<string, number | null>;
+}
+
+export interface SeasonTotalsResponse {
+  season: string;
+  count: number;
+  available: boolean;
+  note: string | null;
+  source: string;
+  imported_at: string | null;
+  players: SeasonTotalsPlayer[];
+}
+
+export interface CapOutlookContractSeason {
+  season: string;
+  salary: number;
+  player_option: boolean;
+  team_option: boolean;
+}
+
+export interface CapOutlookPlayer {
+  player_id: string;
+  name: string;
+  seasons: CapOutlookContractSeason[];
+  expiring: boolean;
+  no_trade_clause: boolean;
+  source_name: string | null;
+  source_date: string | null;
+}
+
+export interface CapParameters {
+  salary_cap: number;
+  luxury_tax: number;
+  first_apron: number;
+  second_apron: number;
+}
+
+export interface CapOutlookUnavailable {
+  team_id: string;
+  available: false;
+  reason: string;
+  contract_provider_configured: boolean;
+}
+
+export interface CapOutlookAvailable {
+  team_id: string;
+  available: true;
+  cap_league_year: string;
+  roster_size: number;
+  players_with_contracts: number;
+  complete: boolean;
+  seasons: { season: string; total: number; players: number }[];
+  players: CapOutlookPlayer[];
+  cap_parameters: CapParameters | null;
+  note: string;
+}
+
+export type CapOutlookResponse = CapOutlookUnavailable | CapOutlookAvailable;
