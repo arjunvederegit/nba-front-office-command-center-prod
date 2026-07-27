@@ -572,7 +572,9 @@ class MediaAsset(Base, ProvenanceMixin):
     file_path: Mapped[str] = mapped_column(String(500))  # relative to the asset root dir
     content_type: Mapped[str] = mapped_column(String(50), default="image/jpeg")
     is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
-    match_method: Mapped[str] = mapped_column(String(30))  # nba_id|exact_name|normalized_name|abbreviation|manual
+    match_method: Mapped[str] = mapped_column(
+        String(30)
+    )  # nba_id|exact_name|normalized_name|abbreviation|manual
     confidence: Mapped[str] = mapped_column(String(20), default="high")  # high|medium|unmatched
     source_label: Mapped[str] = mapped_column(String(100))  # e.g. folder name the file came from
     alt_text: Mapped[str] = mapped_column(String(200))

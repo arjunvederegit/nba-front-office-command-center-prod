@@ -104,3 +104,65 @@ validated strictly forward in time; keep the transparent index as fallback and
 report both against a persistence baseline.
 **Consequences:** honest scope (a proxy, stated as such) with measurable skill:
 ridge beat persistence 0.637 vs 0.717 MAE on the held-out transition.
+
+## ADR-11 · Split the two accent colors by job, not by hierarchy
+
+**Context:** the previous dark theme was near-black plus a single orange accent — the
+most common look an AI-assisted design lands on, and one that made every element compete
+at the same volume.
+**Decision:** two accents with disjoint responsibilities. Cyan (`--signal`) is the
+system's voice: live state, active navigation, focus rings, primary chart series. Orange
+(`--leather`) is the ball: the brand mark and the single primary action on a screen,
+nothing else. Team color is a third channel, scoped to team context only.
+**Alternatives:** one accent with tints (rejected: no way to distinguish "the system is
+telling you something" from "you can act here"); full team-color theming per page
+(rejected: destroys cross-page consistency and contrast guarantees).
+**Consequences:** orange appears rarely enough that it always means "act", and a page can
+be dense without being loud.
+
+## ADR-12 · A condensed display face as a layout tool
+
+**Context:** the spec treats awkward wrapping as release-blocking, and the old header
+wrapped onto two lines at 1440px with eight destinations.
+**Decision:** Barlow Condensed for titles, module names, team abbreviations and numerals,
+paired with Archivo for interface text and IBM Plex Mono for tabular data.
+**Consequences:** the condensed face buys roughly 20% horizontal room on every label,
+which is what makes four primary destinations plus a More menu, search and status chips
+fit one line down to 1024px without shrinking type. It is also the authentic typographic
+artifact of the sport (jersey numerals, scoreboards), so the structural fix and the
+aesthetic choice are the same decision.
+
+## ADR-13 · Normalize supplied logos rather than styling around them
+
+**Context:** twelve of the thirty supplied logo files ship on an opaque white card and
+eighteen are transparent, so a row of crests mixed white boxes with clean marks.
+**Decision:** derive a transparent copy at index time by flood-filling near-white **from
+the image edges only**, so white inside a mark survives. Derived files are written to a
+gitignored `derived/` folder; originals are never modified, and the manifest records
+which copy is served.
+**Alternatives:** render every logo on a light chip (rejected: 30 bright tiles fight the
+dark surface); CSS blend modes (rejected: unreliable across marks with dark elements).
+**Consequences:** crests render consistently on dark; the fix lives in the data pipeline
+where it belongs rather than in every component that shows a logo.
+
+## ADR-14 · Publish an asset manifest instead of letting images 404
+
+**Context:** roughly 12% of rostered players have no matched photo. The fallback rendered
+correctly, but every miss still cost a request and a console error, and the spec requires
+no broken requests.
+**Decision:** `GET /api/v1/assets/manifest` returns the set of NBA ids and abbreviations
+that actually have an indexed image. The client fetches it once per session and only
+requests an image it knows exists.
+**Consequences:** zero 404s and zero console errors across all seven QA viewports;
+unmatched players render their initials immediately rather than after a failed round-trip.
+
+## ADR-15 · Rename routes to the product's own vocabulary
+
+**Context:** navigation labels moved to the module names the product actually uses
+(Trade Evaluator, Strategy Lab, Player Explorer, Team Outlook, Salary-Cap Center, Data
+Health), leaving URLs like `/trade-machine` and `/data-status` inconsistent with them.
+**Decision:** rename the route directories to match, and keep a redirect for every prior
+URL — including the ones from the first rename. Next forwards query strings, so shared
+Trade Evaluator links (`?state=…`) survive.
+**Consequences:** the URL bar and the interface agree; no published link breaks. The
+redirect table is the permanent cost, and it is documented in `next.config.ts`.

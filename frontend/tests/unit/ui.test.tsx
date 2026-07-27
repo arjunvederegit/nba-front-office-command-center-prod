@@ -11,15 +11,30 @@ import {
 } from "@/components/ui";
 
 describe("Badge", () => {
-  it("renders legality statuses with distinct styling", () => {
+  it("gives each of the four legality states its own color", () => {
     const { rerender } = render(<Badge status="verified_legal">legal</Badge>);
-    expect(screen.getByText("legal").className).toContain("text-pass");
+    expect(screen.getByText("legal").className).toContain("text-legal");
     rerender(<Badge status="verified_illegal">illegal</Badge>);
-    expect(screen.getByText("illegal").className).toContain("text-fail");
+    expect(screen.getByText("illegal").className).toContain("text-illegal");
     rerender(<Badge status="conditionally_valid">conditional</Badge>);
-    expect(screen.getByText("conditional").className).toContain("text-warn");
+    expect(screen.getByText("conditional").className).toContain("text-conditional");
     rerender(<Badge status="unavailable">n/a</Badge>);
     expect(screen.getByText("n/a").className).toContain("text-unavail");
+  });
+
+  // Color alone must never carry status — each state also renders a glyph.
+  it("pairs every status with a non-color glyph", () => {
+    const glyphs: Record<string, string> = {
+      verified_legal: "✓",
+      verified_illegal: "✕",
+      conditionally_valid: "~",
+      unavailable: "—",
+    };
+    for (const [status, glyph] of Object.entries(glyphs)) {
+      const { unmount } = render(<Badge status={status}>state</Badge>);
+      expect(screen.getByText("state").textContent).toContain(glyph);
+      unmount();
+    }
   });
 });
 
@@ -43,7 +58,7 @@ describe("FreshnessBadge", () => {
 describe("UnavailableNotice", () => {
   it("labels missing data explicitly instead of hiding it", () => {
     render(<UnavailableNotice reason="Contract data unavailable from the configured provider." />);
-    expect(screen.getByText("Unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("Not available.")).toBeInTheDocument();
     expect(screen.getByText(/Contract data unavailable/)).toBeInTheDocument();
   });
 });

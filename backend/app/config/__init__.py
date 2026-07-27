@@ -55,7 +55,9 @@ class Settings(BaseSettings):
 
     @property
     def logos_dir(self) -> Path:
-        return Path(self.asset_logos_dir) if self.asset_logos_dir else BACKEND_DIR.parent / "nbalogos"
+        return (
+            Path(self.asset_logos_dir) if self.asset_logos_dir else BACKEND_DIR.parent / "nbalogos"
+        )
 
     @property
     def player_images_dir(self) -> Path:

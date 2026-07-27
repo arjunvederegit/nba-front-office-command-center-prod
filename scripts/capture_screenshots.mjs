@@ -16,19 +16,20 @@ async function shot(path, name, extraWait = 1500) {
   console.log(`captured ${name}`);
 }
 
-await shot("/", "landing", 2500);
+await shot("/", "overview", 2500);
 
 const teams = await (await fetch("http://localhost:8000/api/v1/teams")).json();
 const bos = teams.find((t) => t.abbreviation === "BOS") ?? teams[0];
-await shot(`/team-hub/${bos.id}`, "team-page", 3000);
+await shot(`/team-outlook/${bos.id}`, "team-outlook", 3000);
 
 const trades = await (await fetch("http://localhost:8000/api/v1/trades")).json();
 if (trades.length > 0) {
-  await shot(`/trades/${trades[0].id}`, "trade-evaluation", 3500);
+  await shot(`/trades/${trades[0].id}`, "deal-report", 3500);
 }
 
-await shot(`/trade-machine?team=${bos.id}`, "trade-builder", 3000);
-await shot("/player-lab", "player-lab", 3000);
-await shot("/data-status", "data-health", 2500);
+await shot(`/trade-evaluator?team=${bos.id}`, "trade-evaluator", 3000);
+await shot("/player-explorer", "player-explorer", 3000);
+await shot("/strategy-lab", "strategy-lab", 2500);
+await shot("/data-health", "data-health", 2500);
 
 await browser.close();

@@ -1,10 +1,10 @@
-# RosterLab — NBA Front Office Simulator
+# RosterLab — Basketball Decision Intelligence
 
-**Run your front office: build trades against live NBA rosters, get an honest trade-rules check, and see projected impact with uncertainty — every number traceable to its source.**
+**Build the next move: evaluate trades against live NBA rosters, compare roster strategies, and understand the decisions shaping a team — every number traceable to its source.**
 
-RosterLab is a full-stack front-office simulator: real provider-backed NBA data, a CBA-aware rules engine with a four-state honesty standard, validated player-impact modeling, and a fan-friendly product layer (team logos, player photos, plain-language verdicts) over serious, inspectable analytics.
+RosterLab is a full-stack basketball decision platform: real provider-backed NBA data, a CBA-aware rules engine with a four-state honesty standard, validated player-impact modeling, and a broadcast-grade product layer (team identity, player photos, plain-language verdicts) over serious, inspectable analytics.
 
-![RosterLab home](docs/screenshots/landing.png)
+![RosterLab overview](docs/screenshots/overview.png)
 
 > **Status:** fully functional local build. Data below was ingested live from NBA.com (July 2026), enriched from a user CSV, the Kaggle basketball database, and local image datasets. **Not affiliated with the NBA.**
 
@@ -12,14 +12,16 @@ RosterLab is a full-stack front-office simulator: real provider-backed NBA data,
 
 ## The tool suite
 
-| Tool | What it does | Status |
+| Module | What it does | Status |
 | --- | --- | --- |
-| **Team Hub** | Roster with photos grouped by position, model-derived strengths & needs, competitive window, payroll honesty, strategy setup | available |
-| **Trade Machine** | 2–3-team trades: drag-and-drop with accessible fallbacks, live backend rules check, fan verdict + advanced analytics, save/share links | available |
-| **Compare Deals** | Saved deals side by side: component matrix, live priority sliders that re-rank on the fly, Pareto frontier, rank-stability | available |
-| **Player Lab** | 573 imported 2025-26 stat lines: photos, totals *and* derived per-game (never mixed), league percentiles, 2–4-player comparison | available |
-| **Cap Lab** | Payroll by season, top/expiring contracts, option markers, cap reference lines — activates when contracts are imported | needs contract import |
-| **Salary Predictor** | Deliberately **coming soon**: needs historical contract data before a validated model can exist — RosterLab ships no fake models | roadmap |
+| **Trade Evaluator** | The flagship. Two- and three-team deals across team workspaces joined by a transaction lane; drag-and-drop with accessible send controls, a live backend rules check, fan verdict then advanced analysis, save and share links | available |
+| **Strategy Lab** | A decision board: visual deal cards, a component matrix, priority sliders that re-rank live, the trade-off frontier and rank stability | available |
+| **Player Explorer** | 573 imported 2025-26 stat lines: photos, totals *and* derived per-game (never mixed), league percentiles, 2–4-player comparison | available |
+| **Team Outlook** | Broadcast-style team dashboard: roster by position group, model-derived strengths & needs, competitive window, payroll honesty, strategy setup | available |
+| **Salary-Cap Center** | Payroll by season, top/expiring contracts, option markers, cap reference lines — activates when contracts are imported | needs contract import |
+| **Contract Predictor** | Deliberately **on the roadmap**: needs historical contract data before a validated model can exist — RosterLab ships no fake models | roadmap |
+
+Routes were renamed to match these module names; every previous URL still redirects (share links keep their query strings).
 
 ## Data sources & hierarchy
 
@@ -51,13 +53,17 @@ Full write-up: [docs/methodology.md](docs/methodology.md) · in-product: `/metho
 
 ## Screenshots
 
-| Team Hub | Trade Machine |
+| Trade Evaluator | Team Outlook |
 | --- | --- |
-| ![Team Hub](docs/screenshots/team-page.png) | ![Trade Machine](docs/screenshots/trade-builder.png) |
+| ![Trade Evaluator](docs/screenshots/trade-evaluator.png) | ![Team Outlook](docs/screenshots/team-outlook.png) |
 
-| Deal evaluation | Data Status |
+| Strategy Lab | Data Health |
 | --- | --- |
-| ![Evaluation](docs/screenshots/trade-evaluation.png) | ![Data Status](docs/screenshots/data-health.png) |
+| ![Strategy Lab](docs/screenshots/strategy-lab.png) | ![Data Health](docs/screenshots/data-health.png) |
+
+| Player Explorer | Saved deal report |
+| --- | --- |
+| ![Player Explorer](docs/screenshots/player-explorer.png) | ![Deal report](docs/screenshots/deal-report.png) |
 
 ## Getting started
 
@@ -87,10 +93,15 @@ Containerized: `docker compose up --build` (Postgres 16 + Redis 7 + API + worker
 ### Testing
 
 ```bash
-make test    # backend pytest (114) + frontend vitest
+make test    # backend pytest (114) + frontend vitest (15)
 make lint    # ruff + mypy + eslint + tsc
-make e2e     # Playwright core flows against the local stack
+make e2e     # Playwright core flows against the local stack (5 specs)
 ```
+
+Visual QA is scripted too — `node scripts/visual_qa.mjs docs/qa/run` screenshots every
+route at 1920/1440/1366/1280/1024/768/390 and fails loudly on horizontal overflow or
+console errors. Its output is gitignored; the curated shots above live in
+`docs/screenshots/`.
 
 ## Repository policy
 

@@ -18,9 +18,7 @@ def normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     return {k: max(w, 0.0) / total for k, w in weights.items()}
 
 
-def composite_utility(
-    components: dict[str, float | None], weights: dict[str, float]
-) -> float:
+def composite_utility(components: dict[str, float | None], weights: dict[str, float]) -> float:
     """Components on 0..100; weights normalized. Missing components are excluded and
     remaining weights renormalized — absent data shrinks scope, it never fakes a
     score."""
