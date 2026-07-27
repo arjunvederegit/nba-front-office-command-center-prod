@@ -1,84 +1,52 @@
 /**
- * RosterLab brand mark: a basketball seam arc crossed by a rising chart line,
- * set in a roundel. Original geometry — no NBA marks, no affiliation implied.
+ * RosterLab mark: a ball's seams where one seam has become a rising line of
+ * data. Orange holds the ball, cyan holds the analysis — the same division of
+ * labor the whole palette uses.
  */
 export function BrandMark({ size = 30 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 48 48"
+      viewBox="0 0 40 40"
       role="img"
-      aria-label="RosterLab logo"
+      aria-label="RosterLab"
       className="shrink-0"
+      fill="none"
     >
-      <defs>
-        <linearGradient id="rl-court" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stopColor="#f97316" />
-          <stop offset="1" stopColor="#fdba74" />
-        </linearGradient>
-      </defs>
-      <circle cx="24" cy="24" r="22" fill="none" stroke="url(#rl-court)" strokeWidth="2.5" />
-      {/* basketball seam arcs */}
+      <circle cx="20" cy="20" r="18" stroke="var(--leather)" strokeWidth="2" />
+      {/* seams */}
+      <path d="M20 2v13M20 25v13" stroke="var(--leather)" strokeWidth="1.5" opacity="0.55" />
       <path
-        d="M6 30 Q 24 18 42 30"
-        fill="none"
-        stroke="url(#rl-court)"
-        strokeWidth="2"
-        strokeLinecap="round"
+        d="M6.5 7.5c4.2 4.4 4.2 20.6 0 25M33.5 7.5c-4.2 4.4-4.2 20.6 0 25"
+        stroke="var(--leather)"
+        strokeWidth="1.5"
         opacity="0.55"
       />
+      {/* the seam that became data */}
       <path
-        d="M10 14 Q 24 26 38 14"
-        fill="none"
-        stroke="url(#rl-court)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        opacity="0.55"
-      />
-      {/* rising chart line with shot-dot */}
-      <path
-        d="M12 34 L 20 27 L 27 30 L 36 17"
-        fill="none"
-        stroke="#f8fafc"
+        d="M6 26l7.5-6.5 6 3L34 10"
+        stroke="var(--signal)"
         strokeWidth="2.6"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="36" cy="17" r="3" fill="#f97316" stroke="#f8fafc" strokeWidth="1.4" />
+      <circle cx="34" cy="10" r="3.2" fill="var(--signal)" />
     </svg>
   );
 }
 
 export function BrandWordmark({ compact = false }: { compact?: boolean }) {
   return (
-    <span className="flex items-baseline gap-2">
-      <span className="text-lg font-bold tracking-tight text-foreground">
-        Roster<span className="text-brand">Lab</span>
+    <span className="flex min-w-0 items-baseline gap-2">
+      <span className="display text-[1.35rem] leading-none tracking-tight text-foreground">
+        ROSTER<span className="text-brand">LAB</span>
       </span>
       {!compact && (
-        <span className="hidden text-[11px] text-muted lg:inline">NBA Front Office Simulator</span>
+        <span className="eyebrow hidden whitespace-nowrap text-[0.6rem] text-faint xl:inline">
+          Basketball Decision Intelligence
+        </span>
       )}
     </span>
-  );
-}
-
-/** Lightweight half-court line art for hero/empty states (pure SVG, no rasters). */
-export function CourtLines({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 400 200"
-      className={className}
-      aria-hidden
-      preserveAspectRatio="xMidYMax slice"
-    >
-      <g fill="none" stroke="currentColor" strokeWidth="1.5">
-        <line x1="0" y1="198" x2="400" y2="198" />
-        <path d="M 40 198 A 160 160 0 0 1 360 198" opacity="0.5" />
-        <rect x="140" y="118" width="120" height="80" opacity="0.6" />
-        <path d="M 140 118 A 60 60 0 0 1 260 118" opacity="0.6" transform="rotate(180 200 118)" />
-        <circle cx="200" cy="198" r="24" opacity="0.7" />
-      </g>
-    </svg>
   );
 }

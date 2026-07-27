@@ -16,6 +16,7 @@ from pathlib import Path
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.assets.normalize import DERIVED_DIRNAME, normalize_logo
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import DataQualityIssue, MediaAsset, Player, RosterEntry, Team
@@ -152,15 +153,22 @@ def index_assets(db: Session) -> dict:
             for path in sorted(logos_dir.iterdir()):
                 if not path.is_file() or path.suffix.lower() not in _CONTENT_TYPES:
                     continue  # e.g. dataset-metadata.json
+                if path.parent.name == DERIVED_DIRNAME:
+                    continue
                 stem = path.stem.lower()
                 abbr = LOGO_STEM_OVERRIDES.get(stem, stem).upper()
                 team = teams_by_abbr.get(abbr)
+                # Some supplied logos sit on an opaque white card; serve a
+                # transparent derivative so crests render consistently on dark.
+                derived = normalize_logo(path, logos_dir / DERIVED_DIRNAME)
+                file_path = f"{DERIVED_DIRNAME}/{derived.name}" if derived else path.name
+                content_type = "image/png" if derived else _CONTENT_TYPES[path.suffix.lower()]
                 values = {
                     **provenance,
                     "entity_type": "team",
-                    "file_path": path.name,
+                    "file_path": file_path,
                     "source_record_id": path.name,
-                    "content_type": _CONTENT_TYPES[path.suffix.lower()],
+                    "content_type": content_type,
                     "is_primary": True,
                     "match_method": "abbreviation",
                     "source_label": stem,

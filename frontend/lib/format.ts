@@ -95,3 +95,25 @@ export const COMPONENT_EXPLAIN: Record<string, string> = {
   assets: "Draft capital, payroll flexibility and roster optionality gained or lost.",
   risk: "Availability history and the share of simulations where the deal helps.",
 };
+
+/**
+ * English ordinal for a rank or percentile: 1st, 2nd, 3rd, 4th … 93rd.
+ * Teens are all "th" (11th, 12th, 13th), which the naive rule gets wrong.
+ */
+export function ordinal(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const n = Math.round(value);
+  const lastTwo = Math.abs(n) % 100;
+  const lastOne = Math.abs(n) % 10;
+  const suffix =
+    lastTwo >= 11 && lastTwo <= 13
+      ? "th"
+      : lastOne === 1
+        ? "st"
+        : lastOne === 2
+          ? "nd"
+          : lastOne === 3
+            ? "rd"
+            : "th";
+  return `${n}${suffix}`;
+}

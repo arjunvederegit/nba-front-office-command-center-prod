@@ -1,48 +1,57 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo, Barlow_Condensed, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { AppNav } from "@/components/shell";
+import { AppNav, AppFooter } from "@/components/shell";
 import { ToastProvider } from "@/components/toast";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+/** Three typographic roles: condensed athletic display (jersey/scoreboard),
+ *  a grotesque for interface text, and tabular mono for box-score data. */
+const display = Barlow_Condensed({
+  variable: "--font-barlow-condensed",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  display: "swap",
+});
+const sans = Archivo({
+  variable: "--font-archivo",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+const mono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "RosterLab — NBA Front Office Simulator",
+  title: "RosterLab — Basketball Decision Intelligence",
   description:
-    "Build trades, explore rosters, and stress-test front-office decisions with real NBA data, honest rules checks, and explainable analytics.",
+    "Evaluate trades, compare roster strategies, and understand the decisions shaping an NBA team — on real data, with honest rules checks and explainable analytics.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      className={`${display.variable} ${sans.variable} ${mono.variable} h-full antialiased`}
+    >
       <body className="flex min-h-full flex-col">
         <Providers>
           <ToastProvider>
+            <a
+              href="#main"
+              className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-[100] focus:rounded-md focus:bg-signal focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-court"
+            >
+              Skip to content
+            </a>
             <AppNav />
-            <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">{children}</main>
-            <footer className="border-t border-line py-4">
-              <div className="mx-auto max-w-7xl px-4 text-[11px] leading-relaxed text-muted">
-                RosterLab is an independent analytical simulator — not affiliated with or endorsed
-                by the NBA, and not an official cap-management product. Basketball data comes from
-                NBA.com via{" "}
-                <a
-                  className="underline hover:text-foreground"
-                  href="https://github.com/swar/nba_api"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  nba_api
-                </a>{" "}
-                and user-imported sources, each labeled with provenance in{" "}
-                <a className="underline hover:text-foreground" href="/data-status">
-                  Data Status
-                </a>
-                . Team names, logos and player images belong to their owners and are used locally
-                for identification. Missing data is always shown as unavailable — never estimated.
-              </div>
-            </footer>
+            <main id="main" className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 lg:px-8">
+              {children}
+            </main>
+            <AppFooter />
           </ToastProvider>
         </Providers>
       </body>

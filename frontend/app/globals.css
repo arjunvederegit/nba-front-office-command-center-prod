@@ -1,65 +1,242 @@
 @import "tailwindcss";
 
+/* ===========================================================================
+   RosterLab design tokens — "arena at night"
+   Deep arena navy surfaces, chalk-white type, cyan as the system's voice
+   (live/active/focus/data) and basketball orange reserved for the ball and
+   the primary action. Team colors appear only inside team context.
+   =========================================================================== */
+
 :root {
-  /* Surfaces */
-  --background: #0a0e17;
-  --panel: #101625;
-  --panel-2: #161e30;
-  --panel-3: #1d2740;
-  --border: #24304b;
-  /* Text */
-  --foreground: #e8edf6;
-  --muted: #8fa0b8;
-  /* Brand (RosterLab basketball orange) + data-viz accent */
-  --brand: #f97316;
-  --brand-soft: #fdba74;
-  --accent: #38bdf8;
-  /* Status */
-  --pass: #34d399;
-  --fail: #f87171;
-  --warn: #fbbf24;
-  --unavail: #94a3b8;
-  /* Team theme defaults (overridden per subtree via teamThemeVars) */
+  /* Surfaces — depth reads as arena lighting, not stacked cards */
+  --court-black: #060a12;
+  --arena: #0c1322;
+  --arena-raised: #131c30;
+  --arena-high: #1a2540;
+  --hairline: #1f2c46;
+  --hairline-soft: #162036;
+
+  /* Type */
+  --chalk: #e9f0fb;
+  --chalk-dim: #93a6c4;
+  --chalk-faint: #6a7c9c;
+
+  /* Accents */
+  --signal: #22d3ee; /* technology / live / active / chart primary */
+  --signal-deep: #0e7490;
+  --leather: #f97316; /* the ball: brand mark + primary action only */
+  --leather-soft: #fdba74;
+
+  /* Status — four-state honesty standard */
+  --legal: #34d399;
+  --illegal: #fb7185;
+  --conditional: #fbbf24;
+  --unknown: #7e8da8;
+
+  /* Team context (scoped per subtree by teamThemeVars) */
   --team-primary: #334155;
   --team-secondary: #64748b;
   --team-bright: #94a3b8;
+  --team-contrast: #e9f0fb;
+
+  /* Radius scale */
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 18px;
+
+  /* Elevation — light from above, as in an arena */
+  --shadow-panel: 0 1px 0 0 rgb(255 255 255 / 0.04), 0 8px 24px -12px rgb(0 0 0 / 0.8);
+  --shadow-pop: 0 24px 60px -20px rgb(0 0 0 / 0.9);
+  --glow-signal: 0 0 0 1px rgb(34 211 238 / 0.35), 0 0 28px -6px rgb(34 211 238 / 0.35);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+
+  /* Z layers */
+  --z-nav: 40;
+  --z-drawer: 60;
+  --z-toast: 80;
+
+  /* Legacy aliases (kept so existing pages keep compiling during migration) */
+  --background: var(--court-black);
+  --panel: var(--arena);
+  --panel-2: var(--arena-raised);
+  --border: var(--hairline);
+  --foreground: var(--chalk);
+  --muted: var(--chalk-dim);
+  --brand: var(--leather);
+  --brand-soft: var(--leather-soft);
+  --accent: var(--signal);
+  --pass: var(--legal);
+  --fail: var(--illegal);
+  --warn: var(--conditional);
+  --unavail: var(--unknown);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-panel: var(--panel);
-  --color-panel2: var(--panel-2);
-  --color-panel3: var(--panel-3);
-  --color-line: var(--border);
-  --color-foreground: var(--foreground);
-  --color-muted: var(--muted);
-  --color-brand: var(--brand);
-  --color-brandsoft: var(--brand-soft);
-  --color-accent: var(--accent);
-  --color-pass: var(--pass);
-  --color-fail: var(--fail);
-  --color-warn: var(--warn);
-  --color-unavail: var(--unavail);
+  --color-background: var(--court-black);
+  --color-court: var(--court-black);
+  --color-arena: var(--arena);
+  --color-panel: var(--arena);
+  --color-panel2: var(--arena-raised);
+  --color-panel3: var(--arena-high);
+  --color-line: var(--hairline);
+  --color-hairline: var(--hairline-soft);
+  --color-foreground: var(--chalk);
+  --color-muted: var(--chalk-dim);
+  --color-faint: var(--chalk-faint);
+  --color-signal: var(--signal);
+  --color-brand: var(--leather);
+  --color-brandsoft: var(--leather-soft);
+  --color-accent: var(--signal);
+  --color-pass: var(--legal);
+  --color-legal: var(--legal);
+  --color-fail: var(--illegal);
+  --color-illegal: var(--illegal);
+  --color-warn: var(--conditional);
+  --color-conditional: var(--conditional);
+  --color-unavail: var(--unknown);
   --color-teamprimary: var(--team-primary);
   --color-teamsecondary: var(--team-secondary);
   --color-teambright: var(--team-bright);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --font-sans: var(--font-archivo);
+  --font-display: var(--font-barlow-condensed);
+  --font-mono: var(--font-plex-mono);
+
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans), system-ui, sans-serif;
+  background: var(--court-black);
+  color: var(--chalk);
+  font-family: var(--font-archivo), system-ui, sans-serif;
+  /* Arena light: a cool wash from above, warm bounce off the floor */
+  background-image:
+    radial-gradient(1200px 520px at 50% -10%, rgb(34 211 238 / 0.07), transparent 70%),
+    radial-gradient(900px 400px at 85% 100%, rgb(249 115 22 / 0.045), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* --- Typographic roles ---------------------------------------------------- */
+
+.font-display,
+.display {
+  font-family: var(--font-barlow-condensed), var(--font-archivo), sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+}
+
+/* Scoreboard numerals: condensed, tight, tabular */
+.numeral {
+  font-family: var(--font-barlow-condensed), sans-serif;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Box-score data: monospaced tabular figures */
+.data,
+.tabular {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Broadcast eyebrow: small, wide-tracked, uppercase */
+.eyebrow {
+  font-family: var(--font-barlow-condensed), sans-serif;
+  font-weight: 600;
+  font-size: 0.6875rem;
+  line-height: 1;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--chalk-dim);
+}
+
+/* Titles scale with viewport but never below readable */
+.title-xl {
+  font-family: var(--font-barlow-condensed), sans-serif;
+  font-weight: 700;
+  font-size: clamp(2rem, 1.2rem + 2.6vw, 3.5rem);
+  line-height: 0.95;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.title-lg {
+  font-family: var(--font-barlow-condensed), sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.5rem, 1.1rem + 1.2vw, 2.125rem);
+  line-height: 1;
+  letter-spacing: 0.005em;
+}
+.title-md {
+  font-family: var(--font-barlow-condensed), sans-serif;
+  font-weight: 600;
+  font-size: 1.0625rem;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
+/* --- Surface treatment ---------------------------------------------------- */
+
+/* Panels are lit from the top edge rather than outlined on all four sides —
+   this is what keeps the page from reading as a grid of identical rectangles. */
+.panel {
+  position: relative;
+  background: linear-gradient(180deg, var(--arena-raised) 0%, var(--arena) 42%);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+}
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--edge, var(--signal)) 60%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+
+/* Thin technical grid — used behind heroes and empty states only */
+.court-grid {
+  background-image:
+    linear-gradient(to right, rgb(31 44 70 / 0.55) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(31 44 70 / 0.55) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, #000 30%, transparent 75%);
+}
+
+/* Hardwood: a whisper of floor grain, never a texture image */
+.hardwood {
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgb(249 115 22 / 0.035) 0px,
+    rgb(249 115 22 / 0.035) 1px,
+    transparent 1px,
+    transparent 9px
+  );
 }
 
 ::selection {
-  background: rgba(249, 115, 22, 0.35);
+  background: rgb(34 211 238 / 0.32);
 }
 
 :focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--signal);
   outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .scroll-thin::-webkit-scrollbar {
@@ -67,24 +244,28 @@ body {
   height: 8px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--hairline);
   border-radius: 4px;
 }
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-/* Skeleton shimmer for loading states */
+/* --- Loading ------------------------------------------------------------- */
+
 .skeleton {
   position: relative;
   overflow: hidden;
-  background: var(--panel-2);
-  border-radius: 6px;
+  background: var(--arena-raised);
+  border-radius: var(--r-md);
 }
 .skeleton::after {
   content: "";
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(143, 160, 184, 0.12), transparent);
-  animation: shimmer 1.4s infinite;
+  background: linear-gradient(90deg, transparent, rgb(147 166 196 / 0.11), transparent);
+  animation: shimmer 1.5s infinite;
 }
 @keyframes shimmer {
   100% {
@@ -92,11 +273,44 @@ body {
   }
 }
 
+/* Assets entering a trade slot travel in, they don't just appear */
+@keyframes lane-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--lane-from, -10px));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.lane-in {
+  animation: lane-in var(--dur-base) var(--ease-out) both;
+}
+
+@keyframes pulse-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-live {
+  animation: pulse-live 2.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .skeleton::after {
+  .skeleton::after,
+  .pulse-live,
+  .lane-in {
     animation: none;
   }
-  * {
+  *,
+  *::before,
+  *::after {
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
