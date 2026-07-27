@@ -13,12 +13,20 @@ const nextConfig: NextConfig = {
     ];
   },
   async redirects() {
-    // Routes renamed in the TradeLab → RosterLab transition; old links keep working.
+    // Module routes were renamed to match the product's own vocabulary. Every
+    // previously published URL still resolves; Next forwards query strings, so
+    // shared Trade Evaluator links (?state=…) survive the move.
     return [
-      { source: "/trade-builder", destination: "/trade-machine", permanent: false },
-      { source: "/data-health", destination: "/data-status", permanent: false },
-      { source: "/decision-room", destination: "/team-hub", permanent: false },
-      { source: "/teams/:teamId", destination: "/team-hub/:teamId", permanent: false },
+      { source: "/trade-machine", destination: "/trade-evaluator", permanent: false },
+      { source: "/trade-builder", destination: "/trade-evaluator", permanent: false },
+      { source: "/compare", destination: "/strategy-lab", permanent: false },
+      { source: "/player-lab", destination: "/player-explorer", permanent: false },
+      { source: "/team-hub", destination: "/team-outlook", permanent: false },
+      { source: "/team-hub/:teamId", destination: "/team-outlook/:teamId", permanent: false },
+      { source: "/teams/:teamId", destination: "/team-outlook/:teamId", permanent: false },
+      { source: "/decision-room", destination: "/team-outlook", permanent: false },
+      { source: "/cap-lab", destination: "/salary-cap-center", permanent: false },
+      { source: "/data-status", destination: "/data-health", permanent: false },
     ];
   },
 };

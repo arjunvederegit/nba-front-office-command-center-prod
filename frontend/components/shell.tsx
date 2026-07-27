@@ -1,9 +1,12 @@
 "use client";
 
 /**
- * Global shell pieces: primary navigation with active states, compact data-status
- * chip, and a global player/team search. Fan-facing labels; technical detail lives
- * behind Data Status and Methodology.
+ * Application shell.
+ *
+ * The desktop header holds four primary destinations plus a "More" menu so it
+ * stays on one line down to 1024px — module names are set in the condensed
+ * display face, which is what buys the horizontal room. Below that the header
+ * is replaced by a purpose-built drawer rather than a wrapped desktop bar.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -15,62 +18,80 @@ import type { DataHealth, Team } from "@/lib/types";
 import { BrandMark, BrandWordmark } from "@/components/brand";
 import { TeamLogo } from "@/components/media";
 
-const NAV = [
-  { href: "/", label: "Home", exact: true },
-  { href: "/team-hub", label: "Team Hub" },
-  { href: "/trade-machine", label: "Trade Machine" },
-  { href: "/compare", label: "Compare Deals" },
-  { href: "/player-lab", label: "Player Lab" },
-  { href: "/cap-lab", label: "Cap Lab" },
-  { href: "/methodology", label: "Methodology" },
-  { href: "/data-status", label: "Data Status" },
+const PRIMARY = [
+  { href: "/", label: "Overview", exact: true },
+  { href: "/trade-evaluator", label: "Trade Evaluator" },
+  { href: "/strategy-lab", label: "Strategy Lab" },
+  { href: "/player-explorer", label: "Player Explorer" },
 ];
 
-function DataStatusChip() {
-  const { data } = useQuery({
+const SECONDARY = [
+  { href: "/team-outlook", label: "Team Outlook", hint: "Roster, needs and window" },
+  { href: "/salary-cap-center", label: "Salary-Cap Center", hint: "Payroll and commitments" },
+  { href: "/methodology", label: "Methodology", hint: "How every number is produced" },
+  { href: "/data-health", label: "Data Health", hint: "Sources, freshness and gaps" },
+  { href: "/about", label: "About", hint: "What RosterLab is" },
+];
+
+function isActive(pathname: string, href: string, exact?: boolean) {
+  return exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/* ------------------------------------------------------------ status chips */
+
+function useHealth() {
+  return useQuery({
     queryKey: ["data-health"],
     queryFn: () => api.get<DataHealth>("/data-health"),
     staleTime: 120_000,
   });
+}
+
+function StatusChips({ compact = false }: { compact?: boolean }) {
+  const { data } = useHealth();
   const [now] = useState(() => Date.now());
   if (!data) return null;
-  const synced = !!data.last_successful_sync;
-  const ageHours = synced
-    ? (now - new Date(data.last_successful_sync as string).getTime()) / 3_600_000
-    : Infinity;
-  const fresh = ageHours < 48;
+
+  const synced = data.last_successful_sync;
+  const ageHours = synced ? (now - new Date(synced).getTime()) / 3_600_000 : Infinity;
+  const state = !synced ? "none" : ageHours < 48 ? "live" : "stale";
+  const dot =
+    state === "live" ? "bg-legal" : state === "stale" ? "bg-conditional" : "bg-unavail";
+  const label = state === "live" ? "Live data" : state === "stale" ? "Data aging" : "No data";
+
   return (
-    <Link
-      href="/data-status"
-      className="hidden items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted transition hover:text-foreground xl:flex"
-      title="Open Data Status"
-    >
-      <span
-        className={`h-2 w-2 rounded-full ${fresh ? "bg-pass" : synced ? "bg-warn" : "bg-unavail"}`}
-        aria-hidden
-      />
-      {fresh ? "Live data synced" : synced ? "Data getting stale" : "No data synced"}
-    </Link>
+    <div className="flex items-center gap-2">
+      <span className="eyebrow hidden whitespace-nowrap rounded-full border border-line px-2.5 py-1 text-[0.625rem] text-muted 2xl:inline-block">
+        {data.current_season} season
+      </span>
+      <Link
+        href="/data-health"
+        title={`Open Data Health — ${label}`}
+        className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-signal/50 hover:text-foreground"
+      >
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot} ${state === "live" ? "pulse-live" : ""}`} aria-hidden />
+        <span className={compact ? "sr-only" : "hidden whitespace-nowrap xl:inline"}>{label}</span>
+      </Link>
+    </div>
   );
 }
 
-interface SearchTeam {
-  kind: "team";
-  team: Team;
-}
-interface SearchPlayer {
-  kind: "player";
+/* ----------------------------------------------------------------- search */
+
+interface Hit {
+  kind: "team" | "player";
   id: string;
-  name: string;
-  nba_player_id: number;
-  team_abbr: string | null;
+  label: string;
+  sub: string;
+  abbreviation?: string;
 }
 
-function GlobalSearch() {
+function GlobalSearch({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+
   const { data: teams } = useQuery({
     queryKey: ["teams"],
     queryFn: () => api.get<Team[]>("/teams"),
@@ -80,98 +101,106 @@ function GlobalSearch() {
     queryKey: ["search-players", query],
     queryFn: () =>
       api.get<{
-        players: {
-          id: string;
-          full_name: string;
-          nba_player_id: number;
-          current_team: Team | null;
-        }[];
+        players: { id: string; full_name: string; current_team: Team | null }[];
       }>(`/players?q=${encodeURIComponent(query)}&rostered_only=true&limit=6`),
     enabled: query.trim().length >= 2,
     staleTime: 60_000,
   });
 
   useEffect(() => {
-    function onClick(event: MouseEvent) {
+    function onPointer(event: MouseEvent) {
       if (boxRef.current && !boxRef.current.contains(event.target as Node)) setOpen(false);
     }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   const q = query.trim().toLowerCase();
-  const teamHits: SearchTeam[] = q.length >= 2 && teams
-    ? teams
-        .filter(
-          (t) =>
-            t.full_name.toLowerCase().includes(q) || t.abbreviation.toLowerCase().startsWith(q),
-        )
-        .slice(0, 4)
-        .map((team) => ({ kind: "team", team }))
-    : [];
-  const players: SearchPlayer[] = (playerHits?.players ?? []).map((p) => ({
-    kind: "player",
-    id: p.id,
-    name: p.full_name,
-    nba_player_id: p.nba_player_id,
-    team_abbr: p.current_team?.abbreviation ?? null,
-  }));
-  const results = [...teamHits, ...players];
+  const hits: Hit[] =
+    q.length < 2
+      ? []
+      : [
+          ...(teams ?? [])
+            .filter(
+              (t) =>
+                t.full_name.toLowerCase().includes(q) || t.abbreviation.toLowerCase().startsWith(q),
+            )
+            .slice(0, 4)
+            .map<Hit>((t) => ({
+              kind: "team",
+              id: t.id,
+              label: t.full_name,
+              sub: "Team Outlook",
+              abbreviation: t.abbreviation,
+            })),
+          ...(playerHits?.players ?? []).map<Hit>((p) => ({
+            kind: "player",
+            id: p.id,
+            label: p.full_name,
+            sub: p.current_team?.abbreviation ?? "Free agent",
+          })),
+        ];
 
-  function go(result: SearchTeam | SearchPlayer) {
+  function go(hit: Hit) {
     setOpen(false);
     setQuery("");
-    if (result.kind === "team") router.push(`/team-hub/${result.team.id}`);
-    else router.push(`/players/${result.id}`);
+    onNavigate?.();
+    router.push(hit.kind === "team" ? `/team-outlook/${hit.id}` : `/players/${hit.id}`);
   }
 
   return (
-    <div ref={boxRef} className="relative hidden md:block">
+    <div ref={boxRef} className="relative w-full lg:w-auto">
       <input
         type="search"
         role="combobox"
-        aria-expanded={open && results.length > 0}
+        aria-expanded={open && hits.length > 0}
         aria-controls="global-search-results"
         aria-label="Search players and teams"
-        placeholder="Search players & teams…"
+        placeholder="Search players & teams"
         value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
+        onChange={(event) => {
+          setQuery(event.target.value);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        className="w-52 rounded-full border border-line bg-panel2 px-3.5 py-1.5 text-sm placeholder:text-muted/70 focus:w-64 focus:border-brand/60 transition-all"
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && hits.length > 0) go(hits[0]);
+        }}
+        className="w-full rounded-md border border-line bg-panel2 px-3 py-1.5 text-sm text-foreground placeholder:text-faint focus:border-signal/60 lg:w-44 xl:w-56"
       />
-      {open && results.length > 0 && (
+      {open && hits.length > 0 && (
         <ul
           id="global-search-results"
           role="listbox"
-          className="absolute right-0 top-10 z-50 w-72 overflow-hidden rounded-lg border border-line bg-panel shadow-xl"
+          className="absolute right-0 top-11 z-50 w-full min-w-[16rem] overflow-hidden rounded-lg border border-line bg-panel shadow-[var(--shadow-pop)] lg:w-72"
         >
-          {results.map((result, i) => (
-            <li key={i}>
+          {hits.map((hit) => (
+            <li key={`${hit.kind}-${hit.id}`} role="option" aria-selected={false}>
               <button
                 type="button"
-                onClick={() => go(result)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2"
+                onClick={() => go(hit)}
+                className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-panel2"
               >
-                {result.kind === "team" ? (
-                  <>
-                    <TeamLogo
-                      abbreviation={result.team.abbreviation}
-                      name={result.team.full_name}
-                      size={22}
-                    />
-                    <span className="flex-1">{result.team.full_name}</span>
-                    <span className="text-[10px] uppercase text-muted">team</span>
-                  </>
+                {hit.kind === "team" ? (
+                  <TeamLogo abbreviation={hit.abbreviation} name={hit.label} size={22} />
                 ) : (
-                  <>
-                    <span className="w-[22px] text-center text-xs text-muted">👤</span>
-                    <span className="flex-1">{result.name}</span>
-                    <span className="text-[10px] text-muted">{result.team_abbr ?? ""}</span>
-                  </>
+                  <span className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-panel3 text-[10px] text-muted">
+                    {hit.label
+                      .split(" ")
+                      .map((p) => p[0])
+                      .slice(0, 2)
+                      .join("")}
+                  </span>
                 )}
+                <span className="min-w-0 flex-1 truncate text-sm">{hit.label}</span>
+                <span className="eyebrow shrink-0 text-[0.5625rem]">{hit.sub}</span>
               </button>
             </li>
           ))}
@@ -181,37 +210,210 @@ function GlobalSearch() {
   );
 }
 
+/* -------------------------------------------------------------- more menu */
+
+function MoreMenu({ pathname }: { pathname: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const anySecondaryActive = SECONDARY.some((item) => isActive(pathname, item.href));
+
+  useEffect(() => {
+    function onPointer(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((v) => !v)}
+        className={`display whitespace-nowrap rounded-md px-2.5 py-1.5 text-[15px] tracking-wide transition-colors ${
+          anySecondaryActive || open
+            ? "bg-panel2 text-foreground"
+            : "text-muted hover:bg-panel2 hover:text-foreground"
+        }`}
+      >
+        More
+        <span aria-hidden className="ml-1 text-[10px]">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-11 z-50 w-64 overflow-hidden rounded-lg border border-line bg-panel py-1 shadow-[var(--shadow-pop)]"
+        >
+          {SECONDARY.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className={`block px-3 py-2 hover:bg-panel2 ${
+                isActive(pathname, item.href) ? "bg-panel2" : ""
+              }`}
+            >
+              <span className="block text-sm text-foreground">{item.label}</span>
+              <span className="block text-[11px] text-muted">{item.hint}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ shell */
+
 export function AppNav() {
   const pathname = usePathname();
+  const [drawer, setDrawer] = useState(false);
+
+  // Navigating closes the drawer. Adjusting state during render (rather than in
+  // an effect) avoids the cascading re-render an effect would cause here.
+  const [drawerPath, setDrawerPath] = useState(pathname);
+  if (drawerPath !== pathname) {
+    setDrawerPath(pathname);
+    if (drawer) setDrawer(false);
+  }
+
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-background/92 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-2.5">
-        <Link href="/" className="flex items-center gap-2.5" aria-label="RosterLab home">
+    <header className="sticky top-0 z-40 border-b border-hairline bg-court/92 backdrop-blur-md">
+      <div className="mx-auto flex max-w-[1600px] items-center gap-3 px-4 py-2.5 lg:px-8">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="RosterLab — home">
           <BrandMark size={30} />
           <BrandWordmark />
         </Link>
-        <nav className="ml-auto flex flex-wrap items-center gap-0.5" aria-label="Primary">
-          {NAV.map((item) => {
-            const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
+
+        {/* Desktop navigation — one line from 1024px up */}
+        <nav className="ml-auto hidden items-center gap-0.5 lg:flex" aria-label="Primary">
+          {PRIMARY.map((item) => {
+            const active = isActive(pathname, item.href, item.exact);
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 aria-current={active ? "page" : undefined}
-                className={`rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
+                className={`display relative whitespace-nowrap rounded-md px-2.5 py-1.5 text-[15px] tracking-wide transition-colors ${
                   active
-                    ? "bg-panel2 font-semibold text-foreground shadow-[inset_0_-2px_0_var(--brand)]"
-                    : "text-muted hover:bg-panel hover:text-foreground"
+                    ? "bg-panel2 text-foreground"
+                    : "text-muted hover:bg-panel2 hover:text-foreground"
                 }`}
               >
                 {item.label}
+                {active && (
+                  <span
+                    aria-hidden
+                    className="absolute inset-x-2.5 -bottom-[7px] h-0.5 rounded-full bg-signal"
+                  />
+                )}
               </Link>
             );
           })}
+          <MoreMenu pathname={pathname} />
         </nav>
-        <GlobalSearch />
-        <DataStatusChip />
+
+        <div className="ml-auto hidden items-center gap-2 lg:ml-3 lg:flex">
+          <GlobalSearch />
+          <StatusChips />
+        </div>
+
+        {/* Mobile: status + drawer trigger only */}
+        <div className="ml-auto flex items-center gap-2 lg:hidden">
+          <StatusChips compact />
+          <button
+            type="button"
+            aria-expanded={drawer}
+            aria-controls="mobile-nav"
+            aria-label={drawer ? "Close menu" : "Open menu"}
+            onClick={() => setDrawer((v) => !v)}
+            className="flex h-9 w-9 items-center justify-center rounded-md border border-line bg-panel2 text-foreground"
+          >
+            <span aria-hidden className="text-lg leading-none">
+              {drawer ? "✕" : "☰"}
+            </span>
+          </button>
+        </div>
       </div>
+
+      {/* Mobile drawer: full-width destination list built for thumbs */}
+      {drawer && (
+        <div id="mobile-nav" className="border-t border-hairline bg-court lg:hidden">
+          <div className="px-4 py-3">
+            <GlobalSearch onNavigate={() => setDrawer(false)} />
+          </div>
+          <nav aria-label="Primary" className="pb-3">
+            {[...PRIMARY, ...SECONDARY].map((item) => {
+              const active = isActive(pathname, item.href, "exact" in item ? item.exact : false);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-center justify-between border-l-2 px-4 py-3 ${
+                    active
+                      ? "border-signal bg-panel2 text-foreground"
+                      : "border-transparent text-muted"
+                  }`}
+                >
+                  <span className="display text-[17px] tracking-wide">{item.label}</span>
+                  {"hint" in item && item.hint && (
+                    <span className="ml-3 truncate text-[11px] text-faint">{item.hint}</span>
+                  )}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+      )}
     </header>
+  );
+}
+
+export function AppFooter() {
+  return (
+    <footer className="mt-8 border-t border-hairline">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-3 px-4 py-5 lg:flex-row lg:items-start lg:justify-between lg:px-8">
+        <div className="flex shrink-0 items-center gap-2.5">
+          <BrandMark size={22} />
+          <span className="display whitespace-nowrap text-base tracking-tight">
+            ROSTER<span className="text-brand">LAB</span>
+          </span>
+          <span className="eyebrow whitespace-nowrap text-[0.5625rem]">
+            Basketball Decision Intelligence
+          </span>
+        </div>
+        <p className="max-w-3xl text-[11px] leading-relaxed text-faint">
+          Independent analytical simulator — not affiliated with or endorsed by the NBA, and not an
+          official cap-management product. Basketball data comes from NBA.com via{" "}
+          <a
+            className="underline hover:text-muted"
+            href="https://github.com/swar/nba_api"
+            target="_blank"
+            rel="noreferrer"
+          >
+            nba_api
+          </a>{" "}
+          and user-imported sources, each labeled with provenance in{" "}
+          <Link className="underline hover:text-muted" href="/data-health">
+            Data Health
+          </Link>
+          . Team names, logos and player images belong to their owners and are used locally for
+          identification. Missing data is always shown as unavailable — never estimated.
+        </p>
+      </div>
+    </footer>
   );
 }
