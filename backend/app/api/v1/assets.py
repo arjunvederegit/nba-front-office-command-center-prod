@@ -59,3 +59,30 @@ def player_photo(nba_player_id: int, db: Session = Depends(get_db)) -> FileRespo
     if not path.is_file():
         raise NotFoundError(f"photo file for player {nba_player_id} is missing on disk")
     return FileResponse(path, media_type=asset.content_type, headers=CACHE_HEADERS)
+
+
+@router.get("/manifest")
+def asset_manifest(db: Session = Depends(get_db)) -> dict:
+    """Which identities actually have an indexed image.
+
+    The client fetches this once and only requests a photo it knows exists, so a
+    player without a matched image renders its initials fallback immediately
+    instead of costing a 404 round-trip.
+    """
+    player_ids = db.scalars(
+        select(MediaAsset.nba_id).where(
+            MediaAsset.entity_type == "player",
+            MediaAsset.is_primary,
+            MediaAsset.player_id.is_not(None),
+            MediaAsset.nba_id.is_not(None),
+        )
+    ).all()
+    team_rows = db.execute(
+        select(Team.abbreviation)
+        .join(MediaAsset, MediaAsset.team_id == Team.id)
+        .where(MediaAsset.entity_type == "team")
+    ).all()
+    return {
+        "players": sorted({int(pid) for pid in player_ids if pid is not None}),
+        "teams": sorted({row[0].upper() for row in team_rows}),
+    }

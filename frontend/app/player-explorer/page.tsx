@@ -1,10 +1,12 @@
 "use client";
 
 /**
- * Player Lab — fan-facing exploration of the imported season-totals directory.
- * One request loads every imported player; search/filter/sort, league-percentile
- * context and a 2-4 player comparison drawer all run client-side. Totals mode and
- * per-game mode are strictly separated — the two scales are never mixed in one view.
+ * Player Explorer — the research surface over the imported season directory.
+ *
+ * One request loads every imported player; search, filters, sorting, league
+ * percentile context and the 2–4 player comparison all run client-side. Totals
+ * mode and per-game mode stay strictly separated: the two scales are never mixed
+ * inside a single view, and the provenance rail says which one you're reading.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -12,17 +14,22 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import { pct } from "@/lib/format";
-import { teamTheme } from "@/lib/teamTheme";
+import { ordinal, pct } from "@/lib/format";
+import { teamIdentity } from "@/lib/teamIdentity";
 import type { SeasonTotalsPlayer, SeasonTotalsResponse, Team } from "@/lib/types";
 import { PlayerPhoto, TeamLogo } from "@/components/media";
 import {
-  Card,
+  Badge,
+  Button,
   EmptyState,
   ErrorState,
   MeterBar,
-  SourceLine,
-  Spinner,
+  PageHeader,
+  Panel,
+  SegmentedControl,
+  Skeleton,
+  SkeletonRows,
+  SourceRail,
   Td,
   Th,
 } from "@/components/ui";
@@ -30,6 +37,7 @@ import {
 const SEASON = "2025-26";
 
 type Mode = "per_game" | "totals";
+type PositionGroup = "all" | "Guards" | "Wings" | "Bigs";
 
 /** Columns shown in the directory; `kind` decides which stat bag a value reads from. */
 interface StatColumn {
@@ -85,47 +93,56 @@ function percentileOf(sortedValues: number[], value: number): number {
   return (lo / sortedValues.length) * 100;
 }
 
-const PAGE_SIZE = 100;
+function positionGroup(position: string | null): PositionGroup {
+  const p = (position ?? "").toUpperCase();
+  if (!p) return "all";
+  if (p.includes("C")) return "Bigs";
+  if (p.includes("G") && !p.includes("F")) return "Guards";
+  return "Wings";
+}
+
+const PAGE_SIZE = 60;
 const COMPARE_MAX = 4;
 const COMPARE_MIN = 2;
 
 /** Rows of the comparison panel: always the per-game line plus rates (labeled). */
-const COMPARE_ROWS: { label: string; get: (p: SeasonTotalsPlayer) => number | null; fmt: (v: number) => string }[] = [
-  { label: "MIN/g", get: (p) => numOrNull(p.per_game.MIN), fmt: (v) => v.toFixed(1) },
-  { label: "PTS/g", get: (p) => numOrNull(p.per_game.PTS), fmt: (v) => v.toFixed(1) },
-  { label: "REB/g", get: (p) => numOrNull(p.per_game.REB), fmt: (v) => v.toFixed(1) },
-  { label: "AST/g", get: (p) => numOrNull(p.per_game.AST), fmt: (v) => v.toFixed(1) },
-  { label: "STL/g", get: (p) => numOrNull(p.per_game.STL), fmt: (v) => v.toFixed(1) },
-  { label: "BLK/g", get: (p) => numOrNull(p.per_game.BLK), fmt: (v) => v.toFixed(1) },
-  { label: "TOV/g", get: (p) => numOrNull(p.per_game.TOV), fmt: (v) => v.toFixed(1) },
-  { label: "FG%", get: (p) => numOrNull(p.rates.FG_PCT), fmt: (v) => pct(v, 1) },
-  { label: "3P%", get: (p) => numOrNull(p.rates.FG3_PCT), fmt: (v) => pct(v, 1) },
-  { label: "FT%", get: (p) => numOrNull(p.rates.FT_PCT), fmt: (v) => pct(v, 1) },
-  { label: "AST/TOV", get: (p) => numOrNull(p.rates.AST_TOV), fmt: (v) => v.toFixed(2) },
-  { label: "EFF", get: (p) => numOrNull(p.rates.EFF), fmt: (v) => v.toFixed(1) },
+const COMPARE_ROWS: {
+  label: string;
+  get: (p: SeasonTotalsPlayer) => number | null;
+  fmt: (v: number) => string;
+  better: "high" | "low";
+}[] = [
+  { label: "MIN/g", get: (p) => numOrNull(p.per_game.MIN), fmt: (v) => v.toFixed(1), better: "high" },
+  { label: "PTS/g", get: (p) => numOrNull(p.per_game.PTS), fmt: (v) => v.toFixed(1), better: "high" },
+  { label: "REB/g", get: (p) => numOrNull(p.per_game.REB), fmt: (v) => v.toFixed(1), better: "high" },
+  { label: "AST/g", get: (p) => numOrNull(p.per_game.AST), fmt: (v) => v.toFixed(1), better: "high" },
+  { label: "STL/g", get: (p) => numOrNull(p.per_game.STL), fmt: (v) => v.toFixed(1), better: "high" },
+  { label: "BLK/g", get: (p) => numOrNull(p.per_game.BLK), fmt: (v) => v.toFixed(1), better: "high" },
+  { label: "TOV/g", get: (p) => numOrNull(p.per_game.TOV), fmt: (v) => v.toFixed(1), better: "low" },
+  { label: "FG%", get: (p) => numOrNull(p.rates.FG_PCT), fmt: (v) => pct(v, 1), better: "high" },
+  { label: "3P%", get: (p) => numOrNull(p.rates.FG3_PCT), fmt: (v) => pct(v, 1), better: "high" },
+  { label: "FT%", get: (p) => numOrNull(p.rates.FT_PCT), fmt: (v) => pct(v, 1), better: "high" },
+  { label: "AST/TOV", get: (p) => numOrNull(p.rates.AST_TOV), fmt: (v) => v.toFixed(2), better: "high" },
+  { label: "EFF", get: (p) => numOrNull(p.rates.EFF), fmt: (v) => v.toFixed(1), better: "high" },
 ];
 
 function numOrNull(value: number | null | undefined): number | null {
   return typeof value === "number" ? value : null;
 }
 
-export default function PlayerLabPage() {
+export default function PlayerExplorerPage() {
   return (
-    <Suspense fallback={<Spinner label="Loading Player Lab…" />}>
-      <PlayerLab />
+    <Suspense fallback={<ExplorerSkeleton />}>
+      <PlayerExplorer />
     </Suspense>
   );
 }
 
-function PlayerLab() {
+function PlayerExplorer() {
   const searchParams = useSearchParams();
   const teamParam = searchParams.get("team");
 
-  const {
-    data,
-    isLoading,
-    error,
-  } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["season-totals", SEASON],
     queryFn: () => api.get<SeasonTotalsResponse>(`/players/season-totals/${SEASON}`),
     staleTime: 300_000,
@@ -138,6 +155,7 @@ function PlayerLab() {
 
   const [search, setSearch] = useState("");
   const [teamAbbr, setTeamAbbr] = useState<string>("all");
+  const [position, setPosition] = useState<PositionGroup>("all");
   const [mode, setMode] = useState<Mode>("per_game");
   const [sortKey, setSortKey] = useState<string>("PTS");
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
@@ -160,8 +178,8 @@ function PlayerLab() {
   const leagueValues = useMemo(() => {
     const values: number[] = [];
     for (const player of players) {
-      const v = statValue(player, sortColumn, mode);
-      if (v !== null) values.push(v);
+      const value = statValue(player, sortColumn, mode);
+      if (value !== null) values.push(value);
     }
     values.sort((a, b) => a - b);
     return values;
@@ -172,6 +190,7 @@ function PlayerLab() {
     const rows = players.filter(
       (p) =>
         (teamAbbr === "all" || p.team_abbr === teamAbbr) &&
+        (position === "all" || positionGroup(p.position) === position) &&
         (q.length === 0 || p.name.toLowerCase().includes(q)),
     );
     rows.sort((a, b) => {
@@ -183,10 +202,13 @@ function PlayerLab() {
       return sortDir === "desc" ? bv - av : av - bv;
     });
     return rows;
-  }, [players, search, teamAbbr, sortColumn, sortDir, mode]);
+  }, [players, search, teamAbbr, position, sortColumn, sortDir, mode]);
 
   const selectedPlayers = useMemo(
-    () => selected.map((id) => players.find((p) => p.player_id === id)).filter(Boolean) as SeasonTotalsPlayer[],
+    () =>
+      selected
+        .map((id) => players.find((p) => p.player_id === id))
+        .filter(Boolean) as SeasonTotalsPlayer[],
     [selected, players],
   );
 
@@ -211,282 +233,306 @@ function PlayerLab() {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <PageIntro />
-        <div className="skeleton h-10 rounded-lg" />
-        <div className="skeleton h-96 rounded-lg" />
-      </div>
-    );
+  function resetFilters() {
+    setSearch("");
+    setTeamAbbr("all");
+    setPosition("all");
+    setVisibleCount(PAGE_SIZE);
   }
+
+  const modeSuffix = mode === "per_game" ? "/g" : " tot";
+  const visible = filtered.slice(0, visibleCount);
+  const filtersActive = search.trim() !== "" || teamAbbr !== "all" || position !== "all";
+
+  if (isLoading) return <ExplorerSkeleton />;
+
   if (error) {
     return (
-      <div className="space-y-4">
-        <PageIntro />
+      <div className="space-y-5">
+        <ExplorerHeader count={null} season={SEASON} />
         <ErrorState message={(error as Error).message} />
       </div>
     );
   }
+
   if (!data || !data.available) {
     return (
-      <div className="space-y-4">
-        <PageIntro />
+      <div className="space-y-5">
+        <ExplorerHeader count={null} season={SEASON} />
         <EmptyState
           title="No season totals imported"
-          hint={data?.note ?? "No totals imported for this season."}
+          hint={
+            data?.note ??
+            "No season-totals file has been imported for this season, so there is nothing to explore yet."
+          }
+          action={
+            <Link
+              href="/data-health"
+              className="inline-flex items-center justify-center rounded-md bg-brand px-4 py-2 text-sm font-semibold text-court transition-[filter] hover:brightness-110"
+            >
+              See what&apos;s missing
+            </Link>
+          }
         />
       </div>
     );
   }
 
-  const modeSuffix = mode === "per_game" ? "/g" : " (tot)";
-  const visible = filtered.slice(0, visibleCount);
-
   return (
-    <div className="space-y-4 pb-24">
-      <PageIntro source={data.source} importedAt={data.imported_at} />
+    <div className="space-y-5 pb-24">
+      <ExplorerHeader count={data.count} season={data.season} />
 
-      {/* Toolbar */}
-      <Card>
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            type="search"
-            aria-label="Search players by name"
-            placeholder="Search players…"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setVisibleCount(PAGE_SIZE);
-            }}
-            className="w-full rounded-md border border-line bg-panel2 px-3 py-1.5 text-sm placeholder:text-muted/70 sm:w-56"
-          />
-          <label className="flex items-center gap-2 text-xs text-muted">
-            Team
-            <select
-              aria-label="Filter by team"
-              value={teamAbbr}
-              onChange={(e) => {
-                setTeamAbbr(e.target.value);
-                setVisibleCount(PAGE_SIZE);
-              }}
-              className="rounded-md border border-line bg-panel2 px-2 py-1.5 text-sm text-foreground"
-            >
-              <option value="all">All teams</option>
-              {(teams ?? []).map((team) => (
-                <option key={team.id} value={team.abbreviation}>
-                  {team.abbreviation} — {team.full_name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
-            Sort by
-            <select
-              aria-label="Sort by stat"
-              value={sortKey}
-              onChange={(e) => setSort(e.target.value)}
-              className="rounded-md border border-line bg-panel2 px-2 py-1.5 text-sm text-foreground"
-            >
-              {ALL_COLUMNS.map((col) => (
-                <option key={col.key} value={col.key}>
-                  {col.label}
-                  {col.kind === "counting" ? modeSuffix : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div
-            role="group"
-            aria-label="Stat display mode"
-            className="ml-auto flex overflow-hidden rounded-md border border-line text-xs"
-          >
-            {(
-              [
-                ["per_game", "Per game"],
-                ["totals", "Season totals"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                aria-pressed={mode === value}
-                onClick={() => setMode(value)}
-                className={`px-3 py-1.5 transition-colors ${
-                  mode === value
-                    ? "bg-brand/15 font-semibold text-brand"
-                    : "bg-panel2 text-muted hover:text-foreground"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <p className="mt-2 text-[11px] text-muted">
-          Showing{" "}
-          <span className="font-semibold text-foreground">
-            {mode === "per_game" ? "per-game values (derived using GP)" : "raw season totals"}
-          </span>{" "}
-          — the two scales are never mixed. Shooting rates and EFF are scale-independent. Bar next
-          to the sorted column = league percentile (among {data.count} imported players).
-        </p>
-      </Card>
+      <div className="grid gap-4 lg:grid-cols-[236px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)]">
+        {/* ------------------------------------------------------- filter rail */}
+        <aside className="space-y-3 lg:sticky lg:top-[76px] lg:self-start">
+          <Panel title="Filters" accent="var(--signal)">
+            <div className="space-y-3.5">
+              <Field label="Search" htmlFor="explorer-search">
+                <input
+                  id="explorer-search"
+                  type="search"
+                  placeholder="Player name…"
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setVisibleCount(PAGE_SIZE);
+                  }}
+                  className="w-full rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-sm text-foreground placeholder:text-faint focus:border-signal/60"
+                />
+              </Field>
 
-      {/* Directory */}
-      <Card
-        title={`Player directory · ${data.season}`}
-        subtitle={`${filtered.length} of ${data.count} players · sorted by ${sortColumn.label}${
-          sortColumn.kind === "counting" ? modeSuffix : ""
-        } (${sortDir === "desc" ? "high → low" : "low → high"})`}
-      >
-        {filtered.length === 0 ? (
-          <EmptyState title="No players match" hint="Adjust the search or team filter." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-[880px] w-full">
-              <thead>
-                <tr className="border-b border-line">
-                  <Th className="w-8">
-                    <span className="sr-only">Select for comparison</span>
-                  </Th>
-                  <Th>Player</Th>
-                  <Th>Team</Th>
-                  <Th>Pos</Th>
-                  <Th className="text-right">GP</Th>
-                  {ALL_COLUMNS.map((col) => (
-                    <Th key={col.key} className="text-right">
-                      <button
-                        type="button"
-                        onClick={() => setSort(col.key)}
-                        aria-label={`Sort by ${col.label}${col.kind === "counting" ? (mode === "per_game" ? " per game" : " season total") : ""}`}
-                        className={`uppercase tracking-wider ${
-                          sortKey === col.key ? "text-brand" : "hover:text-foreground"
-                        }`}
-                      >
-                        {col.label}
-                        {col.kind === "counting" ? modeSuffix : ""}
-                        {sortKey === col.key ? (sortDir === "desc" ? " ↓" : " ↑") : ""}
-                      </button>
-                    </Th>
+              <Field label="Team" htmlFor="explorer-team">
+                <select
+                  id="explorer-team"
+                  value={teamAbbr}
+                  onChange={(event) => {
+                    setTeamAbbr(event.target.value);
+                    setVisibleCount(PAGE_SIZE);
+                  }}
+                  className="w-full rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-sm text-foreground focus:border-signal/60"
+                >
+                  <option value="all">All teams</option>
+                  {(teams ?? []).map((team) => (
+                    <option key={team.id} value={team.abbreviation}>
+                      {team.abbreviation} — {team.full_name}
+                    </option>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((player) => {
-                  const theme = teamTheme(player.team_abbr);
-                  const isSelected = selected.includes(player.player_id);
-                  const sortValue = statValue(player, sortColumn, mode);
-                  const percentile = sortValue === null ? null : percentileOf(leagueValues, sortValue);
-                  return (
-                    <tr key={player.player_id} className="border-b border-line/60 hover:bg-panel2/60">
-                      <Td>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={!isSelected && selected.length >= COMPARE_MAX}
-                          onChange={() => toggleSelected(player.player_id)}
-                          aria-label={`Select ${player.name} for comparison`}
-                          className="h-4 w-4 accent-[var(--brand)]"
-                        />
-                      </Td>
-                      <Td>
-                        <Link
-                          href={`/players/${player.player_id}`}
-                          className="flex items-center gap-2 hover:text-brand"
-                        >
-                          <PlayerPhoto nbaPlayerId={player.nba_player_id} name={player.name} size={28} />
-                          <span className="whitespace-nowrap font-medium">{player.name}</span>
-                        </Link>
-                      </Td>
-                      <Td>
-                        {player.team_abbr ? (
-                          <span
-                            className="inline-flex items-center gap-1.5 rounded-full border px-1.5 py-0.5 text-[11px]"
-                            style={{ borderColor: `${theme.primary}66` }}
-                          >
-                            <TeamLogo abbreviation={player.team_abbr} size={16} />
-                            {player.team_abbr}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted">—</span>
-                        )}
-                      </Td>
-                      <Td className="text-muted">{player.position ?? "—"}</Td>
-                      <Td className="text-right tabular-nums">{player.gp}</Td>
-                      {ALL_COLUMNS.map((col) => {
-                        const value = statValue(player, col, mode);
-                        const isSortCol = col.key === sortKey;
-                        return (
-                          <Td key={col.key} className="text-right tabular-nums">
-                            <span className={isSortCol ? "font-semibold text-foreground" : undefined}>
-                              {formatStat(value, col, mode)}
-                            </span>
-                            {isSortCol && percentile !== null && (
-                              <MeterBar
-                                value={percentile}
-                                max={100}
-                                color="var(--brand)"
-                                className="mt-1 !h-1 w-14 min-w-14"
-                              />
-                            )}
-                          </Td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {filtered.length > visibleCount && (
-          <div className="mt-3 text-center">
-            <button
-              type="button"
-              onClick={() => setVisibleCount(filtered.length)}
-              className="rounded-md border border-line bg-panel2 px-4 py-1.5 text-sm text-muted transition hover:text-foreground"
-            >
-              Show all {filtered.length} players
-            </button>
-          </div>
-        )}
-      </Card>
+                </select>
+              </Field>
 
-      {/* Comparison panel */}
-      {compareOpen && selectedPlayers.length >= COMPARE_MIN && (
-        <ComparePanel players={selectedPlayers} onClose={() => setCompareOpen(false)} />
-      )}
+              <Field label="Position group" htmlFor="explorer-position">
+                <select
+                  id="explorer-position"
+                  value={position}
+                  onChange={(event) => {
+                    setPosition(event.target.value as PositionGroup);
+                    setVisibleCount(PAGE_SIZE);
+                  }}
+                  className="w-full rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-sm text-foreground focus:border-signal/60"
+                >
+                  <option value="all">All positions</option>
+                  <option value="Guards">Guards</option>
+                  <option value="Wings">Wings</option>
+                  <option value="Bigs">Bigs</option>
+                </select>
+              </Field>
 
-      {/* Sticky selection bar */}
+              <Field label="Sort by" htmlFor="explorer-sort">
+                <div className="flex gap-1.5">
+                  <select
+                    id="explorer-sort"
+                    value={sortKey}
+                    onChange={(event) => {
+                      setSortKey(event.target.value);
+                      setSortDir("desc");
+                    }}
+                    className="min-w-0 flex-1 rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-sm text-foreground focus:border-signal/60"
+                  >
+                    {ALL_COLUMNS.map((column) => (
+                      <option key={column.key} value={column.key}>
+                        {column.label}
+                        {column.kind === "counting" ? modeSuffix : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+                    aria-label={`Sort direction: ${sortDir === "desc" ? "high to low" : "low to high"}`}
+                    title={sortDir === "desc" ? "High → low" : "Low → high"}
+                    className="shrink-0 rounded-md border border-line bg-panel2 px-2.5 text-sm text-muted transition-colors hover:border-signal/50 hover:text-foreground"
+                  >
+                    <span aria-hidden>{sortDir === "desc" ? "↓" : "↑"}</span>
+                  </button>
+                </div>
+              </Field>
+
+              {filtersActive && (
+                <Button variant="ghost" size="sm" className="w-full" onClick={resetFilters}>
+                  Reset filters
+                </Button>
+              )}
+            </div>
+          </Panel>
+
+          <Panel title="Scale">
+            <SegmentedControl
+              ariaLabel="Stat display scale"
+              value={mode}
+              onChange={(value) => setMode(value as Mode)}
+              options={[
+                { value: "per_game", label: "Per game" },
+                { value: "totals", label: "Season totals" },
+              ]}
+            />
+            <p className="mt-2.5 text-[11px] leading-relaxed text-muted">
+              {mode === "per_game" ? (
+                <>
+                  Showing <span className="text-foreground">per-game values</span>, derived by
+                  dividing raw season totals by games played.
+                </>
+              ) : (
+                <>
+                  Showing <span className="text-foreground">raw season totals</span> exactly as
+                  imported.
+                </>
+              )}{" "}
+              The two scales are never mixed in one view. Shooting rates and EFF are
+              scale-independent.
+            </p>
+          </Panel>
+
+          <Panel title="Comparison">
+            <p className="text-[11px] leading-relaxed text-muted">
+              Tick up to {COMPARE_MAX} players to line their seasons up side by side. The comparison
+              always uses the per-game line so the scales stay honest.
+            </p>
+            <div className="mt-2.5 flex items-center gap-2">
+              <Badge status={selected.length >= COMPARE_MIN ? "info" : "unavailable"}>
+                {selected.length} of {COMPARE_MAX} picked
+              </Badge>
+              {selected.length >= COMPARE_MIN && !compareOpen && (
+                <Button size="sm" variant="signal" onClick={() => setCompareOpen(true)}>
+                  Compare
+                </Button>
+              )}
+            </div>
+          </Panel>
+        </aside>
+
+        {/* ---------------------------------------------------------- results */}
+        <div className="min-w-0 space-y-3">
+          {compareOpen && selectedPlayers.length >= COMPARE_MIN && (
+            <ComparePanel players={selectedPlayers} onClose={() => setCompareOpen(false)} />
+          )}
+
+          <Panel padded={false}>
+            <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-hairline px-4 py-3">
+              <div className="min-w-0">
+                <h2 className="title-md whitespace-nowrap text-foreground">
+                  Player directory · {data.season}
+                </h2>
+                <p className="mt-1 text-[11px] text-muted">
+                  {filtered.length.toLocaleString()} of {data.count.toLocaleString()} imported
+                  players · sorted by {sortColumn.label}
+                  {sortColumn.kind === "counting" ? modeSuffix : ""} (
+                  {sortDir === "desc" ? "high → low" : "low → high"})
+                </p>
+              </div>
+              <span className="eyebrow whitespace-nowrap">
+                bar = league percentile on the sorted stat
+              </span>
+            </header>
+
+            <div className="p-3">
+              {filtered.length === 0 ? (
+                <EmptyState
+                  title="No players match those filters"
+                  hint="Widen the search, clear the team filter, or switch the position group."
+                  action={
+                    <Button size="sm" onClick={resetFilters}>
+                      Reset filters
+                    </Button>
+                  }
+                />
+              ) : (
+                <>
+                  <ColumnRail sortKey={sortKey} sortDir={sortDir} onSort={setSort} mode={mode} />
+                  <ul className="space-y-1.5">
+                    {visible.map((player, index) => (
+                      <PlayerRow
+                        key={player.player_id}
+                        player={player}
+                        rank={index + 1}
+                        mode={mode}
+                        sortKey={sortKey}
+                        percentile={(() => {
+                          const value = statValue(player, sortColumn, mode);
+                          return value === null ? null : percentileOf(leagueValues, value);
+                        })()}
+                        selected={selected.includes(player.player_id)}
+                        selectionFull={selected.length >= COMPARE_MAX}
+                        onToggle={() => toggleSelected(player.player_id)}
+                      />
+                    ))}
+                  </ul>
+
+                  {filtered.length > visibleCount && (
+                    <div className="mt-3 flex justify-center">
+                      <Button onClick={() => setVisibleCount((count) => count + PAGE_SIZE * 3)}>
+                        Show more · {(filtered.length - visibleCount).toLocaleString()} remaining
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              <SourceRail
+                source={data.source}
+                retrievedAt={data.imported_at}
+                extra={
+                  <span>
+                    · totals are raw as imported; per-game values are derived (totals ÷ GP)
+                  </span>
+                }
+              />
+            </div>
+          </Panel>
+        </div>
+      </div>
+
+      {/* --------------------------------------------------- selection tray */}
       {selected.length > 0 && (
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-panel/95 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-2.5">
-            <div className="flex items-center gap-1.5" aria-live="polite">
-              {selectedPlayers.map((p) => (
-                <PlayerPhoto key={p.player_id} nbaPlayerId={p.nba_player_id} name={p.name} size={26} />
-              ))}
-              <span className="ml-1 text-xs text-muted">
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-hairline bg-court/95 backdrop-blur">
+          <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-4 py-2.5 lg:px-8">
+            <div className="flex min-w-0 items-center gap-2" aria-live="polite">
+              <span className="flex shrink-0 items-center gap-1.5">
+                {selectedPlayers.map((player) => (
+                  <PlayerPhoto
+                    key={player.player_id}
+                    nbaPlayerId={player.nba_player_id}
+                    name={player.name}
+                    size={28}
+                  />
+                ))}
+              </span>
+              <span className="min-w-0 truncate text-xs text-muted">
                 {selected.length} of {COMPARE_MAX} selected
                 {selected.length < COMPARE_MIN ? " — pick at least 2 to compare" : ""}
               </span>
             </div>
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                type="button"
-                onClick={clearSelection}
-                className="rounded-md border border-line px-3 py-1.5 text-xs text-muted transition hover:text-foreground"
-              >
-                Clear selection
-              </button>
-              <button
-                type="button"
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                Clear
+              </Button>
+              <Button
+                size="sm"
+                variant="signal"
                 disabled={selected.length < COMPARE_MIN}
                 onClick={() => setCompareOpen(true)}
-                className="rounded-md bg-brand px-4 py-1.5 text-xs font-semibold text-black transition enabled:hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Compare
-              </button>
+                Compare {selected.length}
+              </Button>
             </div>
           </div>
         </div>
@@ -495,26 +541,228 @@ function PlayerLab() {
   );
 }
 
-function PageIntro({ source, importedAt }: { source?: string; importedAt?: string | null }) {
+/* ------------------------------------------------------------------ header */
+
+function ExplorerHeader({ count, season }: { count: number | null; season: string }) {
+  return (
+    <PageHeader
+      eyebrow="Research"
+      title="Player Explorer"
+      lede="Every imported player line for the season — searchable, sortable, and set against the rest of the league. Pick two to four names to put their seasons side by side."
+      meta={
+        <>
+          <Badge status="info">{season}</Badge>
+          {count !== null && <span className="eyebrow">{count.toLocaleString()} players loaded</span>}
+          <span className="eyebrow">league percentiles from this same set</span>
+        </>
+      }
+    />
+  );
+}
+
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <h1 className="text-2xl font-bold">Player Lab</h1>
-      <p className="mt-1 text-sm text-muted">
-        Explore every imported player — search, filter by team, sort by any stat and pull up to
-        four players into a side-by-side comparison.
-      </p>
-      {source && (
-        <SourceLine source={source} retrievedAt={importedAt ?? null} className="mt-1.5" />
-      )}
-      {source && (
-        <p className="text-[11px] text-muted">
-          Values labeled &ldquo;season totals&rdquo; are raw totals; per-game values are derived by
-          dividing totals by games played (GP).
-        </p>
-      )}
+      <label htmlFor={htmlFor} className="eyebrow mb-1.5 block text-[0.5625rem]">
+        {label}
+      </label>
+      {children}
     </div>
   );
 }
+
+/* -------------------------------------------------------------- directory */
+
+/** Column headings for the wide layout; each one is also the sort control. */
+function ColumnRail({
+  sortKey,
+  sortDir,
+  onSort,
+  mode,
+}: {
+  sortKey: string;
+  sortDir: "desc" | "asc";
+  onSort: (key: string) => void;
+  mode: Mode;
+}) {
+  const suffix = mode === "per_game" ? "/g" : "";
+  return (
+    // Sticky so the column meaning survives a 573-row scroll; the nav is 56px tall.
+    <div className="mb-1.5 hidden items-center gap-3 rounded-md bg-panel2/95 px-3 py-1.5 backdrop-blur xl:sticky xl:top-[56px] xl:z-10 xl:flex">
+      <span className="w-4 shrink-0" aria-hidden />
+      <span className="w-6 shrink-0" aria-hidden />
+      <span className="eyebrow min-w-0 flex-1 text-[0.5625rem] xl:max-w-[340px]">Player</span>
+      <span className="flex flex-1 items-center gap-x-2.5">
+        <span className="eyebrow flex-1 text-right text-[0.5625rem]">GP</span>
+        {ALL_COLUMNS.map((column) => {
+          const active = column.key === sortKey;
+          return (
+            <button
+              key={column.key}
+              type="button"
+              onClick={() => onSort(column.key)}
+              aria-label={`Sort by ${column.label}${
+                column.kind === "counting"
+                  ? mode === "per_game"
+                    ? " per game"
+                    : " season total"
+                  : ""
+              }`}
+              className={`eyebrow flex-1 whitespace-nowrap text-right text-[0.5625rem] transition-colors ${
+                active ? "text-signal" : "hover:text-foreground"
+              }`}
+            >
+              {column.label}
+              {column.kind === "counting" ? suffix : ""}
+              {active ? (sortDir === "desc" ? " ↓" : " ↑") : ""}
+            </button>
+          );
+        })}
+      </span>
+    </div>
+  );
+}
+
+function PlayerRow({
+  player,
+  rank,
+  mode,
+  sortKey,
+  percentile,
+  selected,
+  selectionFull,
+  onToggle,
+}: {
+  player: SeasonTotalsPlayer;
+  rank: number;
+  mode: Mode;
+  sortKey: string;
+  percentile: number | null;
+  selected: boolean;
+  selectionFull: boolean;
+  onToggle: () => void;
+}) {
+  const identity = teamIdentity(player.team_abbr);
+  return (
+    <li
+      className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2.5 transition-colors xl:flex-nowrap ${
+        selected
+          ? "border-signal/55 bg-signal/8"
+          : "border-hairline bg-panel hover:border-signal/35 hover:bg-panel2"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        disabled={!selected && selectionFull}
+        onChange={onToggle}
+        aria-label={`Select ${player.name} for comparison`}
+        className="h-4 w-4 shrink-0 accent-[var(--signal)] disabled:opacity-30"
+      />
+      <span className="numeral w-6 shrink-0 text-right text-[13px] leading-none text-faint">
+        {rank}
+      </span>
+
+      <span className="flex min-w-0 flex-1 items-center gap-2.5 xl:max-w-[340px]">
+        <PlayerPhoto nbaPlayerId={player.nba_player_id} name={player.name} size={38} />
+        <span className="min-w-0">
+          <Link
+            href={`/players/${player.player_id}`}
+            className="block truncate text-sm font-medium text-foreground transition-colors hover:text-signal"
+          >
+            {player.name}
+          </Link>
+          <span className="mt-1 flex items-center gap-1.5">
+            {player.team_abbr ? (
+              <span
+                className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-[1px]"
+                style={{ borderColor: `${identity.bright}55` }}
+              >
+                <TeamLogo abbreviation={player.team_abbr} size={13} decorative />
+                <span className="numeral text-[11px] leading-none" style={{ color: identity.bright }}>
+                  {player.team_abbr}
+                </span>
+              </span>
+            ) : (
+              <span className="eyebrow text-[0.5rem]">free agent</span>
+            )}
+            <span className="eyebrow truncate text-[0.5rem]">{player.position ?? "—"}</span>
+          </span>
+        </span>
+      </span>
+
+      {/* Below xl the stat line drops to its own row inside the card, with each
+          figure carrying its own label; from xl it sits inline with the header rail. */}
+      <span className="grid w-full grid-cols-5 gap-x-2 gap-y-2 sm:grid-cols-10 xl:flex xl:w-auto xl:flex-1 xl:items-start xl:gap-x-2.5">
+        <StatCell label="GP" value={String(player.gp)} />
+        {ALL_COLUMNS.map((column) => {
+          const value = statValue(player, column, mode);
+          const isSorted = column.key === sortKey;
+          return (
+            <StatCell
+              key={column.key}
+              label={`${column.label}${column.kind === "counting" && mode === "per_game" ? "/g" : ""}`}
+              value={formatStat(value, column, mode)}
+              emphasized={isSorted}
+              meter={isSorted ? percentile : null}
+              meterLabel={
+                isSorted && percentile !== null
+                  ? `${ordinal(percentile)} percentile among loaded players`
+                  : undefined
+              }
+            />
+          );
+        })}
+      </span>
+    </li>
+  );
+}
+
+function StatCell({
+  label,
+  value,
+  emphasized = false,
+  meter = null,
+  meterLabel,
+}: {
+  label: string;
+  value: string;
+  emphasized?: boolean;
+  meter?: number | null;
+  meterLabel?: string;
+}) {
+  return (
+    <span className="block min-w-0 xl:flex-1" title={meterLabel}>
+      <span className="eyebrow block text-right text-[0.5rem] xl:hidden">{label}</span>
+      <span
+        className={`data block text-right text-[13px] leading-none ${
+          emphasized ? "font-semibold text-signal" : "text-muted"
+        }`}
+      >
+        {value}
+      </span>
+      {meter !== null && (
+        <MeterBar
+          value={meter}
+          max={100}
+          color="var(--signal)"
+          className="mt-1 !h-[3px]"
+          label={meterLabel}
+        />
+      )}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------- comparison */
 
 function ComparePanel({
   players,
@@ -524,41 +772,47 @@ function ComparePanel({
   onClose: () => void;
 }) {
   return (
-    <Card
+    <Panel
+      accent="var(--signal)"
       title={`Comparing ${players.length} players`}
-      subtitle="Per-game line (derived using GP), shooting rates and EFF · best value per row highlighted"
+      subtitle="Per-game line (derived using GP), shooting rates and EFF · best value in each row is highlighted"
       actions={
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close comparison"
-          className="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:text-foreground"
-        >
+        <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close comparison">
           Close
-        </button>
+        </Button>
       }
     >
-      <div className="overflow-x-auto">
-        <table className="min-w-[560px] w-full">
+      <div className="scroll-thin overflow-x-auto">
+        <table className="w-full min-w-[560px]">
+          <caption className="sr-only">
+            Per-game and rate comparison for the selected players
+          </caption>
           <thead>
             <tr className="border-b border-line">
-              <Th>Stat</Th>
-              {players.map((p) => {
-                const theme = teamTheme(p.team_abbr);
+              <Th className="w-24">Stat</Th>
+              {players.map((player) => {
+                const identity = teamIdentity(player.team_abbr);
                 return (
-                  <Th key={p.player_id}>
+                  <Th key={player.player_id}>
                     <Link
-                      href={`/players/${p.player_id}`}
-                      className="flex items-center gap-2 normal-case tracking-normal hover:text-brand"
+                      href={`/players/${player.player_id}`}
+                      className="flex items-center gap-2 normal-case tracking-normal transition-colors hover:text-signal"
                     >
-                      <PlayerPhoto nbaPlayerId={p.nba_player_id} name={p.name} size={34} />
-                      <span>
-                        <span className="block text-xs font-semibold text-foreground">{p.name}</span>
+                      <PlayerPhoto
+                        nbaPlayerId={player.nba_player_id}
+                        name={player.name}
+                        size={34}
+                        square
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-semibold text-foreground">
+                          {player.name}
+                        </span>
                         <span
-                          className="block text-[10px]"
-                          style={{ color: theme.bright }}
+                          className="block whitespace-nowrap text-[10px]"
+                          style={{ color: identity.bright }}
                         >
-                          {p.team_abbr ?? "—"} · {p.position ?? "—"} · {p.gp} GP
+                          {player.team_abbr ?? "—"} · {player.position ?? "—"} · {player.gp} GP
                         </span>
                       </span>
                     </Link>
@@ -569,25 +823,34 @@ function ComparePanel({
           </thead>
           <tbody>
             {COMPARE_ROWS.map((row) => {
-              const values = players.map((p) => row.get(p));
-              const best = values.reduce<number | null>(
-                (acc, v) => (v !== null && (acc === null || v > acc) ? v : acc),
-                null,
-              );
+              const values = players.map((player) => row.get(player));
+              const present = values.filter((v): v is number => v !== null);
+              const best = present.length
+                ? row.better === "high"
+                  ? Math.max(...present)
+                  : Math.min(...present)
+                : null;
               return (
-                <tr key={row.label} className="border-b border-line/60">
-                  <Td className="text-muted">{row.label}</Td>
-                  {players.map((p, i) => {
-                    const value = values[i];
+                <tr key={row.label} className="border-b border-hairline">
+                  <Td className="whitespace-nowrap text-muted">
+                    {row.label}
+                    {row.better === "low" && (
+                      <span className="ml-1 text-[10px] text-faint">(lower better)</span>
+                    )}
+                  </Td>
+                  {players.map((player, index) => {
+                    const value = values[index];
                     const isBest = value !== null && best !== null && value === best;
                     return (
                       <Td
-                        key={p.player_id}
-                        className={`tabular-nums ${
-                          isBest ? "bg-pass/10 font-semibold text-pass" : ""
-                        }`}
+                        key={player.player_id}
+                        numeric
+                        className={
+                          isBest ? "bg-legal/10 font-semibold !text-legal" : "text-foreground"
+                        }
                       >
                         {value === null ? "—" : row.fmt(value)}
+                        {isBest && <span className="sr-only"> — best in this row</span>}
                       </Td>
                     );
                   })}
@@ -597,6 +860,31 @@ function ComparePanel({
           </tbody>
         </table>
       </div>
-    </Card>
+    </Panel>
+  );
+}
+
+/* --------------------------------------------------------------- loading */
+
+function ExplorerSkeleton() {
+  return (
+    <div className="space-y-5" role="status" aria-label="Loading Player Explorer">
+      <div className="space-y-3">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-9 w-72 max-w-full" />
+        <Skeleton className="h-4 w-full max-w-2xl" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[236px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)]">
+        <div className="space-y-3">
+          <Skeleton className="h-64" />
+          <Skeleton className="h-36" />
+          <Skeleton className="h-32" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-14" />
+          <SkeletonRows rows={10} height="h-[62px]" />
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,11 +1,17 @@
 "use client";
 
+/**
+ * Team Outlook — one franchise, read the way a broadcast opens: banner, record,
+ * then the roster and the model's read on what this team is good at, what it
+ * needs, and where its money stands.
+ */
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import { NEED_LABEL, height, money, pct, tei } from "@/lib/format";
-import { teamTheme, teamThemeVars } from "@/lib/teamTheme";
+import { NEED_LABEL, height, money, ordinal, pct, tei } from "@/lib/format";
+import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type {
   PayrollResponse,
   RosterPlayer,
@@ -14,16 +20,21 @@ import type {
   Team,
   TeamNeedItem,
 } from "@/lib/types";
-import { PlayerPhoto, TeamLogo } from "@/components/media";
+import { HalfCourt } from "@/components/court";
+import { PlayerPhoto, TeamCrest } from "@/components/media";
 import { useToast } from "@/components/toast";
 import {
   Badge,
-  Card,
+  Button,
+  ButtonLink,
   EmptyState,
   ErrorState,
   MeterBar,
-  SourceLine,
-  Spinner,
+  Panel,
+  Skeleton,
+  SkeletonRows,
+  SourceRail,
+  StatBlock,
   UnavailableNotice,
 } from "@/components/ui";
 
@@ -44,31 +55,62 @@ interface TeamDetail {
 }
 
 const STRATEGIES = [
-  ["contend", "Contend now"],
-  ["improve", "Improve, keep flexibility"],
-  ["retool", "Re-tool around the core"],
-  ["rebuild", "Rebuild"],
-  ["youth", "Chase young upside"],
-  ["cap_relief", "Cut salary / tax"],
+  ["contend", "Contend now", "Win this season; future flexibility is secondary."],
+  ["improve", "Improve, keep flexibility", "Get better without mortgaging the books."],
+  ["retool", "Re-tool around the core", "Change the supporting cast, keep the stars."],
+  ["rebuild", "Rebuild", "Trade present value for future value."],
+  ["youth", "Chase young upside", "Prioritize age and development curves."],
+  ["cap_relief", "Cut salary / tax", "Get under a line, accept on-court cost."],
 ] as const;
 
-function positionGroup(position: string | null): "Guards" | "Wings" | "Bigs" {
-  // Official position strings (G, G-F, F, F-C, C, …) grouped for scanning;
-  // the exact designation stays visible on each row.
+const GROUPS = ["Guards", "Wings", "Bigs"] as const;
+type Group = (typeof GROUPS)[number];
+
+function positionGroup(position: string | null): Group {
+  // Official position strings (G, G-F, F, F-C, C, …) grouped for scanning; the
+  // exact designation stays visible on each row.
   const p = (position ?? "").toUpperCase();
   if (p.includes("C")) return "Bigs";
   if (p.includes("G") && !p.includes("F")) return "Guards";
   return "Wings";
 }
 
-function windowLabel(avgAge: number | null): { label: string; hint: string } {
-  if (avgAge === null) return { label: "Unknown", hint: "Roster ages unavailable." };
-  if (avgAge < 25.5) return { label: "Ascending", hint: "Young core — the window is opening." };
-  if (avgAge < 28.5) return { label: "Open now", hint: "Prime-age core — win-now moves fit." };
-  return { label: "Closing", hint: "Veteran core — weigh future flexibility carefully." };
+function windowLabel(avgAge: number | null): {
+  label: string;
+  hint: string;
+  status: string;
+  color: string;
+} {
+  if (avgAge === null)
+    return {
+      label: "Unknown",
+      hint: "Roster ages are unavailable, so the window can't be inferred.",
+      status: "unavailable",
+      color: "var(--unknown)",
+    };
+  if (avgAge < 25.5)
+    return {
+      label: "Ascending",
+      hint: "Young rotation — the window is opening.",
+      status: "info",
+      color: "var(--signal)",
+    };
+  if (avgAge < 28.5)
+    return {
+      label: "Open now",
+      hint: "Prime-age rotation — win-now moves fit.",
+      status: "pass",
+      color: "var(--legal)",
+    };
+  return {
+    label: "Closing",
+    hint: "Veteran rotation — weigh future flexibility carefully.",
+    status: "warning",
+    color: "var(--conditional)",
+  };
 }
 
-export default function TeamHubPage({ params }: { params: Promise<{ teamId: string }> }) {
+export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: string }> }) {
   const { teamId } = use(params);
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -83,8 +125,7 @@ export default function TeamHubPage({ params }: { params: Promise<{ teamId: stri
   });
   const { data: needs } = useQuery({
     queryKey: ["needs", teamId],
-    queryFn: () =>
-      api.get<{ needs: TeamNeedItem[]; note: string | null }>(`/teams/${teamId}/needs`),
+    queryFn: () => api.get<{ needs: TeamNeedItem[]; note: string | null }>(`/teams/${teamId}/needs`),
   });
   const { data: payroll } = useQuery({
     queryKey: ["payroll", teamId],
@@ -95,7 +136,7 @@ export default function TeamHubPage({ params }: { params: Promise<{ teamId: stri
   const saveStrategy = useMutation({
     mutationFn: () =>
       api.post<Scenario>("/scenarios", {
-        name: `${detail?.team.abbreviation} — ${STRATEGIES.find(([v]) => v === strategy)?.[1]}`,
+        name: `${detail?.team.abbreviation} — ${STRATEGIES.find(([value]) => value === strategy)?.[1]}`,
         focal_team_id: teamId,
         strategy,
       }),
@@ -107,16 +148,17 @@ export default function TeamHubPage({ params }: { params: Promise<{ teamId: stri
   });
 
   if (error) return <ErrorState message={`Could not load team: ${String(error)}`} />;
-  if (!detail) return <Spinner label="Loading team…" />;
+  if (!detail) return <TeamSkeleton />;
 
-  const theme = teamTheme(detail.team.abbreviation);
-  const adv = detail.stats.advanced ?? {};
+  const identity = teamIdentity(detail.team.abbreviation);
+  const advanced = detail.stats.advanced ?? {};
   const rosterPlayers = roster?.roster ?? [];
   const ages = rosterPlayers.map((p) => p.age).filter((a): a is number => a !== null);
+  const avgAge = ages.length ? ages.reduce((sum, a) => sum + a, 0) / ages.length : null;
   const topRotation = [...rosterPlayers].sort((a, b) => (b.tei ?? -99) - (a.tei ?? -99)).slice(0, 8);
   const rotationAges = topRotation.map((p) => p.age).filter((a): a is number => a !== null);
   const avgRotationAge = rotationAges.length
-    ? rotationAges.reduce((s, a) => s + a, 0) / rotationAges.length
+    ? rotationAges.reduce((sum, a) => sum + a, 0) / rotationAges.length
     : null;
   const competitiveWindow = windowLabel(avgRotationAge);
 
@@ -126,276 +168,387 @@ export default function TeamHubPage({ params }: { params: Promise<{ teamId: stri
     .filter((n) => n.severity === 0 && n.percentile !== null && (n.percentile ?? 0) >= 65)
     .slice(0, 4);
 
-  const groups: Record<string, RosterPlayer[]> = { Guards: [], Wings: [], Bigs: [] };
+  const groups: Record<Group, RosterPlayer[]> = { Guards: [], Wings: [], Bigs: [] };
   for (const player of rosterPlayers) groups[positionGroup(player.position)].push(player);
-  for (const key of Object.keys(groups))
-    groups[key].sort((a, b) => (b.tei ?? -99) - (a.tei ?? -99));
+  for (const group of GROUPS) groups[group].sort((a, b) => (b.tei ?? -99) - (a.tei ?? -99));
+
+  const teiValues = rosterPlayers.map((p) => p.tei).filter((t): t is number => t !== null);
+  const maxTei = teiValues.length ? Math.max(...teiValues, 1) : 1;
 
   return (
-    <div className="space-y-4" style={teamThemeVars(detail.team.abbreviation)}>
-      {/* Team header with color treatment */}
-      <section
-        className="relative overflow-hidden rounded-xl border border-line p-5"
-        style={{
-          background: `linear-gradient(115deg, ${theme.primary}33 0%, var(--panel) 55%)`,
-          borderColor: `${theme.bright}44`,
-        }}
-      >
-        <div className="flex flex-wrap items-center gap-4">
-          <TeamLogo abbreviation={detail.team.abbreviation} name={detail.team.full_name} size={72} />
-          <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-bold">{detail.team.full_name}</h1>
-            <p className="text-sm text-muted">
-              {detail.team.conference} Conference
-              {detail.team.division ? ` · ${detail.team.division}` : ""} · season {detail.season}
-            </p>
-            <div className="mt-1.5 flex flex-wrap gap-2 text-xs">
-              <Badge status="info">
-                window: {competitiveWindow.label}
-              </Badge>
-              <span className="text-muted">{competitiveWindow.hint}</span>
+    <div className="space-y-6" style={teamVars(detail.team.abbreviation)}>
+      {/* ------------------------------------------------------ broadcast banner */}
+      <section className="panel relative overflow-hidden">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background: `linear-gradient(105deg, ${identity.primary}3d 0%, transparent 58%)`,
+          }}
+        />
+        <HalfCourt className="pointer-events-none absolute -bottom-6 right-2 hidden h-[125%] w-[26%] text-signal/15 md:block" />
+
+        <div className="relative flex flex-col gap-5 p-5 md:flex-row md:items-center md:gap-6 md:p-6">
+          <div className="flex min-w-0 flex-1 items-center gap-4 md:gap-6">
+            <TeamCrest
+              abbreviation={detail.team.abbreviation}
+              name={detail.team.full_name}
+              size={76}
+            />
+
+            <div className="min-w-0">
+              <div className="eyebrow flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <span className="whitespace-nowrap" style={{ color: identity.bright }}>
+                  {detail.team.abbreviation}
+                </span>
+                <span aria-hidden className="text-faint">
+                  /
+                </span>
+                <span className="whitespace-nowrap">
+                  {detail.team.conference ?? "—"}
+                  {detail.team.division ? ` · ${detail.team.division}` : ""}
+                </span>
+                <span aria-hidden className="text-faint">
+                  /
+                </span>
+                <span className="whitespace-nowrap">{detail.season}</span>
+              </div>
+              <h1 className="title-xl mt-2 text-foreground">{detail.team.full_name}</h1>
+              <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <Badge status={competitiveWindow.status}>window: {competitiveWindow.label}</Badge>
+                <span className="text-[12px] text-muted">{competitiveWindow.hint}</span>
+              </div>
             </div>
           </div>
-          {detail.standing && (
-            <div className="text-right">
-              <div className="text-4xl font-bold" style={{ color: theme.bright }}>
+
+          {detail.standing ? (
+            <div className="shrink-0 border-t border-hairline pt-4 md:border-l md:border-t-0 md:pl-6 md:pt-0">
+              <div className="eyebrow text-[0.5625rem]">Record · {detail.season}</div>
+              <div
+                className="numeral mt-1 whitespace-nowrap text-[3.25rem] leading-none"
+                style={{ color: identity.bright }}
+              >
                 {detail.standing.wins}–{detail.standing.losses}
               </div>
-              <div className="text-xs text-muted">
-                {pct(detail.standing.win_pct, 1)} · #{detail.standing.playoff_rank ?? "—"} in{" "}
-                {detail.standing.conference}
+              <div className="mt-1 whitespace-nowrap text-[12px] text-muted">
+                {pct(detail.standing.win_pct, 1)} · #{detail.standing.playoff_rank ?? "—"} in the{" "}
+                {detail.standing.conference ?? "conference"}
               </div>
             </div>
+          ) : (
+            <div className="shrink-0 border-t border-hairline pt-4 md:border-l md:border-t-0 md:pl-6 md:pt-0">
+              <div className="eyebrow text-[0.5625rem]">Record</div>
+              <div className="numeral mt-1 text-[2.5rem] leading-none text-unavail">—</div>
+              <div className="mt-1 text-[12px] text-muted">no standings row ingested</div>
+            </div>
           )}
-          <div className="flex w-full gap-2 pt-1 sm:w-auto sm:flex-col lg:w-auto lg:flex-row">
-            <Link
-              href={`/trade-machine?team=${teamId}`}
-              className="rounded-md bg-brand px-4 py-2 text-center text-sm font-semibold text-background hover:brightness-110"
-            >
-              Start a trade
-            </Link>
-            <Link
-              href={`/player-lab?team=${teamId}`}
-              className="rounded-md border border-line px-4 py-2 text-center text-sm hover:bg-panel2"
-            >
-              Compare players
-            </Link>
-            <Link
-              href={`/cap-lab?team=${teamId}`}
-              className="rounded-md border border-line px-4 py-2 text-center text-sm hover:bg-panel2"
-            >
-              Open Cap Lab
-            </Link>
-          </div>
+        </div>
+
+        <div className="relative flex flex-wrap items-center gap-2 border-t border-hairline px-5 py-3 md:px-6">
+          <ButtonLink href={`/trade-evaluator?team=${teamId}`} variant="primary" size="sm">
+            Start a trade
+          </ButtonLink>
+          <ButtonLink href={`/player-explorer?team=${teamId}`} size="sm">
+            Compare players
+          </ButtonLink>
+          <ButtonLink href={`/salary-cap-center?team=${teamId}`} size="sm">
+            Salary-Cap Center
+          </ButtonLink>
+          <SourceRail
+            className="ml-auto mt-0 w-full border-t-0 pt-0 lg:w-auto"
+            source="NBA.com via nba_api"
+            retrievedAt={detail.standing?.source_retrieved_at ?? detail.stats_retrieved_at}
+          />
         </div>
       </section>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        {[
-          ["Offense", adv.OFF_RATING, "points scored per 100 possessions"],
-          ["Defense", adv.DEF_RATING, "points allowed per 100 possessions (lower is better)"],
-          ["Net rating", adv.NET_RATING, "scoring margin per 100 possessions"],
-          ["Avg roster age", ages.length ? ages.reduce((s, a) => s + a, 0) / ages.length : undefined, "simple average of roster ages"],
-        ].map(([label, value, hint]) => (
-          <div
-            key={String(label)}
-            className="rounded-lg border border-line bg-panel p-4"
-            title={String(hint)}
-          >
-            <div className="text-xs text-muted">{label}</div>
-            <div className="mt-1 text-2xl font-semibold">
-              {value !== undefined && value !== null ? Number(value).toFixed(1) : "—"}
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* ------------------------------------------------------------- team line */}
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <TeamStat
+          label="Offense"
+          value={advanced.OFF_RATING}
+          note="points scored per 100 possessions"
+          accent="var(--signal)"
+        />
+        <TeamStat
+          label="Defense"
+          value={advanced.DEF_RATING}
+          note="points allowed per 100 · lower is better"
+          accent="var(--signal)"
+        />
+        <TeamStat
+          label="Net rating"
+          value={advanced.NET_RATING}
+          note="scoring margin per 100 possessions"
+          accent={
+            (advanced.NET_RATING ?? 0) >= 0 ? "var(--legal)" : "var(--illegal)"
+          }
+          signed
+        />
+        <TeamStat
+          label="Average age"
+          value={avgAge ?? undefined}
+          note={`${rosterPlayers.length} players on the roster`}
+          accent={identity.bright}
+        />
+      </section>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
-        {/* Roster grouped by position */}
-        <Card
-          title={`Roster (${rosterPlayers.length})`}
-          subtitle={
-            roster ? (
-              <SourceLine retrievedAt={roster.source_retrieved_at} source="NBA.com via nba_api" />
-            ) : undefined
+      {/* ------------------------------------------------------- roster + panels */}
+      <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)] xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
+        <Panel
+          className="min-w-0"
+          accent={identity.bright}
+          title={`Roster · ${rosterPlayers.length}`}
+          subtitle="Grouped by position, sorted by estimated impact within each group"
+          actions={
+            <Link href="/methodology#tei" className="eyebrow whitespace-nowrap text-signal">
+              What is impact? →
+            </Link>
           }
         >
           {!roster ? (
-            <div className="space-y-2">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="skeleton h-11" />
-              ))}
-            </div>
+            <SkeletonRows rows={10} height="h-12" />
+          ) : rosterPlayers.length === 0 ? (
+            <EmptyState
+              title="No roster rows for this team"
+              hint="Run `make sync-data` on the backend to pull the current roster from NBA.com."
+              action={<ButtonLink href="/data-health" size="sm">Open Data Health</ButtonLink>}
+            />
           ) : (
-            <div className="space-y-4">
-              {(["Guards", "Wings", "Bigs"] as const).map((group) =>
-                groups[group].length === 0 ? null : (
-                  <div key={group}>
-                    <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <div className="space-y-5">
+              {GROUPS.filter((group) => groups[group].length > 0).map((group) => (
+                <div key={group}>
+                  <div className="flex items-baseline justify-between gap-3 border-b border-hairline pb-1.5">
+                    <h3 className="eyebrow" style={{ color: identity.bright }}>
                       {group}
                     </h3>
-                    <ul className="divide-y divide-line/60">
-                      {groups[group].map((player) => (
-                        <li key={player.player_id}>
-                          <Link
-                            href={`/players/${player.player_id}`}
-                            className="flex items-center gap-3 rounded-md px-1 py-1.5 hover:bg-panel2"
-                          >
-                            <PlayerPhoto
-                              nbaPlayerId={player.nba_player_id}
-                              name={player.name}
-                              size={34}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm">{player.name}</span>
-                              <span className="text-[11px] text-muted">
-                                {player.position ?? "—"} · age {player.age?.toFixed(0) ?? "—"} ·{" "}
-                                {height(player.height_inches)}
-                              </span>
+                    <span className="eyebrow text-[0.5rem]">{groups[group].length}</span>
+                  </div>
+                  <ul className="divide-y divide-hairline">
+                    {groups[group].map((player) => (
+                      <li key={player.player_id}>
+                        <Link
+                          href={`/players/${player.player_id}`}
+                          className="group flex items-center gap-3 rounded-md px-1 py-2 transition-colors hover:bg-panel2"
+                        >
+                          <PlayerPhoto
+                            nbaPlayerId={player.nba_player_id}
+                            name={player.name}
+                            size={36}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm text-foreground transition-colors group-hover:text-signal">
+                              {player.name}
                             </span>
-                            {player.archetype && (
-                              <span className="hidden text-[11px] text-muted md:inline">
-                                {player.archetype}
-                              </span>
-                            )}
+                            <span className="eyebrow mt-0.5 block truncate text-[0.5rem]">
+                              {player.position ?? "—"} · age {player.age?.toFixed(0) ?? "—"} ·{" "}
+                              {height(player.height_inches)}
+                            </span>
+                          </span>
+                          {player.archetype && (
+                            <span className="hidden shrink-0 whitespace-nowrap text-[11px] text-faint xl:inline">
+                              {player.archetype}
+                            </span>
+                          )}
+                          <span className="w-20 shrink-0 text-right">
                             <span
-                              className="w-14 text-right font-mono text-sm"
+                              className="numeral block text-[19px] leading-none"
+                              style={{
+                                color:
+                                  player.tei === null
+                                    ? "var(--unknown)"
+                                    : player.tei >= 0
+                                      ? identity.bright
+                                      : "var(--chalk-dim)",
+                              }}
                               title="Estimated player impact (per-100 index) — see Methodology"
                             >
                               {tei(player.tei)}
                             </span>
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ),
-              )}
+                            {player.tei !== null && player.tei > 0 && (
+                              <MeterBar
+                                value={player.tei}
+                                max={maxTei}
+                                color={identity.bright}
+                                className="ml-auto mt-1 !h-1 w-16"
+                                label={`impact ${tei(player.tei)}, top rotation impact is ${tei(maxTei)}`}
+                              />
+                            )}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              <SourceRail
+                source={roster.source}
+                retrievedAt={roster.source_retrieved_at}
+                extra={<span>· impact estimated by RosterLab, not a provider metric</span>}
+              />
             </div>
           )}
-        </Card>
+        </Panel>
 
-        <div className="space-y-4">
-          {/* Strategy */}
-          <Card
-            title="Choose your team strategy"
-            subtitle="Drives how trades are scored for this team"
-          >
-            <div className="space-y-2">
-              {STRATEGIES.map(([value, label]) => (
-                <label key={value} className="flex cursor-pointer items-center gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name="strategy"
-                    checked={strategy === value}
-                    onChange={() => setStrategy(value)}
-                    className="accent-orange-500"
-                  />
-                  {label}
-                </label>
-              ))}
-              <button
-                type="button"
-                disabled={saveStrategy.isPending}
-                onClick={() => saveStrategy.mutate()}
-                className="mt-1 w-full rounded-md bg-brand px-3 py-2 text-sm font-semibold text-background hover:brightness-110 disabled:opacity-40"
-              >
-                {saveStrategy.isPending ? "Saving…" : "Save strategy"}
-              </button>
-              <p className="text-[11px] text-muted">
-                Fine-grained weights and untouchables live in the Trade Machine.{" "}
-                <Link href="/methodology#weights" className="underline">
-                  How weights work
-                </Link>
-              </p>
-            </div>
-          </Card>
-
-          {/* Strengths & weaknesses */}
-          <Card
-            title="Strengths & weaknesses"
-            subtitle="Model-derived from real team stats — not scouting"
+        <div className="space-y-3">
+          {/* ------------------------------------------------ strengths & needs */}
+          <Panel
+            title="Strengths & needs"
+            subtitle="Percentile rules over real league stats — no scouting opinions"
           >
             {!needs ? (
-              <Spinner />
+              <SkeletonRows rows={5} height="h-8" />
             ) : sortedNeeds.length === 0 ? (
-              <EmptyState title="Not computed yet" hint="Run `make score` on the backend." />
+              <UnavailableNotice reason="Team needs haven't been computed for this season yet — run `make score` on the backend." />
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {strengths.length > 0 && (
                   <div>
-                    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-pass">
-                      Strengths
-                    </h4>
-                    <ul className="mt-1 space-y-0.5 text-sm">
-                      {strengths.map((n) => (
-                        <li key={n.need_key} title={n.explanation}>
-                          ✓ {NEED_LABEL[n.need_key] ?? n.need_key}{" "}
-                          <span className="text-[11px] text-muted">
-                            ({n.percentile?.toFixed(0)}th pct)
-                          </span>
+                    <h4 className="eyebrow text-legal">Strengths</h4>
+                    <ul className="mt-2 space-y-2">
+                      {strengths.map((need) => (
+                        <li key={need.need_key} title={need.explanation}>
+                          <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                            <span className="min-w-0 truncate text-foreground">
+                              {NEED_LABEL[need.need_key] ?? need.need_key}
+                            </span>
+                            <span className="data shrink-0 text-[11px] text-muted">
+                              {ordinal(need.percentile)}
+                            </span>
+                          </div>
+                          <MeterBar
+                            value={need.percentile ?? 0}
+                            max={100}
+                            color="var(--legal)"
+                            className="mt-1"
+                            label={`${NEED_LABEL[need.need_key] ?? need.need_key} at the ${ordinal(need.percentile)} percentile`}
+                          />
                         </li>
                       ))}
                     </ul>
                   </div>
                 )}
+
                 <div>
-                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-fail">
-                    Needs
-                  </h4>
-                  <div className="mt-1 space-y-1.5">
-                    {(weaknesses.length ? weaknesses : sortedNeeds.slice(0, 4)).map((n) => (
-                      <div key={n.need_key} title={n.explanation}>
-                        <div className="flex justify-between text-xs">
-                          <span>{NEED_LABEL[n.need_key] ?? n.need_key}</span>
-                          <span className="text-muted">
-                            {n.percentile !== null ? `${n.percentile.toFixed(0)}th pct` : ""}
+                  <h4 className="eyebrow text-illegal">Needs</h4>
+                  <ul className="mt-2 space-y-2">
+                    {(weaknesses.length ? weaknesses : sortedNeeds.slice(0, 4)).map((need) => (
+                      <li key={need.need_key} title={need.explanation}>
+                        <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                          <span className="min-w-0 truncate text-foreground">
+                            {NEED_LABEL[need.need_key] ?? need.need_key}
+                          </span>
+                          <span className="data shrink-0 text-[11px] text-muted">
+                            {ordinal(need.percentile)}
                           </span>
                         </div>
                         <MeterBar
-                          value={n.severity}
-                          color={n.severity > 0.5 ? "var(--fail)" : "var(--warn)"}
-                          className="mt-0.5"
+                          value={need.severity}
+                          color={need.severity > 0.5 ? "var(--illegal)" : "var(--conditional)"}
+                          className="mt-1"
+                          label={`${NEED_LABEL[need.need_key] ?? need.need_key} severity ${(need.severity * 100).toFixed(0)} percent`}
                         />
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </div>
-                <p className="text-[11px] text-muted">
-                  Percentile rules over league stats.{" "}
-                  <Link href="/methodology#needs" className="underline">
-                    How is this calculated?
+
+                <p className="text-[11px] leading-relaxed text-faint">
+                  Longer bar under Needs = larger shortfall.{" "}
+                  <Link href="/methodology#needs" className="text-signal underline">
+                    How this is calculated
                   </Link>
                 </p>
               </div>
             )}
-          </Card>
+          </Panel>
 
-          {/* Payroll */}
-          <Card title="Payroll & cap status">
+          {/* ------------------------------------------------------- strategy */}
+          <Panel
+            title="Team strategy"
+            subtitle="Drives how every trade is scored for this franchise"
+          >
+            <fieldset className="space-y-1.5">
+              <legend className="sr-only">Choose a strategy for {detail.team.full_name}</legend>
+              {STRATEGIES.map(([value, label, hint]) => {
+                const checked = strategy === value;
+                return (
+                  <label
+                    key={value}
+                    className={`flex cursor-pointer items-start gap-2.5 rounded-md border px-3 py-2 transition-colors ${
+                      checked
+                        ? "border-signal/50 bg-signal/8"
+                        : "border-transparent hover:bg-panel2"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="strategy"
+                      value={value}
+                      checked={checked}
+                      onChange={() => setStrategy(value)}
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[var(--signal)]"
+                    />
+                    <span className="min-w-0">
+                      <span
+                        className={`block whitespace-nowrap text-[13px] font-semibold ${
+                          checked ? "text-signal" : "text-foreground"
+                        }`}
+                      >
+                        {label}
+                      </span>
+                      <span className="block text-[11px] leading-snug text-muted">{hint}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
+            <Button
+              variant="primary"
+              className="mt-3 w-full"
+              disabled={saveStrategy.isPending}
+              onClick={() => saveStrategy.mutate()}
+            >
+              {saveStrategy.isPending ? "Saving…" : "Save strategy"}
+            </Button>
+            <p className="mt-2 text-[11px] leading-relaxed text-faint">
+              Fine-grained weights and untouchable players live in the Trade Evaluator.{" "}
+              <Link href="/methodology#weights" className="text-signal underline">
+                How weights work
+              </Link>
+            </p>
+          </Panel>
+
+        </div>
+      </div>
+
+      {/* --------------------------------------------------- money & assets */}
+      <div className="grid items-start gap-3 lg:grid-cols-2">
+        {/* ---------------------------------------------------------- payroll */}
+        <Panel title="Payroll & cap status" className="min-w-0">
             {!payroll ? (
-              <Spinner />
+              <SkeletonRows rows={3} height="h-8" />
             ) : payroll.payroll_available ? (
-              <div className="space-y-1.5 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted">Payroll ({payroll.league_year})</span>
-                  <span className="font-mono">{money(payroll.payroll)}</span>
-                </div>
+              <div className="space-y-3">
+                <StatBlock
+                  label={`Committed payroll · ${payroll.league_year}`}
+                  value={money(payroll.payroll)}
+                  note={`${payroll.players_with_salary} of ${payroll.roster_size} players with a salary on file`}
+                  accent="var(--leather)"
+                />
                 {payroll.cap_context && (
-                  <>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Luxury-tax line</span>
-                      <span className="font-mono">{money(payroll.cap_context.luxury_tax)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Room below tax</span>
-                      <span className="font-mono">{money(payroll.cap_context.room_below_tax)}</span>
-                    </div>
-                  </>
+                  <dl className="space-y-1.5 border-t border-hairline pt-3">
+                    <MoneyRow label="Luxury-tax line" value={money(payroll.cap_context.luxury_tax)} />
+                    <MoneyRow label="Room below tax" value={money(payroll.cap_context.room_below_tax)} />
+                    <MoneyRow label="First apron" value={money(payroll.cap_context.first_apron)} />
+                  </dl>
                 )}
-                <Link href={`/cap-lab?team=${teamId}`} className="text-xs text-brand underline">
-                  full picture in Cap Lab →
-                </Link>
+                <ButtonLink href={`/salary-cap-center?team=${teamId}`} size="sm" className="w-full">
+                  Full picture in Salary-Cap Center
+                </ButtonLink>
+                {payroll.cap_context && (
+                  <SourceRail source={payroll.cap_context.cap_source} retrievedAt={undefined} />
+                )}
               </div>
             ) : (
               <UnavailableNotice
@@ -403,14 +556,93 @@ export default function TeamHubPage({ params }: { params: Promise<{ teamId: stri
                   payroll.unavailable_reason ??
                   "Contract data hasn't been imported, so payroll can't be computed."
                 }
+                steps={
+                  <p className="text-[12px] leading-relaxed text-muted">
+                    Salary-matching rules will keep reporting <em>unavailable</em> until a contract
+                    provider is configured.{" "}
+                    <Link href="/data-health" className="text-signal underline">
+                      See the exact next step
+                    </Link>
+                  </p>
+                }
               />
             )}
-          </Card>
+          </Panel>
 
-          {/* Draft assets: honest state */}
-          <Card title="Draft capital">
-            <UnavailableNotice reason="Verified draft-pick ownership isn't configured — RosterLab won't guess. Hypothetical picks can still be added inside a trade, clearly labeled." />
-          </Card>
+        {/* ---------------------------------------------------- draft capital */}
+        <Panel title="Draft capital" className="min-w-0">
+          <UnavailableNotice reason="Verified draft-pick ownership isn't configured, and RosterLab won't guess it. Hypothetical picks can still be added inside a trade, clearly labeled as hypothetical." />
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ pieces */
+
+function TeamStat({
+  label,
+  value,
+  note,
+  accent,
+  signed = false,
+}: {
+  label: string;
+  value: number | undefined | null;
+  note: string;
+  accent: string;
+  signed?: boolean;
+}) {
+  const shown =
+    value === undefined || value === null
+      ? "—"
+      : signed
+        ? `${value >= 0 ? "+" : ""}${Number(value).toFixed(1)}`
+        : Number(value).toFixed(1);
+  return (
+    <Panel padded={false} className="px-4 py-3.5">
+      <StatBlock
+        label={label}
+        value={shown}
+        note={note}
+        accent={value === undefined || value === null ? "var(--unknown)" : accent}
+      />
+    </Panel>
+  );
+}
+
+function MoneyRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-[13px] text-muted">{label}</dt>
+      <dd className="data shrink-0 text-[13px] text-foreground">{value}</dd>
+    </div>
+  );
+}
+
+function TeamSkeleton() {
+  return (
+    <div className="space-y-6" role="status" aria-label="Loading team">
+      <div className="panel flex flex-wrap items-center gap-6 p-6">
+        <Skeleton className="h-20 w-20 rounded-full" />
+        <div className="min-w-0 flex-1 space-y-3">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-10 w-80 max-w-full" />
+          <Skeleton className="h-6 w-64" />
+        </div>
+        <Skeleton className="h-16 w-40" />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-24" />
+        ))}
+      </div>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)]">
+        <Skeleton className="h-[520px]" />
+        <div className="space-y-3">
+          <Skeleton className="h-56" />
+          <Skeleton className="h-64" />
+          <Skeleton className="h-40" />
         </div>
       </div>
     </div>
