@@ -129,7 +129,6 @@ def test_empty_trade_scores_neutral(db: Session, seeded_league: dict) -> None:
 # --------------------------------------------------------------------------- QA-6
 
 
-@pytest.mark.xfail(strict=True, reason="QA-6: detail[:12] slices in roster order, not by minutes")
 def test_rotation_detail_is_sorted_by_minutes(db: Session, seeded_league: dict) -> None:
     moving = seeded_league["roster_a"][0]
     result = _evaluate(
@@ -140,11 +139,11 @@ def test_rotation_detail_is_sorted_by_minutes(db: Session, seeded_league: dict) 
     )
     for key in ("rotation_before", "rotation_after"):
         rows = result["detail"]["performance"][key]
+        assert len(rows) <= 13, "the view is the top 12 plus anyone in the deal"
         minutes = [r["minutes"] for r in rows]
         assert minutes == sorted(minutes, reverse=True), f"{key} is not minutes-sorted"
 
 
-@pytest.mark.xfail(strict=True, reason="QA-6: acquired players fall outside the [:12] window")
 def test_rotation_detail_always_includes_traded_players(db: Session, seeded_league: dict) -> None:
     incoming = seeded_league["roster_b"][14]  # lowest-minutes BBB player
     outgoing = seeded_league["roster_a"][0]
@@ -336,3 +335,21 @@ def test_report_omits_the_availability_line_without_incoming_players(
         focal_team_id=seeded_league["team_a"].id,
     )
     assert "Historical availability of incoming players" not in markdown
+
+
+def test_rotation_view_keeps_an_out_of_rotation_arrival_in_minutes_order(
+    db: Session, seeded_league: dict
+) -> None:
+    """The included player must land at their real position, not be appended after the
+    top 12 — a chart ordered by minutes with one row out of place reads as a bug."""
+    incoming = seeded_league["roster_b"][14]
+    outgoing = seeded_league["roster_a"][0]
+    moves = _moves([outgoing], seeded_league["team_a"], seeded_league["team_b"]) + _moves(
+        [incoming], seeded_league["team_b"], seeded_league["team_a"]
+    )
+    rows = _evaluate(db, seeded_league, seeded_league["team_a"], moves)["detail"][
+        "performance"
+    ]["rotation_after"]
+    minutes = [r["minutes"] for r in rows]
+    assert minutes == sorted(minutes, reverse=True)
+    assert incoming.id in {r["player_id"] for r in rows}

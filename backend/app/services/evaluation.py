@@ -107,6 +107,28 @@ TEI_SIGMA_DEFAULT = 1.5  # index points; refined by per-player bands when availa
 COMPONENT_KEYS = ("performance", "fit", "contract", "timeline", "assets", "risk")
 
 
+ROTATION_VIEW_SIZE = 12
+
+
+def _rotation_view(detail: list[dict], must_include: set[str]) -> list[dict]:
+    """The rotation rows the UI charts: the top 12 by minutes, plus everyone in the deal.
+
+    QA-6: `detail[:12]` sliced in **roster order**, not by minutes, so the chart read
+    "Josh Giddey 20.4 → 0.0; Jalen Smith 0.0 → 12.4" for a Giddey-for-Curry trade —
+    Curry absent, and a fabricated change for a player who was not in the deal, because
+    removing one player shifted the index alignment between the two lists.
+
+    Sorting fixes the ordering; `must_include` fixes the omission, because an acquired
+    bench player can legitimately fall outside the top 12 and still be the whole point of
+    the chart.
+    """
+    ordered = sorted(detail, key=lambda row: row["minutes"], reverse=True)
+    keep = {row["player_id"] for row in ordered[:ROTATION_VIEW_SIZE]} | must_include
+    # Re-filtered from `ordered` rather than appended, so an included player outside the
+    # top 12 lands at their real position in the chart instead of on the end.
+    return [row for row in ordered if row["player_id"] in keep]
+
+
 def _is_illegal(legality: dict, team_id: str) -> bool:
     """True when the trade fails an implemented rule, for this team or as a whole.
 
@@ -238,11 +260,16 @@ class EvaluationService:
 
     def _roster_cards(self, team_id: str) -> list[PlayerCard]:
         entries = self.db.scalars(
-            select(RosterEntry).where(
+            select(RosterEntry)
+            .where(
                 RosterEntry.team_id == team_id,
                 RosterEntry.season == self.settings.current_season,
                 RosterEntry.is_current,
             )
+            # Without an explicit order this returned whatever the database happened to
+            # produce, so every `[:12]` downstream was an arbitrary 12 rather than a
+            # top 12 — and the order changed between runs on Postgres.
+            .order_by(RosterEntry.player_id)
         ).all()
         return [self._card(e.player, e.age) for e in entries]
 
@@ -309,8 +336,10 @@ class EvaluationService:
         return score, {
             "delta_net_rating": round(delta_net, 2),
             "delta_wins": round(delta_wins, 2),
-            "rotation_before": before.detail[:12],
-            "rotation_after": after.detail[:12],
+            "rotation_before": _rotation_view(before.detail, outgoing_ids),
+            "rotation_after": _rotation_view(
+                after.detail, {c.player_id for c in incoming}
+            ),
             "wins_mapping": self.wins_mapping(),
             "unmodeled_players": unmodeled,
             "modeled_players_after": len(after_rotation),
