@@ -124,23 +124,44 @@ SKILL_KEYS = [
 
 
 def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float]:
-    """Percentile (0..1) skill vector for one player against the scored population."""
+    """Percentile (0..1) skill vector for one player against the scored population.
 
-    def pct(col: str) -> float:
+    A skill whose inputs are missing is **omitted**, not set to 0.5.
+
+    `pct()` used to return 0.5 for an absent column *before ever touching the league
+    series*, so a skill defined on a column that is not in the frame silently became
+    exactly 0.5 for every player — no error, no warning, no test failure, and the UI
+    would report the need as addressed while the skill contributed precisely nothing.
+    Omission makes that failure detectable, and is what the no-constant-skill invariant
+    in the regression charter checks for.
+    """
+
+    def pct(col: str) -> float | None:
+        if col not in league.columns:
+            return None
         value = pd.to_numeric(row.get(col), errors="coerce")
         if pd.isna(value):
-            return 0.5
+            return None
         series = pd.to_numeric(league[col], errors="coerce").dropna()
         if series.empty:
-            return 0.5
+            return None
         return float((series < value).mean())
 
-    return {
-        "shooting": pct("fg3a_rate") * 0.5 + pct("TS_PCT") * 0.5,
+    def blend(*parts: tuple[str, float]) -> float | None:
+        """Weighted blend over the components that exist, renormalized to the survivors."""
+        known = [(v, w) for col, w in parts if (v := pct(col)) is not None]
+        if not known:
+            return None
+        total = sum(w for _, w in known)
+        return sum(v * w for v, w in known) / total
+
+    candidates: dict[str, float | None] = {
+        "shooting": blend(("fg3a_rate", 0.5), ("TS_PCT", 0.5)),
         "creation": pct("AST_PCT"),
         "perimeter_defense": pct("stl_per_min"),
         "rim_protection": pct("blk_per_min"),
-        "rebounding": pct("DREB_PCT") * 0.7 + pct("OREB_PCT") * 0.3,
+        "rebounding": blend(("DREB_PCT", 0.7), ("OREB_PCT", 0.3)),
         "size": pct("height_inches"),
         "scoring": pct("pts_per75"),
     }
+    return {key: value for key, value in candidates.items() if value is not None}

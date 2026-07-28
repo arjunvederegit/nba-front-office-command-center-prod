@@ -2062,6 +2062,34 @@ function EvaluationSection({
   );
 }
 
+/**
+ * Players the impact model has never scored are excluded from the projection and named
+ * here. Before R1-4 they arrived carrying `tei = 0.0` — the 63rd percentile of rostered
+ * players — so a player with no data quietly moved the number.
+ */
+function UnmodeledNotice({ teamEval }: { teamEval: TeamEvaluation }) {
+  const names = teamEval.unmodeled_players ?? [];
+  if (!teamEval.has_unmodeled_players || names.length === 0) return null;
+  const inDeal = [...teamEval.incoming, ...teamEval.outgoing]
+    .filter((p) => p.tei === null)
+    .map((p) => p.name);
+  return (
+    <p className="mt-2 border-t border-hairline pt-2.5 text-[11px] leading-snug text-unavail">
+      {names.length === 1 ? "1 player has" : `${names.length} players have`} no impact
+      estimate and {names.length === 1 ? "was" : "were"} left out of the projection rather
+      than given a league-average stand-in: {names.join(", ")}.
+      {inDeal.length > 0 && (
+        <>
+          {" "}
+          {inDeal.length === 1 ? "One of them is" : "Some of them are"} in this deal (
+          {inDeal.join(", ")}), so confidence is reported as low.
+        </>
+      )}{" "}
+      They still count against the roster limits.
+    </p>
+  );
+}
+
 function TeamEvaluationView({
   teamEval,
   identity,
@@ -2172,6 +2200,7 @@ function TeamEvaluationView({
             remaining weights were rescaled so the score stays comparable.
           </p>
         )}
+        <UnmodeledNotice teamEval={teamEval} />
       </div>
 
       {/* ------------------------------------------------- 2. impact summary */}

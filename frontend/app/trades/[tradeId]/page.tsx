@@ -271,6 +271,16 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
                   note="post-trade roster count"
                 />
               </div>
+              {evaluation.has_unmodeled_players &&
+                (evaluation.unmodeled_players?.length ?? 0) > 0 && (
+                  // Named rather than silently averaged: before R1-4 a player with no
+                  // impact estimate arrived carrying tei = 0.0, the 63rd percentile.
+                  <p className="border-t border-hairline px-5 py-2.5 text-[11px] leading-snug text-unavail">
+                    Left out of the projection for want of an impact estimate (they still
+                    count against the roster limits):{" "}
+                    {evaluation.unmodeled_players?.join(", ")}.
+                  </p>
+                )}
             </Panel>
 
             <div className="grid items-start gap-3 xl:grid-cols-2">

@@ -16,13 +16,21 @@ def fit_score(
     needs: dict[str, float],
     incoming: list[tuple[dict[str, float], float]],
     outgoing: list[tuple[dict[str, float], float]],
-    roster_strengths: dict[str, float],
+    roster_strengths: dict[str, float | None],
     need_to_skill: dict[str, str],
 ) -> tuple[float, dict]:
     """incoming/outgoing: [(skill_vector, minutes_weight)]; minutes weights normalize
     so one 30-minute player counts more than two 8-minute players.
-    roster_strengths: skill percentile of the current roster's top rotation (0..1).
-    Returns (raw fit score, explanation detail)."""
+    roster_strengths: skill percentile of the current roster's top rotation (0..1), or
+    None where fewer than three rotation players have that skill measured.
+    Returns (raw fit score, explanation detail).
+
+    **A skill only enters the delta when both sides measure it.** Previously a skill
+    present on one side and absent on the other was compared against a hardcoded 0.5,
+    which is the 50th percentile of the league — a fabricated median player standing in
+    for a measurement that does not exist. Skills measured on only one side are reported
+    under `skills_not_compared` instead of being scored.
+    """
 
     def weighted_skills(entries: list[tuple[dict[str, float], float]]) -> dict[str, float]:
         total_weight = sum(w for _, w in entries)
@@ -36,8 +44,9 @@ def fit_score(
 
     skills_in = weighted_skills(incoming)
     skills_out = weighted_skills(outgoing)
-    all_keys = set(skills_in) | set(skills_out)
-    delta = {k: skills_in.get(k, 0.5) - skills_out.get(k, 0.5) for k in all_keys}
+    comparable = set(skills_in) & set(skills_out)
+    not_compared = sorted((set(skills_in) | set(skills_out)) - comparable)
+    delta = {k: skills_in[k] - skills_out[k] for k in comparable}
 
     needs_term = 0.0
     contributions: dict[str, float] = {}
@@ -52,10 +61,11 @@ def fit_score(
     redundancy_term = 0.0
     redundancies: dict[str, float] = {}
     for skill_key, change in delta.items():
-        strength = roster_strengths.get(skill_key, 0.5)
+        strength = roster_strengths.get(skill_key)
         # Adding to an already-strong skill (>70th percentile) is redundant in
-        # proportion to how strong the roster already is there.
-        if change > 0 and strength > 0.7:
+        # proportion to how strong the roster already is there. An unmeasured strength
+        # cannot establish redundancy, so it contributes nothing rather than 0.5.
+        if strength is not None and change > 0 and strength > 0.7:
             redundancy = change * (strength - 0.7) / 0.3
             redundancy_term += redundancy
             redundancies[skill_key] = round(redundancy, 4)
@@ -65,5 +75,6 @@ def fit_score(
         "needs_addressed": contributions,
         "redundancies": redundancies,
         "skill_delta": {k: round(v, 4) for k, v in delta.items()},
+        "skills_not_compared": not_compared,
         "gamma": GAMMA,
     }

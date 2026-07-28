@@ -174,7 +174,6 @@ def test_no_incoming_players_means_no_availability_number(
 # --------------------------------------------------------------------------- R1-4
 
 
-@pytest.mark.xfail(strict=True, reason="R1-4: tei defaults to 0.0, the 63rd percentile")
 def test_unmodeled_players_are_disclosed_not_defaulted(db: Session, seeded_league: dict) -> None:
     result = _evaluate(
         db,
@@ -188,7 +187,6 @@ def test_unmodeled_players_are_disclosed_not_defaulted(db: Session, seeded_leagu
     assert incoming["tei"] is None, "a player with no impact estimate must not report a TEI"
 
 
-@pytest.mark.xfail(strict=True, reason="R1-4: unmodelled players get TEI_SIGMA_DEFAULT = 1.5")
 def test_unmodeled_players_do_not_get_a_confident_band(db: Session, seeded_league: dict) -> None:
     service = EvaluationService(db)
     unmodeled_card = next(
@@ -201,7 +199,10 @@ def test_unmodeled_players_do_not_get_a_confident_band(db: Session, seeded_leagu
         for c in service._roster_cards(seeded_league["team_a"].id)
         if c.player_id != seeded_league["unmodeled"].id
     )
-    assert unmodeled_card.tei_sigma is None or unmodeled_card.tei_sigma > modelled_card.tei_sigma
+    assert unmodeled_card.tei_sigma is None, (
+        "a player with no impact estimate must not carry an uncertainty band"
+    )
+    assert modelled_card.tei_sigma is not None
 
 
 # ---------------------------------------------------------------------- C13 drivers

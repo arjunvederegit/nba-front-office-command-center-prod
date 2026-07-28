@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analytics.age_curve import timeline_alignment
-from app.analytics.archetypes import player_skill_vector
+from app.analytics.archetypes import SKILL_KEYS, player_skill_vector
 from app.analytics.features import build_player_season_features, recency_weighted_features
 from app.analytics.fit import fit_score
 from app.analytics.needs import NEED_TO_SKILL
@@ -119,14 +119,27 @@ def _is_illegal(legality: dict, team_id: str) -> bool:
 
 @dataclass
 class PlayerCard:
+    """Every modelled quantity is optional.
+
+    A player with no `PlayerImpactEstimate` used to arrive with `tei = 0.0`,
+    `availability = 0.75` and `minutes = 12.0`. None of those is a measurement, and
+    `tei = 0.0` is the **63rd percentile** of rostered players — a silent default more
+    favourable than the −0.293 league mean suggests, and one that directly contradicts
+    `docs/model-card-player-impact.md`. Absent values are now absent.
+    """
+
     player_id: str
     name: str
-    tei: float
-    tei_sigma: float
-    availability: float
-    minutes: float
+    tei: float | None
+    tei_sigma: float | None
+    availability: float | None
+    minutes: float | None
     age: float | None
     skills: dict[str, float]
+
+    @property
+    def is_modeled(self) -> bool:
+        return self.tei is not None
 
 
 class EvaluationService:
@@ -193,10 +206,14 @@ class EvaluationService:
 
     def _card(self, player: Player, roster_age: float | None = None) -> PlayerCard:
         impact = self._impacts().get(player.id)
-        tei = float(impact.tei) if impact else 0.0
-        sigma = TEI_SIGMA_DEFAULT
-        if impact and impact.tei_high is not None and impact.tei_low is not None:
-            sigma = max((impact.tei_high - impact.tei_low) / 2.5631, 0.4)
+        tei: float | None = float(impact.tei) if impact else None
+        sigma: float | None = None
+        if impact:
+            sigma = (
+                max((impact.tei_high - impact.tei_low) / 2.5631, 0.4)
+                if impact.tei_high is not None and impact.tei_low is not None
+                else TEI_SIGMA_DEFAULT
+            )
         age: float | None = roster_age
         if age is None and player.birth_date:
             age = (date.today() - player.birth_date).days / 365.25
@@ -205,8 +222,16 @@ class EvaluationService:
             name=player.full_name,
             tei=tei,
             tei_sigma=sigma,
-            availability=float(impact.availability) if impact and impact.availability else 0.75,
-            minutes=float(impact.minutes_estimate) if impact and impact.minutes_estimate else 12.0,
+            availability=(
+                float(impact.availability)
+                if impact and impact.availability is not None
+                else None
+            ),
+            minutes=(
+                float(impact.minutes_estimate)
+                if impact and impact.minutes_estimate is not None
+                else None
+            ),
             age=age,
             skills=self._skills().get(player.id, {}),
         )
@@ -234,21 +259,49 @@ class EvaluationService:
     def _performance(
         self, roster: list[PlayerCard], incoming: list[PlayerCard], outgoing_ids: set[str]
     ) -> tuple[float | None, dict]:
-        def to_rotation(cards: list[PlayerCard]) -> list[RotationPlayer]:
-            return [
-                RotationPlayer(
-                    player_id=c.player_id,
-                    name=c.name,
-                    tei=c.tei,
-                    baseline_minutes=c.minutes,
-                    availability=c.availability,
-                )
-                for c in cards
-            ]
+        """Players with no impact estimate are excluded from the rotation and named.
 
-        before = allocate_rotation(to_rotation(roster))
+        The alternative — giving them `tei = 0.0` and 12 baseline minutes — put a player
+        with zero data at the 63rd percentile of the league and let them move the
+        projection. Excluding them mirrors the deliberate `min_total_minutes = 200`
+        exclusion already in the feature pipeline; the difference is that this one is
+        *visible*, and the roster count still includes them.
+        """
+
+        def to_rotation(cards: list[PlayerCard]) -> list[RotationPlayer]:
+            rotation: list[RotationPlayer] = []
+            for c in cards:
+                if c.tei is None or c.minutes is None:
+                    continue
+                rotation.append(
+                    RotationPlayer(
+                        player_id=c.player_id,
+                        name=c.name,
+                        tei=c.tei,
+                        baseline_minutes=c.minutes,
+                        # An unknown availability is not a discount; it is no discount,
+                        # and the risk component reports that it could not be measured.
+                        availability=1.0 if c.availability is None else c.availability,
+                    )
+                )
+            return rotation
+
         after_cards = [c for c in roster if c.player_id not in outgoing_ids] + incoming
-        after = allocate_rotation(to_rotation(after_cards))
+        unmodeled = sorted(
+            {c.name for c in roster + incoming if c.tei is None or c.minutes is None}
+        )
+
+        before_rotation = to_rotation(roster)
+        after_rotation = to_rotation(after_cards)
+        if not before_rotation or not after_rotation:
+            return None, {
+                "unavailable": "no player on this roster has an impact estimate, so the "
+                "rotation cannot be projected",
+                "unmodeled_players": unmodeled,
+            }
+
+        before = allocate_rotation(before_rotation)
+        after = allocate_rotation(after_rotation)
         delta_net = after.team_tei_per_minute - before.team_tei_per_minute
         delta_wins = net_rating_delta_to_wins(delta_net, self.wins_mapping())
         # ±10 projected wins spans the full 0..100 scale (documented normalization)
@@ -259,6 +312,9 @@ class EvaluationService:
             "rotation_before": before.detail[:12],
             "rotation_after": after.detail[:12],
             "wins_mapping": self.wins_mapping(),
+            "unmodeled_players": unmodeled,
+            "modeled_players_after": len(after_rotation),
+            "roster_players_after": len(after_cards),
         }
 
     def _fit(
@@ -271,23 +327,40 @@ class EvaluationService:
         needs = self._team_needs(team_id)
         if not needs:
             return None, {"unavailable": "team needs not computed; run `make score`"}
-        top_rotation = sorted(roster, key=lambda c: c.minutes, reverse=True)[:9]
-        roster_strengths: dict[str, float] = {}
-        for key in (
-            "shooting",
-            "creation",
-            "perimeter_defense",
-            "rim_protection",
-            "rebounding",
-            "size",
-            "scoring",
-        ):
-            values = [c.skills.get(key, 0.5) for c in top_rotation if c.skills]
-            roster_strengths[key] = sorted(values)[-3] if len(values) >= 3 else 0.5
+
+        # Fit compares the arriving package against the departing one. With nothing on a
+        # side there is no package to compare, and the old code substituted a
+        # 50th-percentile player for it — so trading everyone away for nothing scored as
+        # if a median NBA rotation player had been acquired in every skill. Rather than
+        # invent a replacement percentile here, the component is withheld. R5 replaces
+        # this with a measured replacement baseline so one-way deals can be scored.
+        incoming_entries = [(c.skills, c.minutes) for c in incoming if c.skills and c.minutes]
+        outgoing_entries = [(c.skills, c.minutes) for c in outgoing if c.skills and c.minutes]
+        if not incoming_entries or not outgoing_entries:
+            return None, {
+                "unavailable": (
+                    "roster fit compares the arriving package with the departing one; "
+                    "one side of this deal has no player with a skill profile and "
+                    "minutes estimate, so there is nothing to compare"
+                ),
+                "needs": needs,
+            }
+
+        with_minutes = [c for c in roster if c.minutes is not None]
+        top_rotation = sorted(with_minutes, key=lambda c: c.minutes or 0.0, reverse=True)[:9]
+        roster_strengths: dict[str, float | None] = {}
+        for key in SKILL_KEYS:
+            values = sorted(
+                c.skills[key] for c in top_rotation if c.skills and key in c.skills
+            )
+            # Third-best is the "already strong here" threshold; with fewer than three
+            # observations the roster's strength in that skill is unknown, not average.
+            roster_strengths[key] = values[-3] if len(values) >= 3 else None
+
         score, detail = fit_score(
             needs=needs,
-            incoming=[(c.skills, c.minutes) for c in incoming if c.skills],
-            outgoing=[(c.skills, c.minutes) for c in outgoing if c.skills],
+            incoming=incoming_entries,
+            outgoing=outgoing_entries,
             roster_strengths=roster_strengths,
             need_to_skill=NEED_TO_SKILL,
         )
@@ -308,6 +381,12 @@ class EvaluationService:
                 "unavailable": "contract data missing; contract-value component excluded "
                 "and weights renormalized"
             }
+        unmodeled = sorted({c.name for c in cards if c.tei is None})
+        if unmodeled:
+            return None, {
+                "unavailable": "contract value compares salary against modelled impact, "
+                "and these players have no impact estimate: " + ", ".join(unmodeled)
+            }
 
         def market_share(tei: float) -> float:
             # replacement ≈ minimum deal (~2.5% of cap); league-average rotation ≈ 8%;
@@ -318,6 +397,7 @@ class EvaluationService:
             total = 0.0
             for c in cards_:
                 actual = (salaries.get(c.player_id) or 0) / cap
+                assert c.tei is not None  # guarded above: unmodelled players withhold this component
                 total += market_share(c.tei) - actual
             return total
 
@@ -330,21 +410,45 @@ class EvaluationService:
     def _timeline(
         self, strategy: str, incoming: list[PlayerCard], outgoing: list[PlayerCard]
     ) -> tuple[float | None, dict]:
-        def alignment(cards: list[PlayerCard]) -> float | None:
-            weighted = [(timeline_alignment(c.age, strategy), c.minutes) for c in cards if c.age]
-            if not weighted:
+        unweighted_sides: list[str] = []
+
+        def alignment(cards: list[PlayerCard], label: str) -> float | None:
+            aged = [c for c in cards if c.age]
+            if not aged:
                 return None
+            # Minutes weight this when it is known. When it is not, the average is
+            # unweighted and the response says so — an assumed 12 minutes would be a
+            # measurement the pipeline never made.
+            if all(c.minutes is None for c in aged):
+                unweighted_sides.append(label)
+                return sum(timeline_alignment(c.age or 0.0, strategy) for c in aged) / len(aged)
+            weighted = [
+                (timeline_alignment(c.age or 0.0, strategy), c.minutes)
+                for c in aged
+                if c.minutes is not None
+            ]
             total_weight = sum(w for _, w in weighted)
+            if total_weight <= 0:
+                unweighted_sides.append(label)
+                return sum(timeline_alignment(c.age or 0.0, strategy) for c in aged) / len(aged)
             return sum(a * w for a, w in weighted) / total_weight
 
-        align_in, align_out = alignment(incoming), alignment(outgoing)
+        align_in = alignment(incoming, "incoming")
+        align_out = alignment(outgoing, "outgoing")
         if align_in is None or align_out is None:
             return None, {"unavailable": "player ages missing"}
-        return max(0.0, min(100.0, 50.0 + (align_in - align_out) * 100.0)), {
+        detail: dict[str, Any] = {
             "strategy": strategy,
             "incoming_alignment": round(align_in, 3),
             "outgoing_alignment": round(align_out, 3),
         }
+        if unweighted_sides:
+            detail["weighting_note"] = (
+                "no minutes estimate for "
+                + " and ".join(unweighted_sides)
+                + "; alignment is an unweighted average"
+            )
+        return max(0.0, min(100.0, 50.0 + (align_in - align_out) * 100.0)), detail
 
     def _assets(
         self,
@@ -434,9 +538,12 @@ class EvaluationService:
             for r in legality.get("rule_results", [])
             if r.get("status") == "fail"
         ]
+        unmodeled_players = sorted({c.name for c in incoming + outgoing if c.tei is None})
         return {
             "team_id": team_id,
             "legality": team_legality,
+            "has_unmodeled_players": bool(unmodeled_players),
+            "unmodeled_players": unmodeled_players,
             "decision_status": "suppressed_illegal",
             "suppression": {
                 "reason": "verified_illegal",
@@ -540,17 +647,34 @@ class EvaluationService:
         )
 
         total_minutes = 240.0
+
+        def to_draws(cards: list[PlayerCard]) -> list[PlayerDraw]:
+            draws: list[PlayerDraw] = []
+            for c in cards:
+                if c.tei is None or c.minutes is None:
+                    continue
+                draws.append(
+                    PlayerDraw(
+                        tei=c.tei,
+                        # An unmodelled player used to receive TEI_SIGMA_DEFAULT = 1.5,
+                        # expressing the same confidence about a player with no data as
+                        # about a 36-minute star. Unmodelled players are excluded here
+                        # and named in the response instead.
+                        tei_sigma=c.tei_sigma if c.tei_sigma is not None else TEI_SIGMA_DEFAULT,
+                        availability=1.0 if c.availability is None else c.availability,
+                        minutes_share=c.minutes / total_minutes,
+                    )
+                )
+            return draws
+
         uncertainty = simulate_delta_wins(
-            incoming=[
-                PlayerDraw(c.tei, c.tei_sigma, c.availability, c.minutes / total_minutes)
-                for c in incoming
-            ],
-            outgoing=[
-                PlayerDraw(c.tei, c.tei_sigma, c.availability, c.minutes / total_minutes)
-                for c in outgoing
-            ],
+            incoming=to_draws(incoming),
+            outgoing=to_draws(outgoing),
             wins_mapping=self.wins_mapping(),
         )
+        unmodeled_in_deal = sorted({c.name for c in incoming + outgoing if c.tei is None})
+        if unmodeled_in_deal:
+            uncertainty["unmodeled_players_excluded"] = unmodeled_in_deal
         risk, risk_detail = self._risk(incoming, outgoing, uncertainty)
 
         components = {
@@ -565,13 +689,27 @@ class EvaluationService:
         excluded = [k for k, v in components.items() if v is None]
         drivers = component_contributions(components, weights)
 
+        # Players on this side of the deal, or on the roster it is evaluated against,
+        # that the impact model has never scored.
+        unmodeled_players = sorted(
+            {c.name for c in roster + incoming + outgoing if c.tei is None}
+        )
+
         confidence = "high"
         if excluded:
             confidence = "medium" if len(excluded) <= 2 else "low"
+        if unmodeled_in_deal:
+            # A player in the deal itself with no impact estimate is a bigger hole than
+            # one sitting at the end of the bench.
+            confidence = "low"
+        elif unmodeled_players and confidence == "high":
+            confidence = "medium"
 
         return {
             "team_id": team_id,
             "legality": team_legality,
+            "has_unmodeled_players": bool(unmodeled_players),
+            "unmodeled_players": unmodeled_players,
             "decision_status": "scored" if utility is not None else "insufficient_data",
             "suppression": None
             if utility is not None

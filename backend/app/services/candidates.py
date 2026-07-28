@@ -43,8 +43,14 @@ def generate_candidates(
     if not focal_needs:
         return {"error": "team needs not computed; run `make score` first", "candidates": []}
 
-    tradeable = [c for c in focal_roster if c.player_id not in untouchables]
-    tradeable.sort(key=lambda c: (c.player_id not in preferred, -c.minutes))
+    # The generator can only reason about players the impact model has scored; an
+    # unmodelled player has no TEI to balance a package against (R1-4).
+    tradeable = [
+        c
+        for c in focal_roster
+        if c.player_id not in untouchables and c.tei is not None and c.minutes is not None
+    ]
+    tradeable.sort(key=lambda c: (c.player_id not in preferred, -(c.minutes or 0.0)))
 
     outgoing_packages: list[list] = [[c] for c in tradeable[:MAX_OUTGOING_PACKAGES]]
     for pair in combinations(tradeable[:8], 2):
@@ -72,7 +78,7 @@ def generate_candidates(
             return sum(card.skills.get(s, 0.0) for s in target_skills)
 
         incoming_pool = sorted(
-            (c for c in other_roster if c.skills),
+            (c for c in other_roster if c.skills and c.tei is not None),
             key=need_score,
             reverse=True,
         )[:MAX_INCOMING_PER_TEAM]
@@ -88,7 +94,9 @@ def generate_candidates(
                 if len(outgoing) > MAX_PLAYERS_PER_SIDE or len(incoming) > MAX_PLAYERS_PER_SIDE:
                     continue
                 # quick TEI sanity: skip wildly lopsided candidates
-                tei_gap = sum(c.tei for c in incoming) - sum(c.tei for c in outgoing)
+                tei_gap = sum(c.tei or 0.0 for c in incoming) - sum(
+                    c.tei or 0.0 for c in outgoing
+                )
                 if abs(tei_gap) > 6.0:
                     continue
                 evaluated += 1
@@ -133,11 +141,19 @@ def generate_candidates(
                             "name": other.full_name,
                         },
                         "outgoing": [
-                            {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)}
+                            {
+                                "player_id": c.player_id,
+                                "name": c.name,
+                                "tei": round(c.tei, 2) if c.tei is not None else None,
+                            }
                             for c in outgoing
                         ],
                         "incoming": [
-                            {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)}
+                            {
+                                "player_id": c.player_id,
+                                "name": c.name,
+                                "tei": round(c.tei, 2) if c.tei is not None else None,
+                            }
                             for c in incoming
                         ],
                         "legality_status": legality["overall_status"],
