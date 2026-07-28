@@ -1,0 +1,123 @@
+dataset: NBA salary-cap parameters and projections
+generated_on: '2026-07-28'
+currency: USD
+important_note: Only 2026-27 is confirmed. Later seasons are estimates/projections
+  and should be stored and rendered with an explicit status field.
+sources:
+- name: NBA Communications
+  url: https://pr.nba.com/2026-27-salary-cap/
+  scope: Confirmed 2026-27 cap, tax, floor, aprons, and MLEs.
+- name: SalarySwish Salary Cap History
+  url: https://www.salaryswish.com/salary-cap
+  scope: BAE and future cap/exception estimates through 2032-33.
+- name: NBPA 2023 CBA
+  url: https://nbpa.com/cba/
+  scope: Current CBA term and governing rules.
+seasons:
+- season: 2026-27
+  status: confirmed
+  confirmation_or_projection: NBA official release, June 30, 2026
+  percent_change: 6.67
+  salary_floor: 148465000
+  salary_cap: 164961000
+  luxury_tax: 200428000
+  first_apron: 209015000
+  second_apron: 221686000
+  bi_annual_exception: 5477000
+  room_mle: 9366000
+  non_taxpayer_mle: 15044000
+  taxpayer_mle: 6064000
+  source_name: NBA Communications / SalarySwish
+  notes: Cap, tax, floor, aprons, and MLEs are confirmed by NBA Communications. BAE
+    is from SalarySwish.
+- season: 2027-28
+  status: nba_estimate
+  confirmation_or_projection: NBA estimate as reported by SalarySwish
+  percent_change: 5.48
+  salary_floor: 156600100
+  salary_cap: 174000000
+  luxury_tax: 211410000
+  first_apron: 220468000
+  second_apron: 233833000
+  bi_annual_exception: 5777000
+  room_mle: 9879000
+  non_taxpayer_mle: 15868000
+  taxpayer_mle: 6396000
+  source_name: SalarySwish
+  notes: Projection; do not treat as confirmed.
+- season: 2028-29
+  status: nba_estimate
+  confirmation_or_projection: NBA estimate as reported by SalarySwish
+  percent_change: 10.0
+  salary_floor: 180199000
+  salary_cap: 200221000
+  luxury_tax: 243268000
+  first_apron: 253690000
+  second_apron: 269070000
+  bi_annual_exception: 6647000
+  room_mle: 11370000
+  non_taxpayer_mle: 18260000
+  taxpayer_mle: 7360000
+  source_name: SalarySwish
+  notes: Projection; do not treat as confirmed.
+- season: 2029-30
+  status: nba_estimate
+  confirmation_or_projection: NBA estimate as reported by SalarySwish
+  percent_change: 10.0
+  salary_floor: 198218900
+  salary_cap: 220243000
+  luxury_tax: 267595000
+  first_apron: 279059000
+  second_apron: 295977000
+  bi_annual_exception: 7312000
+  room_mle: 12507000
+  non_taxpayer_mle: 20086000
+  taxpayer_mle: 8096000
+  source_name: SalarySwish
+  notes: Projection; do not treat as confirmed. Current CBA runs through 2029-30,
+    with an opt-out after 2028-29.
+- season: 2030-31
+  status: nba_estimate
+  confirmation_or_projection: NBA estimate as reported by SalarySwish
+  percent_change: 10.0
+  salary_floor: 218040800
+  salary_cap: 242267000
+  luxury_tax: 294355000
+  first_apron: 306965000
+  second_apron: 325575000
+  bi_annual_exception: 8043000
+  room_mle: 13758000
+  non_taxpayer_mle: 22095000
+  taxpayer_mle: 8906000
+  source_name: SalarySwish
+  notes: Projection beyond the currently guaranteed CBA horizon; especially uncertain.
+- season: 2031-32
+  status: projected
+  confirmation_or_projection: SalarySwish projection
+  percent_change: 10.0
+  salary_floor: 239845000
+  salary_cap: 266494000
+  luxury_tax: 323791000
+  first_apron: 337662000
+  second_apron: 358133000
+  bi_annual_exception: 8847000
+  room_mle: 15134000
+  non_taxpayer_mle: 24305000
+  taxpayer_mle: 9797000
+  source_name: SalarySwish
+  notes: Projection beyond the currently guaranteed CBA horizon; especially uncertain.
+- season: 2032-33
+  status: projected
+  confirmation_or_projection: SalarySwish projection
+  percent_change: 10.0
+  salary_floor: 263830000
+  salary_cap: 293143000
+  luxury_tax: 356170000
+  first_apron: 371428000
+  second_apron: 393946000
+  bi_annual_exception: 9732000
+  room_mle: 16647000
+  non_taxpayer_mle: 26736000
+  taxpayer_mle: 10777000
+  source_name: SalarySwish
+  notes: Projection beyond the currently guaranteed CBA horizon; especially uncertain.

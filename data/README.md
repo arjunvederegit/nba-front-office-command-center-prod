@@ -20,9 +20,16 @@ make train         # build features, train impact model, compute archetypes/need
 
 ## Subdirectories
 
+- `cba/` — **committed**. League-wide published cap/tax/apron/exception figures with an
+  explicit `confirmed` / `nba_estimate` / `projected` status per season. League-wide
+  money, not per-player contract data; see `cba/README.md`.
 - `contracts/` — optional user-imported contract/salary file. `nba_api` does not provide
   contract data; see `contracts/README.md` for the expected schema and legal notes.
   Files placed here are gitignored and never redistributed.
+- `imports/` — raw provider pages you download yourself (Basketball-Reference contracts,
+  RealGM future drafts, stats CSVs). **Gitignored in full.** They are third-party pages
+  whose redistribution terms are not clear, so they stay on the machine that fetched
+  them; only normalized, attributable data derived from them is ever committed.
 - `snapshots/` — local database snapshots (gitignored).
 
 ## Test fixtures are not data
