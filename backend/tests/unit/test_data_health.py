@@ -73,14 +73,12 @@ def stale_nba_data(db: Session) -> Team:
     return team
 
 
-@pytest.mark.xfail(strict=True, reason="QA-4: nba_fresh derives from MAX(finished_at) across jobs")
 def test_local_asset_job_does_not_refresh_nba_data(db: Session, stale_nba_data: Team) -> None:
     health = data_health(db)
     card = next(c for c in health["source_cards"] if c["key"] == "current_nba_data")
     assert card["status"] == "stale"
 
 
-@pytest.mark.xfail(strict=True, reason="QA-4/R1-1: freshness must follow source_retrieved_at")
 def test_nba_freshness_is_never_true_while_an_nba_table_is_stale(
     db: Session, stale_nba_data: Team
 ) -> None:
@@ -91,22 +89,19 @@ def test_nba_freshness_is_never_true_while_an_nba_table_is_stale(
     assert card["status"] != "fresh"
 
 
-@pytest.mark.xfail(strict=True, reason="C13: last_successful_sync is naive, tables are tz-aware")
 def test_freshness_timestamps_share_one_clock(db: Session, stale_nba_data: Team) -> None:
     """A naive timestamp beside tz-aware ones makes the browser parse them on different
     clocks — the same field the freshness fix touches."""
     health = data_health(db)
     last_sync = health["last_successful_sync"]
     assert last_sync is not None
-    table_ts = health["tables"]["rosters"]["last_retrieved_at"]
+    table_ts = health["tables"]["standings"]["last_retrieved_at"]
     assert table_ts is not None
     assert ("+" in last_sync[10:] or last_sync.endswith("Z")) == (
         "+" in table_ts[10:] or table_ts.endswith("Z")
     ), f"mixed tz-awareness: {last_sync!r} vs {table_ts!r}"
 
 
-@pytest.mark.xfail(strict=True, reason="C13: empty contracts renders as 'derived'/'unavailable' "
-                                       "without distinguishing empty from unconfigured")
 def test_open_quality_issue_total_is_reportable(db: Session, stale_nba_data: Team) -> None:
     """The API caps the issue list at 50 with no total, so the real backlog (562 open
     rows live) is unknowable from the response."""
@@ -127,3 +122,61 @@ def test_rosters_row_count_is_reported(db: Session, stale_nba_data: Team) -> Non
     )
     db.commit()
     assert data_health(db)["tables"]["rosters"]["rows"] == 1
+
+
+def test_a_csv_import_does_not_pass_for_an_nba_sync(db: Session, stale_nba_data: Team) -> None:
+    """The audit suggested reusing `tables['player_season_stats'].last_retrieved_at`, but
+    that table also carries CSV-import rows, so the unfiltered maximum is the CSV's
+    timestamp — still wrong, by about 25 hours. Freshness filters on the provider."""
+    from app.db.models import Player, PlayerSeasonStats
+
+    now = datetime.now(UTC)
+    player = Player(nba_player_id=1, full_name="Fixture Player", is_active=True)
+    db.add(player)
+    db.flush()
+    db.add(
+        PlayerSeasonStats(
+            player_id=player.id,
+            season="2025-26",
+            stat_type="csv_totals",
+            games_played=70,
+            minutes=2100.0,
+            stats={},
+            source_provider="user_csv",
+            source_retrieved_at=now,  # imported seconds ago
+        )
+    )
+    db.commit()
+
+    health = data_health(db)
+    card = next(c for c in health["source_cards"] if c["key"] == "current_nba_data")
+    assert card["status"] == "stale", "a CSV import must not make NBA.com data look fresh"
+    assert health["tables"]["player_season_stats"]["stale"] is False  # the CSV row is fresh
+    assert health["last_successful_sync"] is not None
+    assert health["last_successful_sync"] < now.isoformat()
+
+
+def test_contracts_distinguish_empty_from_unconfigured(db: Session, stale_nba_data: Team) -> None:
+    card = next(c for c in data_health(db)["source_cards"] if c["key"] == "contracts")
+    assert card["status"] == "unavailable"
+    assert "no contract provider configured" in card["coverage"]
+
+
+def test_open_issue_totals_report_the_real_backlog(db: Session, stale_nba_data: Team) -> None:
+    from app.db.models import DataQualityIssue
+
+    for i in range(60):
+        db.add(
+            DataQualityIssue(
+                check_name="duplicate_name" if i % 2 else "future_dates",
+                severity="warning",
+                message=f"fixture issue {i}",
+                detected_at=datetime.now(UTC),
+            )
+        )
+    db.commit()
+    health = data_health(db)
+    assert len(health["open_quality_issues"]) == 50
+    assert health["open_quality_issue_total"] == 60
+    assert health["open_quality_issues_truncated"] is True
+    assert health["open_quality_issue_counts"] == {"duplicate_name": 30, "future_dates": 30}

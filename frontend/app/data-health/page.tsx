@@ -358,10 +358,15 @@ export default function DataHealthPage() {
                           {formatDate(table.last_retrieved_at)}
                         </Td>
                         <Td>
-                          {table.stale === null ? (
-                            <Badge status="derived">derived</Badge>
-                          ) : table.rows === 0 ? (
+                          {/* Emptiness is checked first. An empty table has no maximum
+                              retrieval time, so `stale === null`, and testing that
+                              first labelled every empty table "derived" — `contracts`
+                              at 0 rows read as a derived source rather than an empty
+                              one. */}
+                          {table.rows === 0 ? (
                             <Badge status="unavailable">empty</Badge>
+                          ) : table.stale === null ? (
+                            <Badge status="derived">derived</Badge>
                           ) : table.stale ? (
                             <Badge status="stale">stale</Badge>
                           ) : (
@@ -403,27 +408,57 @@ export default function DataHealthPage() {
                 )}
               </Panel>
 
-              <Panel title="Open data-quality issues">
+              <Panel
+                title="Open data-quality issues"
+                subtitle={
+                  data.open_quality_issue_total > 0
+                    ? `${data.open_quality_issue_total.toLocaleString()} open · showing the ${data.open_quality_issues.length} most recent`
+                    : undefined
+                }
+              >
                 {data.open_quality_issues.length === 0 ? (
                   <p className="text-sm text-muted">
                     No open issues from the latest validation pass.
                   </p>
                 ) : (
-                  <ul className="scroll-thin max-h-80 space-y-2 overflow-y-auto pr-1">
-                    {data.open_quality_issues.map((issue, index) => (
-                      <li key={index} className="flex items-start gap-2 text-sm">
-                        <Badge status={issue.severity === "error" ? "fail" : "warning"}>
-                          {issue.severity}
-                        </Badge>
-                        <span className="min-w-0">
-                          <span className="data block text-xs text-foreground">{issue.check}</span>
-                          <span className="block text-xs leading-relaxed text-muted">
-                            {issue.message}
+                  <>
+                    {/* The list is capped, so without the totals the real backlog is
+                        unknowable from the page — 562 open rows rendered as 50 with no
+                        indication that 512 were missing. */}
+                    {Object.keys(data.open_quality_issue_counts ?? {}).length > 0 && (
+                      <ul className="mb-3 flex flex-wrap gap-x-4 gap-y-1 border-b border-hairline pb-2.5 text-[11px]">
+                        {Object.entries(data.open_quality_issue_counts).map(([check, count]) => (
+                          <li key={check} className="whitespace-nowrap text-muted">
+                            <span className="data text-foreground">{count.toLocaleString()}</span>{" "}
+                            {check}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <ul className="scroll-thin max-h-80 space-y-2 overflow-y-auto pr-1">
+                      {data.open_quality_issues.map((issue, index) => (
+                        <li key={index} className="flex items-start gap-2 text-sm">
+                          <Badge status={issue.severity === "error" ? "fail" : "warning"}>
+                            {issue.severity}
+                          </Badge>
+                          <span className="min-w-0">
+                            <span className="data block text-xs text-foreground">{issue.check}</span>
+                            <span className="block text-xs leading-relaxed text-muted">
+                              {issue.message}
+                            </span>
                           </span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                        </li>
+                      ))}
+                    </ul>
+                    {data.open_quality_issues_truncated && (
+                      <p className="mt-2 border-t border-hairline pt-2 text-[11px] text-unavail">
+                        {(
+                          data.open_quality_issue_total - data.open_quality_issues.length
+                        ).toLocaleString()}{" "}
+                        further open issues are not listed here.
+                      </p>
+                    )}
+                  </>
                 )}
               </Panel>
             </div>

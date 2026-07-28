@@ -297,7 +297,6 @@ export interface DataHealth {
   cache_backend: string;
   tables: Record<string, { rows: number; last_retrieved_at: string | null; stale: boolean | null }>;
   cap_parameter_years: string[];
-  last_successful_sync: string | null;
   recent_sync_runs: {
     job: string;
     status: string;
@@ -306,7 +305,16 @@ export interface DataHealth {
     finished_at: string | null;
     error: string | null;
   }[];
+  /** When NBA.com data was last *retrieved* — not when some job last finished. */
+  last_successful_sync: string | null;
+  /** When any successful job last finished, including local-file ones. */
+  last_job_finished_at: string | null;
+  nba_tables_stale: string[];
   open_quality_issues: { check: string; severity: string; message: string; detected_at: string | null }[];
+  /** The list above is capped; these describe the real backlog behind it. */
+  open_quality_issue_total: number;
+  open_quality_issue_counts: Record<string, number>;
+  open_quality_issues_truncated: boolean;
   active_models: {
     name: string;
     version: string;

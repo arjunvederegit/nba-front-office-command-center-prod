@@ -52,12 +52,21 @@ function StatusChips({ compact = false }: { compact?: boolean }) {
   const [now] = useState(() => Date.now());
   if (!data) return null;
 
-  const synced = data.last_successful_sync;
-  const ageHours = synced ? (now - new Date(synced).getTime()) / 3_600_000 : Infinity;
-  const state = !synced ? "none" : ageHours < 48 ? "live" : "stale";
+  // The backend decides freshness; the header only renders the verdict. Recomputing it
+  // here against a second threshold (48 h, against the backend's configurable
+  // NBA_API_STALE_AFTER_SECONDS) let the chip and the Data Health page disagree about
+  // the same database.
+  const card = data.source_cards?.find((c) => c.key === "current_nba_data");
+  const state = card?.status === "fresh" ? "live" : card?.status === "stale" ? "stale" : "none";
   const dot =
     state === "live" ? "bg-legal" : state === "stale" ? "bg-conditional" : "bg-unavail";
   const label = state === "live" ? "Live data" : state === "stale" ? "Data aging" : "No data";
+  const synced = data.last_successful_sync;
+  const ageHours = synced ? (now - new Date(synced).getTime()) / 3_600_000 : Infinity;
+  const detail =
+    state === "stale" && Number.isFinite(ageHours)
+      ? `${label} — NBA.com data is ${Math.floor(ageHours / 24)} day(s) old`
+      : label;
 
   return (
     <div className="flex items-center gap-2">
@@ -66,7 +75,7 @@ function StatusChips({ compact = false }: { compact?: boolean }) {
       </span>
       <Link
         href="/data-health"
-        title={`Open Data Health — ${label}`}
+        title={`Open Data Health — ${detail}`}
         className="flex shrink-0 items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-signal/50 hover:text-foreground"
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot} ${state === "live" ? "pulse-live" : ""}`} aria-hidden />
