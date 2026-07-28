@@ -30,3 +30,27 @@ make train         # build features, train impact model, compute archetypes/need
 `backend/tests/fixtures/` contains small, sanitized, recorded response excerpts used only
 by deterministic tests. They are clearly marked as fixtures, are never loaded by
 production configuration, and are not presented in the application.
+
+### Your development database may still hold test entities
+
+The end-to-end suite saves real scenarios, trade proposals and comparison sets through
+the API. It now runs against its **own** database (`make e2e`, which builds one via
+`make seed-demo`), but a database used before that change — or used for manual
+exploration — can hold rows like `E2E RosterLab deal` or `Smoke test deal`. They are
+indistinguishable from your own saved work in the UI, which is the point of this note.
+
+```bash
+make purge-fixtures            # list what looks automated
+make purge-fixtures APPLY=1    # delete it
+```
+
+The match is deliberately narrow — `e2e`, `smoke`, `test`, `fixture`, `probe` as whole
+words — so a name you chose is never removed. Anything it does not match is yours, and
+you delete it yourself.
+
+### The demo league is not NBA data
+
+`python -m app.cli seed-demo` builds a synthetic league for the end-to-end suite. Team
+identity comes from `nba_api`'s bundled static table; every other row is generated and
+stamped `source_provider="demo_seed"`. The seeder refuses to run against a database that
+already holds `nba_api` rows, so it cannot mix with real data.

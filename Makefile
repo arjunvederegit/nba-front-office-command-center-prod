@@ -8,7 +8,8 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
 
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
         sync-data build-features train score seed-config migrate e2e help \
-        index-assets import-stats-csv import-kaggle seed-demo visual-qa worker
+        index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
+        purge-fixtures
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -50,6 +51,9 @@ test-backend:
 
 test-frontend:
 	cd $(FRONTEND) && npm run test -- --run
+
+purge-fixtures: ## List test-run leftovers in the dev DB (add APPLY=1 to delete)
+	cd $(BACKEND) && .venv/bin/python -m app.cli purge-fixtures $(if $(APPLY),--apply,)
 
 seed-demo: ## Build a DEDICATED e2e database from the synthetic demo league
 	rm -f "$(E2E_DB)"

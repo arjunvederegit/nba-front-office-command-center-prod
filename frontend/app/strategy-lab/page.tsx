@@ -152,6 +152,21 @@ function missingComponents(alt: ComparisonAlternative): ComponentKey[] {
   );
 }
 
+/**
+ * A scenario's display identity. `name` is user-supplied and not unique — Team Outlook
+ * generates "BOS — Contend now" every time the button is pressed — so the option text
+ * carries the team, the strategy and the save date.
+ */
+function scenarioOptionLabel(scenario: Scenario): string {
+  const saved = new Date(scenario.created_at);
+  const stamp = Number.isNaN(saved.getTime())
+    ? ""
+    : ` · ${saved.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+  const team = scenario.focal_team?.abbreviation;
+  const prefix = team && !scenario.name.includes(team) ? `${team} — ` : "";
+  return `${prefix}${scenario.name} (${scenario.strategy.replaceAll("_", " ")})${stamp}`;
+}
+
 /* --------------------------------------------------------------- deal shape */
 
 interface DealAsset {
@@ -465,9 +480,13 @@ export default function StrategyLabPage() {
                     className="min-w-0 flex-1 rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-[13px] text-foreground sm:max-w-64"
                   >
                     <option value="">League default weights</option>
+                    {/* Name alone is not an identity: saving a strategy for the same
+                        team twice produces two rows with the same name, and the list
+                        rendered them as indistinguishable duplicates. Team, strategy
+                        and save date disambiguate them. */}
                     {scenarios?.map((scenario) => (
                       <option key={scenario.id} value={scenario.id}>
-                        {scenario.name}
+                        {scenarioOptionLabel(scenario)}
                       </option>
                     ))}
                   </select>

@@ -17,6 +17,10 @@ Commands
   import-kaggle    Import historical enrichment from the Kaggle basketball dataset
   seed-demo        Populate a DEDICATED database with the synthetic demo league used by
                    the end-to-end suite. Refuses to run where nba_api rows exist.
+  purge-fixtures [--apply]
+                   List (or with --apply, delete) scenarios, trade proposals and
+                   comparison sets whose names look like automated-test leftovers.
+                   Dry run by default.
 """
 
 import json
@@ -92,6 +96,15 @@ def main() -> None:
 
     if command == "seed-config":
         seed_config()
+    elif command == "purge-fixtures":
+        from app.ingestion.fixtures import purge_fixtures
+
+        apply = "--apply" in sys.argv[2:]
+        with SessionLocal() as db:
+            summary = purge_fixtures(db, dry_run=not apply)
+        print(json.dumps(summary, indent=2, default=str))
+        if not apply:
+            print("\nDry run. Re-run with --apply to delete these rows.")
     elif command == "seed-demo":
         from app.ingestion.demo_seed import DemoSeedRefused, seed_demo
 
