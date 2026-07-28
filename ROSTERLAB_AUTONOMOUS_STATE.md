@@ -41,9 +41,10 @@
 
 ## Current position
 
-**Release:** R1 — **complete and pushed**. Gate passed; see `ROSTERLAB_R1_IMPLEMENTATION_REPORT.md`.
-**Next:** R2a — performance and instrumentation (no contract data required).
-**Status:** starting R2a
+**Releases complete and pushed:** R0, R1, R2a. Each gate passed; see the per-release reports.
+**R2b is BLOCKED on a data artifact** — measured, not assumed (see below).
+**Next:** R2c (disclosed-coverage payroll), inverting the plan's order — its precondition is met.
+**Status:** stopped at a documented blocker with a clean, pushed tree.
 
 ## Completed work
 
@@ -58,7 +59,9 @@
 | **R1-6 + R1-8** — no-pressing-needs state; generator hidden | `58a4c6b` | Atlanta no longer double-lists; generator discloses 13.8 % coverage |
 | **R1-9** — labels, one confidence, hygiene, zod decision | `433677d` | monotone verdicts; content-hashed model versions + migration; `hmac.compare_digest` |
 | **R1-7** — test-data isolation | `ae07f71` | 22 trades / 16 scenarios / 50 comparisons purged; dropdown disambiguated |
-| **R1-D** — documentation + gate | (this commit) | `limitations.md`, `methodology.md`, stale-doc banners, 7 screenshots regenerated |
+| **R1-D** — documentation + gate | `01d2c02` | `limitations.md`, `methodology.md`, stale-doc banners, 7 screenshots regenerated |
+| **R2a-1** — batch loading, memoization | `8b0fe82` | generate 21,326 → **46** queries / 2.15 s → 0.36 s; evaluate 61 → **15**; same 8 candidates |
+| **R2a-2** — coverage instrumentation, identity join | `dc645d5` | roster-side coverage; 4-tier identity resolver; `make contract-coverage` / `import-contracts` |
 
 Remaining xfail pins: **3** (20 of 23 flipped)
 - QA-1 roster-gut `performance < 25` → R3-3 (unreachable before the calibration; C12)
@@ -68,6 +71,9 @@ Remaining xfail pins: **3** (20 of 23 flipped)
 ## Commits
 
 ```
+dc645d5 feat(ingestion): instrument contract roster coverage before import
+8b0fe82 perf(cba): batch-load contract salaries and memoize cap parameters
+01d2c02 docs: bring limitations, methodology and screenshots in line with R1
 ae07f71 chore(dev): isolate the e2e database and purge test entities
 433677d fix(app): monotone verdict labels, one confidence, and R1 hygiene
 58a4c6b fix(team-outlook): show no-pressing-needs state; hide the candidate generator
@@ -109,33 +115,70 @@ All pushed to `origin/feat/rosterlab-autonomous-roadmap`.
 
 ## Active blockers
 
-- **Kaggle `nbadb` absent.** Expected at `data/external/` (see `backend/app/integrations/kaggle_nba/importer.py`
-  for the tables consumed). All lineup-aware fit, tracking and play-type work is deferred; nothing in R0–R5 is
-  blocked by it.
+### R2b — its acceptance criterion cannot be met with the available artifact
+
+Measured on a scratch copy of the dev database against
+`data/imports/contracts/players.html` (BBRef, saved 2026-07-28). Nothing was written to
+the dev database.
+
+```
+matched                                       886 rows
+  exact_name 867 · suffix_insensitive 10 · unaccented 9
+unmatched                                     154 rows
+ambiguous                                       0 rows
+seasons present                     2026-27 … 2031-32   (cap league year present ✓)
+roster players with a 2026-27 salary      392 / 530     (74.0 %)
+teams with a computable payroll             0 / 30      ← R2b requires ≥ 27/30
+```
+
+The **join works** — 886 bound, zero ambiguous, and the snapshot carries the league year
+that governs trade legality. The gap is coverage: 138 rostered players (26 %) have no
+2026-27 salary in an offseason snapshot, mostly expired deals, and `_team_payroll` is
+all-or-nothing so one missing player removes a whole team. The plan's sensitivity table
+put 20 % missing at 0/30; at 26 % it lands where predicted.
+
+Unblocking needs **either** R2c's disclosed-coverage model (no new data; precondition
+met) **or** a hand-curated CSV at `data/contracts/contracts.csv` with
+`CONTRACT_DATA_PROVIDER=file`, carrying `nba_player_id`, `signed_date`,
+`no_trade_clause` and `contract_type` — the three fields that per C8 otherwise keep
+`overall_status` pinned at `conditionally_valid` at any BBRef coverage level.
+
+### Kaggle `nbadb` absent
+
+Expected at `data/external/` (also `KAGGLE_DATA_DIR`; consumed by
+`backend/app/integrations/kaggle_nba/importer.py` via `make import-kaggle`). Blocks R6's
+lineup-aware fit and any tracking/play-type work. **Blocks nothing in R0–R5.**
 
 ## Exact next step
 
-Begin **R2a — performance and instrumentation** (`ROSTERLAB_IMPLEMENTATION_PLAN.md` §5). It needs no
-contract data and ships alone.
+**Run R2c — the disclosed-coverage payroll model — before R2b**, inverting the plan's
+order. The plan gates R2c on "only after R2b proves the join works"; the measurement
+above proves it. With disclosed coverage the existing snapshot becomes useful for 30
+teams instead of 0.
 
-1. Measure the baseline first, with a query counter around `POST /trades/generate` and a 2-for-2
-   `POST /trades/evaluate`. The plan's measured baseline is **21,112 queries / 2.55 s** for generate and
-   **60 queries** for evaluate; confirm both on the current code before changing anything, because R1
-   already touched `_roster_cards` and `candidates.py`.
-2. Request-scoped resolver in `app/cba/builder.py`: memoize `load_cap_params` (1,197 identical calls per
-   request), batch `Contract`+`ContractYear` per roster, cache payroll per `(team, season, league_year)`.
-3. Fix the function-local private imports at `evaluation.py:397,404` and the lazy-load N+1 at
-   `analytics/score.py:46`.
-4. Instrument `sync_contracts` coverage **before** any import: `roster_players_total`,
-   `roster_players_with_salary_for_cap_league_year`, `teams_with_complete_payroll`,
-   `seasons_present_in_snapshot`, and the **roster-side** unmatched list.
-5. Harden the identity join (unaccent as a fallback tier only — the database is internally inconsistent,
-   `Bogdan Bogdanović` keeps diacritics while `Alperen Sengun` does not).
-6. `make import-contracts`; resolve `CONTRACT_DATA_FILE` against the repo root, not CWD.
+```bash
+git checkout feat/rosterlab-autonomous-roadmap
+cd "nba front office command center prod"
+make contract-coverage        # the 0/30 baseline R2c has to beat
+```
 
-Acceptance: generate < 3,000 queries and < 1.2 s with the same 8 candidates; evaluate < 25 queries.
-Pin both with query-count tests.
+1. Replace `_team_payroll`'s all-or-nothing return with a payroll **plus its coverage**:
+   `(payroll_of_known, players_known, roster_size)` is already the shape — stop discarding
+   the sum when `known < total`, and carry the counts forward.
+2. Thread the disclosure through `TeamContext.payroll_before/after` and into the API, so a
+   figure is never rendered without "computed from 16 of 18 contracts; 2 unknown" beside
+   it.
+3. **The salary rules must still report `unavailable`.** A matching verdict computed from
+   a partial payroll is exactly the failure R1 exists to prevent; disclosed coverage makes
+   the *number* useful, not the *verdict*.
+4. Acceptance: a team with one unknown salary shows a payroll and its coverage, and
+   `SALARY_MATCHING` still reports `unavailable` for that team.
+
+If R2c is not wanted, **R3 is the critical path** and depends only on R1. Start with R3-1
+(promote the transparent index, retire the ridge) — fitting on ridge TEI yields a
+coefficient indistinguishable from zero and would be misdiagnosed as a calibration bug
+rather than a metric one.
 
 ## Push status
 
-`origin/feat/rosterlab-autonomous-roadmap` is up to date through R1.
+`origin/feat/rosterlab-autonomous-roadmap` is up to date through R2a. `main` untouched; no history rewritten.
