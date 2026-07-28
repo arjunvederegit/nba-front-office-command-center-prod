@@ -1,27 +1,23 @@
 """Builds a TradeContext from database state for the legality engine."""
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.errors import DataUnavailableError, InvalidTradeError, NotFoundError
 from app.db.models import (
     Contract,
-    ContractYear,
-    LeagueCapParameters,
-    Player,
-    RosterEntry,
     Team,
 )
 from app.integrations.contracts import get_contract_provider
 
+from . import resolver
 from .context import CapParams, PickAsset, PlayerAsset, TeamContext, TradeContext
 
 
 def load_cap_params(db: Session, league_year: str) -> CapParams:
-    row = db.scalar(
-        select(LeagueCapParameters).where(LeagueCapParameters.league_year == league_year)
-    )
+    # Memoized per session: this was called 1,169 times for one immutable row in a
+    # single `/trades/generate` request (see app/cba/resolver.py).
+    row = resolver.cap_params_row(db, league_year)
     if row is None:
         raise DataUnavailableError(
             f"No cap parameters loaded for league year {league_year}; run `make seed-config`."
@@ -40,15 +36,15 @@ def load_cap_params(db: Session, league_year: str) -> CapParams:
 def _player_salary(
     db: Session, player_id: str, league_year: str
 ) -> tuple[int | None, Contract | None]:
-    contract = db.scalar(select(Contract).where(Contract.player_id == player_id))
-    if contract is None:
-        return None, None
-    year = db.scalar(
-        select(ContractYear).where(
-            ContractYear.contract_id == contract.id, ContractYear.season == league_year
-        )
-    )
-    return (year.salary if year else None), contract
+    """Single-player view over the batched resolver. Prefer `player_salaries` in a loop:
+    this was 16,640 of the 21,326 queries a `/trades/generate` request issued."""
+    return resolver.player_salary(db, player_id, league_year)
+
+
+def player_salaries(
+    db: Session, player_ids: list[str], league_year: str
+) -> dict[str, tuple[int | None, Contract | None]]:
+    return resolver.salaries(db, player_ids, league_year)
 
 
 def _team_payroll(
@@ -56,22 +52,9 @@ def _team_payroll(
 ) -> tuple[int | None, int, int]:
     """(payroll or None, players_with_known_salary, roster_size). Payroll is only
     reported when every rostered player has a known salary — partial sums would
-    understate payroll and silently skew apron status."""
-    entries = db.scalars(
-        select(RosterEntry).where(
-            RosterEntry.team_id == team_id, RosterEntry.season == season, RosterEntry.is_current
-        )
-    ).all()
-    total = 0
-    known = 0
-    for entry in entries:
-        salary, _ = _player_salary(db, entry.player_id, league_year)
-        if salary is not None:
-            total += salary
-            known += 1
-    if entries and known == len(entries):
-        return total, known, len(entries)
-    return None, known, len(entries)
+    understate payroll and silently skew apron status. Batched and memoized per team
+    for the request; the rule itself is unchanged."""
+    return resolver.team_payroll(db, team_id, season, league_year)
 
 
 def _validate_player_moves(db: Session, player_moves: list[dict], season: str) -> None:
@@ -104,25 +87,16 @@ def _validate_player_moves(db: Session, player_moves: list[dict], season: str) -
     if not player_moves:
         return
 
-    rostered = {
-        (entry.player_id, entry.team_id)
-        for entry in db.scalars(
-            select(RosterEntry).where(
-                RosterEntry.player_id.in_([m["player_id"] for m in player_moves]),
-                RosterEntry.season == season,
-                RosterEntry.is_current,
-            )
-        ).all()
-    }
-    known_players = {player_id for player_id, _ in rostered}
+    membership = resolver.current_roster(db, season)
     phantom: list[str] = []
     for move in player_moves:
         player_id = move["player_id"]
+        teams = membership.get(player_id)
         # A player absent from every current roster is an unknown-roster case, not a
         # phantom move: the trade may be legitimate against data we do not hold, and
         # refusing it would block every offseason free agent. Only assert the negative
         # when we can see where the player actually is.
-        if player_id in known_players and (player_id, move["from_team_id"]) not in rostered:
+        if teams and move["from_team_id"] not in teams:
             phantom.append(player_id)
     if phantom:
         names = _player_names(db, phantom)
@@ -133,9 +107,8 @@ def _validate_player_moves(db: Session, player_moves: list[dict], season: str) -
 
 
 def _player_names(db: Session, player_ids: list[str]) -> list[str]:
-    rows = db.scalars(select(Player).where(Player.id.in_(player_ids))).all()
-    by_id = {p.id: p.full_name for p in rows}
-    return [by_id.get(pid, pid) for pid in dict.fromkeys(player_ids)]
+    by_id = resolver.players(db, player_ids)
+    return [by_id[pid].full_name if pid in by_id else pid for pid in dict.fromkeys(player_ids)]
 
 
 def build_trade_context(
@@ -172,11 +145,13 @@ def build_trade_context(
             payroll_players_total=total,
         )
 
+    moved = resolver.players(db, [m["player_id"] for m in player_moves])
+    resolved = resolver.salaries(db, list(moved), league_year)
     for move in player_moves:
-        player = db.get(Player, move["player_id"])
+        player = moved.get(move["player_id"])
         if player is None:
             raise NotFoundError(f"Unknown player id {move['player_id']}")
-        salary, contract = _player_salary(db, player.id, league_year)
+        salary, contract = resolved[player.id]
         asset = PlayerAsset(
             player_id=player.id,
             name=player.full_name,

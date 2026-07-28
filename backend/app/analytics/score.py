@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import get_settings
 from app.core.logging import get_logger
@@ -35,9 +35,36 @@ def _league_stats_frame(db: Session, season: str) -> pd.DataFrame:
     return pd.DataFrame(list(rows.values()))
 
 
+def _advanced_ast_pct(db: Session, season: str) -> dict[str, float]:
+    """`{player_id: AST_PCT}` for the season, in one query.
+
+    `_roster_profile` ran this lookup once per rostered player — up to 530 extra
+    SELECTs per `make score`, on top of the lazy `RosterEntry.player` load beside it.
+    Cached on the session so all 30 teams share one pass.
+    """
+    cache = db.info.setdefault("rosterlab_ast_pct", {})
+    if season not in cache:
+        by_player: dict[str, float] = {}
+        for row in db.scalars(
+            select(PlayerSeasonStats).where(
+                PlayerSeasonStats.season == season,
+                PlayerSeasonStats.stat_type == "advanced",
+            )
+        ).all():
+            value = (row.stats or {}).get("AST_PCT")
+            if value is not None:
+                by_player[row.player_id] = float(value)
+        cache[season] = by_player
+    return cache[season]
+
+
 def _roster_profile(db: Session, team_id: str, season: str) -> dict[str, Any] | None:
     entries = db.scalars(
-        select(RosterEntry).where(
+        # `joinedload` rather than the relationship's lazy default: `e.player` below
+        # otherwise emits one SELECT per rostered player.
+        select(RosterEntry)
+        .options(joinedload(RosterEntry.player))
+        .where(
             RosterEntry.team_id == team_id, RosterEntry.season == season, RosterEntry.is_current
         )
     ).all()
@@ -47,18 +74,10 @@ def _roster_profile(db: Session, team_id: str, season: str) -> dict[str, Any] | 
     ages = [e.age for e in entries if e.age]
 
     # High-assist creators: AST_PCT >= 25% in current-season advanced stats
-    creator_count = 0
-    for entry in entries:
-        adv = db.scalar(
-            select(PlayerSeasonStats).where(
-                PlayerSeasonStats.player_id == entry.player_id,
-                PlayerSeasonStats.season == season,
-                PlayerSeasonStats.stat_type == "advanced",
-            )
-        )
-        ast_pct = (adv.stats or {}).get("AST_PCT") if adv else None
-        if ast_pct is not None and float(ast_pct) >= 0.25:
-            creator_count += 1
+    ast_pct_by_player = _advanced_ast_pct(db, season)
+    creator_count = sum(
+        1 for e in entries if ast_pct_by_player.get(e.player_id, 0.0) >= 0.25
+    )
     return {
         "avg_height": sum(heights) / len(heights) if heights else None,
         "avg_age": sum(ages) / len(ages) if ages else None,
@@ -89,22 +108,42 @@ def score_all(db: Session) -> dict[str, Any]:
         profile = _roster_profile(db, team.id, season)
         needs = compute_team_needs(team_stats, league, profile)
 
-        for existing in db.scalars(
-            select(TeamNeed).where(TeamNeed.team_id == team.id, TeamNeed.season == season)
-        ).all():
-            db.delete(existing)
+        # Update in place, insert what is new, delete what no longer applies.
+        #
+        # This was a delete-then-add of the same rows. With `autoflush=False`, both sat
+        # in one flush, and SQLAlchemy emits a mapper's INSERTs before its DELETEs — so
+        # `make score` raised
+        #     UNIQUE constraint failed: team_needs.team_id, team_needs.season, need_key
+        # on **any database that had already been scored**. It only ever worked the
+        # first time, which is why a fresh clone never saw it.
+        existing = {
+            row.need_key: row
+            for row in db.scalars(
+                select(TeamNeed).where(TeamNeed.team_id == team.id, TeamNeed.season == season)
+            ).all()
+        }
         for need in needs:
-            db.add(
-                TeamNeed(
-                    team_id=team.id,
-                    season=season,
-                    need_key=need.need_key,
-                    severity=need.severity,
-                    percentile=need.percentile,
-                    explanation=need.explanation,
+            row = existing.pop(need.need_key, None)
+            if row is None:
+                db.add(
+                    TeamNeed(
+                        team_id=team.id,
+                        season=season,
+                        need_key=need.need_key,
+                        severity=need.severity,
+                        percentile=need.percentile,
+                        explanation=need.explanation,
+                    )
                 )
-            )
+            else:
+                row.severity = need.severity
+                row.percentile = need.percentile
+                row.explanation = need.explanation
             total_needs += 1
+        # A rule that no longer produces a need for this team must not leave its old row
+        # behind claiming otherwise.
+        for stale in existing.values():
+            db.delete(stale)
     db.commit()
     logger.info("scored team needs: %d rows", total_needs)
     return {"teams": len(teams), "needs_written": total_needs, "season": season}

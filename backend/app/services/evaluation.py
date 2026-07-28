@@ -31,7 +31,8 @@ from app.analytics.sensitivity import (
     tornado,
 )
 from app.analytics.uncertainty import PlayerDraw, simulate_delta_wins
-from app.cba.builder import build_trade_context
+from app.cba import resolver
+from app.cba.builder import build_trade_context, load_cap_params, player_salaries
 from app.cba.engine import TradeLegalityEngine
 from app.config import get_settings
 from app.core.cache import get_cache
@@ -173,6 +174,11 @@ class EvaluationService:
         self._impact_cache: dict[str, PlayerImpactEstimate] | None = None
         self._skills_cache: dict[str, dict[str, float]] | None = None
         self._wins_mapping: dict | None = None
+        # Per-service memoization. `generate_candidates` builds one service and then
+        # evaluates 400 trades against the same handful of rosters, so these were
+        # re-queried hundreds of times for identical answers.
+        self._roster_cache: dict[str, list[PlayerCard]] = {}
+        self._needs_cache: dict[str, dict[str, float]] = {}
 
     # ------------------------------------------------------------- data loading
 
@@ -259,6 +265,8 @@ class EvaluationService:
         )
 
     def _roster_cards(self, team_id: str) -> list[PlayerCard]:
+        if team_id in self._roster_cache:
+            return self._roster_cache[team_id]
         entries = self.db.scalars(
             select(RosterEntry)
             .where(
@@ -271,15 +279,19 @@ class EvaluationService:
             # top 12 — and the order changed between runs on Postgres.
             .order_by(RosterEntry.player_id)
         ).all()
-        return [self._card(e.player, e.age) for e in entries]
+        cards = [self._card(e.player, e.age) for e in entries]
+        self._roster_cache[team_id] = cards
+        return cards
 
     def _team_needs(self, team_id: str) -> dict[str, float]:
-        rows = self.db.scalars(
-            select(TeamNeed).where(
-                TeamNeed.team_id == team_id, TeamNeed.season == self.settings.current_season
-            )
-        ).all()
-        return {r.need_key: r.severity for r in rows}
+        if team_id not in self._needs_cache:
+            rows = self.db.scalars(
+                select(TeamNeed).where(
+                    TeamNeed.team_id == team_id, TeamNeed.season == self.settings.current_season
+                )
+            ).all()
+            self._needs_cache[team_id] = {r.need_key: r.severity for r in rows}
+        return self._needs_cache[team_id]
 
     # ------------------------------------------------------------- components
 
@@ -621,14 +633,13 @@ class EvaluationService:
         roster = self._roster_cards(team_id)
         incoming_ids = [m["player_id"] for m in player_moves if m["to_team_id"] == team_id]
         outgoing_ids = [m["player_id"] for m in player_moves if m["from_team_id"] == team_id]
-        incoming = (
-            [
-                self._card(p)
-                for p in self.db.scalars(select(Player).where(Player.id.in_(incoming_ids))).all()
-            ]
-            if incoming_ids
-            else []
-        )
+        # Batched and session-cached: this was one `SELECT … FROM players WHERE id IN …`
+        # per team per evaluation, i.e. 800 of the 815 queries a `/trades/generate`
+        # request still issued after the salary batching.
+        incoming = [
+            self._card(player)
+            for player in resolver.players(self.db, incoming_ids).values()
+        ]
         outgoing = [c for c in roster if c.player_id in set(outgoing_ids)]
 
         if legality is None:
@@ -644,15 +655,13 @@ class EvaluationService:
                 team_id, team_legality, legality, weights, incoming, outgoing
             )
 
-        salaries: dict[str, int | None] = {}
-        from app.cba.builder import _player_salary
-
-        for card in incoming + outgoing:
-            salaries[card.player_id], _ = _player_salary(
-                self.db, card.player_id, self.settings.cap_league_year
-            )
-
-        from app.cba.builder import load_cap_params
+        # One batched lookup, and the imports are module-level: these two were
+        # function-local imports of a private helper inside the hot path, executed about
+        # 800 times per `/trades/generate` request.
+        resolved = player_salaries(
+            self.db, [c.player_id for c in incoming + outgoing], self.settings.cap_league_year
+        )
+        salaries: dict[str, int | None] = {pid: value[0] for pid, value in resolved.items()}
 
         cap_params = load_cap_params(self.db, self.settings.cap_league_year)
         performance, perf_detail = self._performance(roster, incoming, set(outgoing_ids))
@@ -692,6 +701,7 @@ class EvaluationService:
                         tei_sigma=c.tei_sigma if c.tei_sigma is not None else TEI_SIGMA_DEFAULT,
                         availability=1.0 if c.availability is None else c.availability,
                         minutes_share=c.minutes / total_minutes,
+                        key=c.player_id,
                     )
                 )
             return draws
