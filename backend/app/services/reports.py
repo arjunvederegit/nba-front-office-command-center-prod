@@ -51,18 +51,19 @@ def build_report_markdown(
     status = legality.get("overall_status", "not_evaluated")
     perf = focal.get("detail", {}).get("performance", {})
     excluded = focal.get("excluded_components", [])
+    suppression = focal.get("suppression") or {}
+    decision_status = focal.get("decision_status", "scored")
 
-    verdict = (
-        "Proceed with further diligence"
-        if (utility or 0) >= 55
-        else (
-            "Neutral — depends on strategic priorities"
-            if (utility or 0) >= 45
-            else "Do not proceed as constructed"
-        )
-    )
-    if status == "verified_illegal":
+    if decision_status == "suppressed_illegal":
         verdict = "Do not proceed — the trade fails implemented CBA rules"
+    elif utility is None:
+        verdict = "No recommendation — this deal could not be scored"
+    elif utility >= 55:
+        verdict = "Proceed with further diligence"
+    elif utility >= 45:
+        verdict = "Neutral — depends on strategic priorities"
+    else:
+        verdict = "Do not proceed as constructed"
 
     lines: list[str] = []
     lines.append(f"# Executive Trade Recommendation: {trade_name}")
@@ -74,16 +75,35 @@ def build_report_markdown(
     lines.append("")
     lines.append("## 1. Recommendation")
     lines.append("")
-    lines.append(
-        f"**{verdict}.** Composite utility for {focal_team_name}: "
-        f"**{_fmt_score(utility)}** (confidence: {focal.get('confidence', 'unknown')})."
-    )
-    lines.append("")
+    if decision_status == "suppressed_illegal":
+        lines.append(f"**{verdict}.**")
+        lines.append("")
+        lines.append(
+            "No composite utility is reported: a deal that fails a verified rule cannot "
+            "be executed, so scoring it would invite comparing it against deals that can."
+        )
+        lines.append("")
+        for rule in suppression.get("failing_rules", [])[:6]:
+            lines.append(f"- **{rule['rule_code']}** — {rule['message']}")
+        lines.append("")
+    else:
+        lines.append(
+            f"**{verdict}.** Composite utility for {focal_team_name}: "
+            f"**{_fmt_score(utility)}** (confidence: {focal.get('confidence', 'unknown')})."
+        )
+        lines.append("")
     lines.append(f"Legality: **{LEGALITY_LABELS.get(status, status)}**")
     lines.append("")
 
     lines.append("## 2. Strategic rationale")
     lines.append("")
+    if decision_status == "suppressed_illegal":
+        lines.append(
+            "- Component scores are withheld while the deal is illegal. Resolve the rule "
+            "failures above and re-evaluate."
+        )
+    elif not drivers:
+        lines.append("- No component could be scored with the data currently available.")
     for d in drivers[:3]:
         direction = "strengthens" if d["v"] >= 50 else "weakens"
         lines.append(f"- The deal {direction} the **{d['k']}** dimension ({_fmt_score(d['v'])}).")
@@ -98,19 +118,30 @@ def build_report_markdown(
             f"{perf.get('wins_mapping', {}).get('slope', 0):.2f} wins per point, calibrated on "
             f"{perf.get('wins_mapping', {}).get('n', '?')} team-seasons)."
         )
-    if uncertainty:
+    if uncertainty.get("prob_positive") is not None:
         lines.append(
             f"- Uncertainty (Monte Carlo, {uncertainty.get('n_draws', 0)} draws): median "
             f"{uncertainty.get('median', 0):+.1f} wins, 10th–90th percentile "
             f"[{uncertainty.get('p10', 0):+.1f}, {uncertainty.get('p90', 0):+.1f}], "
-            f"P(positive) = {uncertainty.get('prob_positive', 0):.0%}."
+            f"P(positive) = {uncertainty['prob_positive']:.0%}."
         )
-    incoming = (
-        ", ".join(f"{p['name']} (TEI {p['tei']:+.1f})" for p in focal.get("incoming", [])) or "none"
-    )
-    outgoing = (
-        ", ".join(f"{p['name']} (TEI {p['tei']:+.1f})" for p in focal.get("outgoing", [])) or "none"
-    )
+    elif uncertainty.get("unavailable"):
+        lines.append(f"- Uncertainty: not applicable — {uncertainty['unavailable']}.")
+
+    def _named(players: list[dict]) -> str:
+        # A player with no impact estimate is named without a fabricated TEI.
+        return (
+            ", ".join(
+                f"{p['name']} (TEI {p['tei']:+.1f})"
+                if p.get("tei") is not None
+                else f"{p['name']} (impact not modelled)"
+                for p in players
+            )
+            or "none"
+        )
+
+    incoming = _named(focal.get("incoming", []))
+    outgoing = _named(focal.get("outgoing", []))
     lines.append(f"- Incoming: {incoming}")
     lines.append(f"- Outgoing: {outgoing}")
     lines.append("")

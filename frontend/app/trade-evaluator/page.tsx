@@ -162,8 +162,12 @@ interface AssetsDetail {
 }
 
 interface RiskDetail {
-  prob_positive_outcome?: number;
-  incoming_availability?: number;
+  /** null when nothing moves — there is no outcome distribution to report. */
+  prob_positive_outcome?: number | null;
+  /** null when no incoming player has a known availability history. */
+  incoming_availability?: number | null;
+  incoming_availability_players?: number;
+  unavailable?: string;
 }
 
 interface TeamDetailResponse {
@@ -2046,7 +2050,14 @@ function EvaluationSection({
         />
       }
     >
-      <TeamEvaluationView key={resolvedTeam} teamEval={teamEval} identity={identity} />
+      <TeamEvaluationView
+        key={resolvedTeam}
+        teamEval={teamEval}
+        identity={identity}
+        teamAbbreviations={Object.fromEntries(
+          Object.entries(evaluation.legality.teams).map(([id, t]) => [id, t.abbreviation]),
+        )}
+      />
     </Panel>
   );
 }
@@ -2054,12 +2065,15 @@ function EvaluationSection({
 function TeamEvaluationView({
   teamEval,
   identity,
+  teamAbbreviations,
 }: {
   teamEval: TeamEvaluation;
   identity: ReturnType<typeof teamIdentity>;
+  teamAbbreviations: Record<string, string>;
 }) {
   const [tab, setTab] = useState("impact");
   const verdict = fanVerdict(teamEval.composite_utility, teamEval.confidence);
+  const suppressed = teamEval.decision_status === "suppressed_illegal";
   const perf = sectionOf<PerformanceDetail>(teamEval.detail, "performance");
   const gained = teamEval.drivers?.filter((d) => d.contribution > 0.5).slice(0, 3) ?? [];
   const lost = teamEval.drivers?.filter((d) => d.contribution < -0.5).slice(0, 3) ?? [];
@@ -2067,6 +2081,50 @@ function TeamEvaluationView({
     teamEval.legality.payroll_after !== null && teamEval.legality.payroll_before !== null
       ? teamEval.legality.payroll_after - teamEval.legality.payroll_before
       : null;
+
+  if (suppressed) {
+    // A deal that fails a verified rule cannot be executed, so it gets no verdict, no
+    // score and no component breakdown — only the reason and the rules that caused it.
+    return (
+      <div
+        className="rounded-lg border px-4 py-4"
+        style={{ borderColor: "var(--illegal)", background: "rgb(248 113 113 / 0.06)" }}
+      >
+        <div className="flex items-center gap-2">
+          <TeamLogo abbreviation={identity.abbreviation} size={18} decorative />
+          <span className="eyebrow">Verdict for {identity.abbreviation}</span>
+        </div>
+        <h3 className="title-lg mt-1.5 text-foreground">No decision score — this deal is illegal</h3>
+        <p className="mt-2 max-w-prose text-[13px] leading-relaxed text-muted">
+          {teamEval.suppression?.message}
+        </p>
+        <ul className="mt-3 space-y-2">
+          {(teamEval.suppression?.failing_rules ?? []).map((rule, index) => (
+            <li
+              key={`${rule.rule_code}-${rule.team_id ?? "all"}-${index}`}
+              className="rounded-lg border border-hairline bg-panel2 px-3 py-2"
+            >
+              <div className="eyebrow flex flex-wrap items-center gap-2 text-[0.5625rem] text-illegal">
+                <span>{rule.rule_code}</span>
+                {/* A deal can be illegal because of the counterparty; naming the side
+                    keeps the refusal from reading as a fault of this team. */}
+                {rule.team_id && teamAbbreviations[rule.team_id] && (
+                  <span className="text-unavail">fails for {teamAbbreviations[rule.team_id]}</span>
+                )}
+              </div>
+              <p className="mt-0.5 text-sm text-foreground">{rule.message}</p>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 border-t border-hairline pt-2.5 text-[11px] leading-snug text-faint">
+          Salary in {money(teamEval.legality.incoming_salary)} · out{" "}
+          {money(teamEval.legality.outgoing_salary)} · roster{" "}
+          {teamEval.legality.roster_before} → {teamEval.legality.roster_after}. Fix the rule
+          failures above and evaluate again.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -2484,6 +2542,8 @@ function TimelineTab({ teamEval }: { teamEval: TeamEvaluation }) {
 
 function RiskTab({ teamEval }: { teamEval: TeamEvaluation }) {
   const risk = sectionOf<RiskDetail>(teamEval.detail, "risk");
+  // The component detail is authoritative; the raw simulation block is the fallback.
+  const probPositive = risk.prob_positive_outcome ?? teamEval.uncertainty.prob_positive;
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div className="min-w-0">
@@ -2493,21 +2553,29 @@ function RiskTab({ teamEval }: { teamEval: TeamEvaluation }) {
             size="sm"
             label="Chance it helps"
             value={
-              risk.prob_positive_outcome !== undefined
-                ? `${(risk.prob_positive_outcome * 100).toFixed(0)}%`
-                : `${(teamEval.uncertainty.prob_positive * 100).toFixed(0)}%`
+              probPositive === null || probPositive === undefined
+                ? "—"
+                : `${(probPositive * 100).toFixed(0)}%`
             }
-            note={`${teamEval.uncertainty.n_draws.toLocaleString()} simulations`}
+            note={
+              probPositive === null || probPositive === undefined
+                ? "no players move"
+                : `${teamEval.uncertainty.n_draws.toLocaleString()} simulations`
+            }
           />
           <StatBlock
             size="sm"
             label="Arriving availability"
             value={
-              risk.incoming_availability !== undefined
-                ? `${(risk.incoming_availability * 100).toFixed(0)}%`
-                : "—"
+              risk.incoming_availability === null || risk.incoming_availability === undefined
+                ? "—"
+                : `${(risk.incoming_availability * 100).toFixed(0)}%`
             }
-            note="historical games played"
+            note={
+              risk.incoming_availability === null || risk.incoming_availability === undefined
+                ? "no arriving player with a games-played history"
+                : "historical games played"
+            }
           />
         </div>
         {teamEval.uncertainty.top_uncertainty_drivers.length > 0 && (

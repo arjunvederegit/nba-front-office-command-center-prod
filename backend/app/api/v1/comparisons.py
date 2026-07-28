@@ -74,14 +74,21 @@ def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
         if evaluation is None:
             continue
         team_legality = evaluation.get("legality", {})
+        decision_status = evaluation.get("decision_status", "scored")
         rows.append(
             {
                 "trade_id": trade_id,
                 "name": detail["name"],
                 "legality_status": detail["legality"]["overall_status"],
+                "decision_status": decision_status,
+                "suppression": evaluation.get("suppression"),
                 "composite_utility": evaluation["composite_utility"],
                 "components": evaluation["components"],
-                "delta_wins": evaluation["detail"]["performance"].get("delta_wins"),
+                # A suppressed evaluation carries no detail at all — the deal cannot be
+                # executed, so there is no projected win change to report.
+                "delta_wins": (evaluation.get("detail") or {})
+                .get("performance", {})
+                .get("delta_wins"),
                 "uncertainty": evaluation["uncertainty"],
                 "payroll_after": team_legality.get("payroll_after"),
                 "apron_status_after": team_legality.get("apron_status_after"),
@@ -90,9 +97,18 @@ def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
             }
         )
 
-    _pareto_flags(rows)
-    stability = rank_stability({r["trade_id"]: r["components"] for r in rows}, weights)
-    rows.sort(key=lambda r: r["composite_utility"] or 0, reverse=True)
+    # Only deals that can actually be executed compete. Ranking an illegal deal against
+    # legal ones invites picking the one that cannot happen.
+    rankable = [r for r in rows if r["decision_status"] == "scored"]
+    _pareto_flags(rankable)
+    for row in rows:
+        row.setdefault("dominated_by", None)
+    stability = rank_stability({r["trade_id"]: r["components"] for r in rankable}, weights)
+    rows.sort(
+        key=lambda r: (r["decision_status"] == "scored", r["composite_utility"] or 0),
+        reverse=True,
+    )
+    excluded = [r["trade_id"] for r in rows if r["decision_status"] != "scored"]
     return {
         "id": comparison.id,
         "name": comparison.name,
@@ -101,6 +117,8 @@ def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
         "weights": weights,
         "alternatives": rows,
         "sensitivity": stability,
+        "excluded_from_ranking": excluded,
         "note": "Alternatives marked dominated_by are Pareto-dominated across displayed "
-        "component axes under the current data.",
+        "component axes under the current data. Deals that fail a verified rule, or that "
+        "no component could score, are listed but never ranked.",
     }

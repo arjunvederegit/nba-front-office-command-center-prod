@@ -24,7 +24,12 @@ from app.analytics.projection import (
     allocate_rotation,
     net_rating_delta_to_wins,
 )
-from app.analytics.sensitivity import composite_utility, normalize_weights, tornado
+from app.analytics.sensitivity import (
+    component_contributions,
+    composite_utility,
+    normalize_weights,
+    tornado,
+)
 from app.analytics.uncertainty import PlayerDraw, simulate_delta_wins
 from app.cba.builder import build_trade_context
 from app.cba.engine import TradeLegalityEngine
@@ -98,6 +103,18 @@ DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
 }
 
 TEI_SIGMA_DEFAULT = 1.5  # index points; refined by per-player bands when available
+
+COMPONENT_KEYS = ("performance", "fit", "contract", "timeline", "assets", "risk")
+
+
+def _is_illegal(legality: dict, team_id: str) -> bool:
+    """True when the trade fails an implemented rule, for this team or as a whole.
+
+    A trade that is illegal for any participant cannot be executed by anyone, so the
+    overall verdict gates every team's score, not just the offending one's."""
+    if legality.get("overall_status") == "verified_illegal":
+        return True
+    return legality.get("teams", {}).get(team_id, {}).get("status") == "verified_illegal"
 
 
 @dataclass
@@ -351,13 +368,103 @@ class EvaluationService:
 
     def _risk(
         self, incoming: list[PlayerCard], outgoing: list[PlayerCard], uncertainty: dict
-    ) -> tuple[float, dict]:
-        avail_in = sum(c.availability for c in incoming) / len(incoming) if incoming else 0.85
-        prob_positive = uncertainty.get("prob_positive", 0.5)
-        score = max(0.0, min(100.0, 60.0 * prob_positive + 40.0 * avail_in))
-        return score, {
-            "prob_positive_outcome": prob_positive,
-            "incoming_availability": round(avail_in, 3),
+    ) -> tuple[float | None, dict]:
+        """Two terms, each contributed only when it can actually be measured.
+
+        Previously both had silent fallbacks: `prob_positive` defaulted to 0.5 and, worse,
+        the availability of an *empty* incoming list was reported as 0.85 — a number the
+        executive report printed as a measurement (QA-8). Terms that cannot be computed
+        are dropped and the survivors renormalized, the same contract the composite uses.
+        """
+        terms: list[tuple[float, float]] = []  # (value 0..1, weight)
+        detail: dict[str, Any] = {}
+
+        prob_positive = uncertainty.get("prob_positive")
+        if prob_positive is not None:
+            terms.append((float(prob_positive), 60.0))
+            detail["prob_positive_outcome"] = prob_positive
+        else:
+            detail["prob_positive_outcome"] = None
+
+        known_availability = [c.availability for c in incoming if c.availability is not None]
+        if known_availability:
+            avail_in = sum(known_availability) / len(known_availability)
+            terms.append((avail_in, 40.0))
+            detail["incoming_availability"] = round(avail_in, 3)
+            detail["incoming_availability_players"] = len(known_availability)
+        else:
+            detail["incoming_availability"] = None
+
+        if not terms:
+            detail["unavailable"] = (
+                "no incoming players and no outcome distribution — downside risk cannot "
+                "be scored for this deal"
+            )
+            return None, detail
+
+        total_weight = sum(w for _, w in terms)
+        score = sum(value * weight for value, weight in terms) / total_weight * 100.0
+        return max(0.0, min(100.0, score)), detail
+
+    # ------------------------------------------------------------- suppression
+
+    def _suppressed_for_illegality(
+        self,
+        team_id: str,
+        team_legality: dict,
+        legality: dict,
+        weights: dict[str, float],
+        incoming: list[PlayerCard],
+        outgoing: list[PlayerCard],
+    ) -> dict:
+        """The response shape is unchanged; every score-bearing field is null.
+
+        Keeping the keys means no consumer has to branch on their absence, and
+        `decision_status` distinguishes "we refuse to score this" from "we could not
+        score this" — two different `composite_utility: null` cases that the old contract
+        could not tell apart."""
+        failing = [
+            {
+                "rule_code": r["rule_code"],
+                "team_id": r["team_id"],
+                "message": r["message"],
+                "calculation": r.get("calculation", {}),
+                "source_reference": r.get("source_reference", ""),
+            }
+            for r in legality.get("rule_results", [])
+            if r.get("status") == "fail"
+        ]
+        return {
+            "team_id": team_id,
+            "legality": team_legality,
+            "decision_status": "suppressed_illegal",
+            "suppression": {
+                "reason": "verified_illegal",
+                "message": "This trade fails at least one implemented CBA rule, so it "
+                "cannot be executed as constructed. No decision score is reported for a "
+                "deal that cannot happen.",
+                "failing_rules": failing,
+            },
+            "composite_utility": None,
+            "confidence": "not_applicable",
+            "components": dict.fromkeys(COMPONENT_KEYS),
+            "excluded_components": list(COMPONENT_KEYS),
+            "drivers": [],
+            "weights": weights,
+            "detail": {},
+            "uncertainty": {},
+            "sensitivity_tornado": [],
+            "incoming": [self._player_summary(c) for c in incoming],
+            "outgoing": [self._player_summary(c) for c in outgoing],
+            "evaluated_at": datetime.now(UTC).isoformat(),
+        }
+
+    @staticmethod
+    def _player_summary(card: PlayerCard) -> dict:
+        return {
+            "player_id": card.player_id,
+            "name": card.name,
+            "tei": round(card.tei, 2) if card.tei is not None else None,
         }
 
     # ------------------------------------------------------------- entry point
@@ -392,6 +499,14 @@ class EvaluationService:
             context = build_trade_context(self.db, team_ids, player_moves, pick_moves)
             legality = TradeLegalityEngine().evaluate(context)
         team_legality = legality["teams"].get(team_id, {})
+
+        # A trade that fails an implemented CBA rule cannot be executed, so there is no
+        # decision to score. The failing rules and their dollar figures are still
+        # returned — the refusal is explained, not silent.
+        if _is_illegal(legality, team_id):
+            return self._suppressed_for_illegality(
+                team_id, team_legality, legality, weights, incoming, outgoing
+            )
 
         salaries: dict[str, int | None] = {}
         from app.cba.builder import _player_salary
@@ -448,18 +563,7 @@ class EvaluationService:
         }
         utility = composite_utility(components, weights)
         excluded = [k for k, v in components.items() if v is None]
-
-        driver_rows: list[dict[str, Any]] = [
-            {
-                "component": k,
-                "score": round(v, 1),
-                "weight": weights.get(k, 0),
-                "contribution": round((v - 50.0) * weights.get(k, 0), 2),
-            }
-            for k, v in components.items()
-            if v is not None
-        ]
-        drivers = sorted(driver_rows, key=lambda d: abs(float(d["contribution"])), reverse=True)
+        drivers = component_contributions(components, weights)
 
         confidence = "high"
         if excluded:
@@ -468,7 +572,15 @@ class EvaluationService:
         return {
             "team_id": team_id,
             "legality": team_legality,
-            "composite_utility": round(utility, 2),
+            "decision_status": "scored" if utility is not None else "insufficient_data",
+            "suppression": None
+            if utility is not None
+            else {
+                "reason": "insufficient_data",
+                "message": "No component could be scored for this team, so no decision "
+                "score is reported.",
+            },
+            "composite_utility": round(utility, 2) if utility is not None else None,
             "confidence": confidence,
             "components": {
                 k: (round(v, 2) if v is not None else None) for k, v in components.items()
@@ -486,11 +598,7 @@ class EvaluationService:
             },
             "uncertainty": uncertainty,
             "sensitivity_tornado": tornado(components, weights),
-            "incoming": [
-                {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in incoming
-            ],
-            "outgoing": [
-                {"player_id": c.player_id, "name": c.name, "tei": round(c.tei, 2)} for c in outgoing
-            ],
+            "incoming": [self._player_summary(c) for c in incoming],
+            "outgoing": [self._player_summary(c) for c in outgoing],
             "evaluated_at": datetime.now(UTC).isoformat(),
         }

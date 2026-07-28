@@ -116,7 +116,9 @@ export interface Uncertainty {
   median: number;
   p10: number;
   p90: number;
-  prob_positive: number;
+  /** null when nothing moves: an all-zero draw array has no probability to report. */
+  prob_positive: number | null;
+  unavailable?: string;
   top_uncertainty_drivers: { side: string; spread_wins: number }[];
 }
 
@@ -127,10 +129,42 @@ export interface TornadoBar {
   base: number;
 }
 
+/**
+ * Why `composite_utility: null` — the two cases are not the same and must not render
+ * the same way.
+ *
+ * - `suppressed_illegal`: the deal fails a verified CBA rule, so it cannot happen. We
+ *   refuse to score it; `suppression.failing_rules` says which rule and why.
+ * - `insufficient_data`: no component could be scored with the data available.
+ * - `scored`: `composite_utility` is a number.
+ */
+export type DecisionStatus = "scored" | "suppressed_illegal" | "insufficient_data";
+
+export interface Suppression {
+  reason: string;
+  message: string;
+  failing_rules?: {
+    rule_code: string;
+    team_id: string | null;
+    message: string;
+    calculation: Record<string, unknown>;
+    source_reference: string;
+  }[];
+}
+
+export interface EvaluatedPlayer {
+  player_id: string;
+  name: string;
+  /** null when the player has no impact estimate — never substituted with 0. */
+  tei: number | null;
+}
+
 export interface TeamEvaluation {
   team_id: string;
   legality: TeamLegality;
-  composite_utility: number;
+  decision_status: DecisionStatus;
+  suppression: Suppression | null;
+  composite_utility: number | null;
   confidence: string;
   components: Record<string, number | null>;
   excluded_components: string[];
@@ -139,8 +173,10 @@ export interface TeamEvaluation {
   detail: Record<string, Record<string, unknown>>;
   uncertainty: Uncertainty;
   sensitivity_tornado: TornadoBar[];
-  incoming: { player_id: string; name: string; tei: number }[];
-  outgoing: { player_id: string; name: string; tei: number }[];
+  incoming: EvaluatedPlayer[];
+  outgoing: EvaluatedPlayer[];
+  has_unmodeled_players?: boolean;
+  unmodeled_players?: string[];
   evaluated_at: string;
 }
 
@@ -209,14 +245,16 @@ export interface ComparisonAlternative {
   trade_id: string;
   name: string;
   legality_status: LegalityStatus;
-  composite_utility: number;
+  decision_status: DecisionStatus;
+  suppression: Suppression | null;
+  composite_utility: number | null;
   components: Record<string, number | null>;
   delta_wins: number | null;
   uncertainty: Uncertainty;
   payroll_after: number | null;
   apron_status_after: string | null;
-  incoming: { name: string; tei: number }[];
-  outgoing: { name: string; tei: number }[];
+  incoming: { name: string; tei: number | null }[];
+  outgoing: { name: string; tei: number | null }[];
   dominated_by: string | null;
 }
 

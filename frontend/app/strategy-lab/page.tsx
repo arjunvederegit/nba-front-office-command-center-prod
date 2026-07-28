@@ -288,14 +288,22 @@ export default function StrategyLabPage() {
   const totalWeight = COMPONENT_KEYS.reduce((sum, key) => sum + (weights[key] ?? 0), 0);
 
   /** Live re-ranking of the stored component scores under the slider weights. */
-  const ranked = useMemo(() => {
-    if (!comparison) return [];
-    return comparison.alternatives
-      .map((alt) => ({ alt, score: decisionScore(weights, alt.components) }))
-      .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+  // A deal that fails a verified rule, or that no component could score, is listed but
+  // never ranked — putting it on the board invites choosing the one that cannot happen.
+  const { ranked, unrankable } = useMemo(() => {
+    if (!comparison) return { ranked: [], unrankable: [] as ComparisonAlternative[] };
+    const scored: { alt: ComparisonAlternative; score: number }[] = [];
+    const excluded: ComparisonAlternative[] = [];
+    for (const alt of comparison.alternatives) {
+      const score = alt.decision_status === "scored" ? decisionScore(weights, alt.components) : null;
+      if (score === null) excluded.push(alt);
+      else scored.push({ alt, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return { ranked: scored, unrankable: excluded };
   }, [comparison, weights]);
 
-  const leader = ranked.find((entry) => entry.score !== null) ?? null;
+  const leader = ranked[0] ?? null;
 
   /** Plain-English explanation for the current leader, derived only from response data. */
   const explanation = useMemo(() => {
@@ -502,7 +510,7 @@ export default function StrategyLabPage() {
         </section>
       )}
 
-      {comparison && ranked.length > 0 && (
+      {comparison && ranked.length + unrankable.length > 0 && (
         <>
           <section aria-labelledby="board-heading">
             <SectionHead
@@ -513,6 +521,9 @@ export default function StrategyLabPage() {
             />
             <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
               <div className="min-w-0 space-y-3">
+                {ranked.length === 0 && (
+                  <UnavailableNotice reason="None of the selected deals can be ranked — see the list below for why each one was excluded." />
+                )}
                 {ranked.map(({ alt, score }, index) =>
                   index === 0 ? (
                     <LeaderPanel
@@ -525,6 +536,41 @@ export default function StrategyLabPage() {
                   ) : (
                     <ChallengerRow key={alt.trade_id} alt={alt} score={score} rank={index + 1} />
                   ),
+                )}
+                {unrankable.length > 0 && (
+                  <div className="rounded-lg border border-hairline bg-panel2/40 p-3.5">
+                    <div className="eyebrow text-[0.5625rem] text-unavail">
+                      Not ranked ({unrankable.length})
+                    </div>
+                    <p className="mt-1 text-[12px] leading-snug text-muted">
+                      These deals are on the board but never compete: a deal that fails a
+                      verified rule cannot be executed, and one with no scorable component has
+                      nothing to compare.
+                    </p>
+                    <ul className="mt-2 space-y-1.5">
+                      {unrankable.map((alt) => (
+                        <li
+                          key={alt.trade_id}
+                          className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px]"
+                        >
+                          <Link
+                            href={`/trades/${alt.trade_id}`}
+                            className="min-w-0 flex-1 truncate text-foreground hover:text-signal"
+                          >
+                            {alt.name}
+                          </Link>
+                          <Badge status={alt.legality_status}>
+                            {LEGALITY_LABEL[alt.legality_status]}
+                          </Badge>
+                          <span className="text-[11px] text-unavail">
+                            {alt.decision_status === "suppressed_illegal"
+                              ? "no score — fails a verified rule"
+                              : "no score — nothing could be scored"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
 

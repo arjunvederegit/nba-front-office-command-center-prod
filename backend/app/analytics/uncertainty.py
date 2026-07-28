@@ -29,6 +29,20 @@ def simulate_delta_wins(
     n_draws: int = N_DRAWS,
     seed: int = RANDOM_SEED,
 ) -> dict:
+    if not incoming and not outgoing:
+        # Nothing moves, so every draw is exactly zero. `(delta_wins > 0).mean()` on an
+        # all-zero array is 0.0, which reads as "certain to hurt" — the opposite of the
+        # truth. There is no probability to report about a trade that does nothing.
+        return {
+            "n_draws": 0,
+            "median": 0.0,
+            "p10": 0.0,
+            "p90": 0.0,
+            "prob_positive": None,
+            "unavailable": "no players move, so there is no outcome distribution",
+            "top_uncertainty_drivers": [],
+        }
+
     rng = np.random.default_rng(seed)
     slope = float(wins_mapping.get("slope", 2.7))
     slope_sigma = abs(slope) * 0.15  # conversion uncertainty

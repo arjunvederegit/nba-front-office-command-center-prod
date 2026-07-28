@@ -73,7 +73,6 @@ def test_fixture_roster_giveaway_is_illegal(db: Session, seeded_league: dict) ->
 # --------------------------------------------------------------------- QA-1 / R1-3
 
 
-@pytest.mark.xfail(strict=True, reason="QA-1: roster giveaway scores 72.85; R1-3 gates it")
 def test_verified_illegal_trade_has_no_decision_score(db: Session, seeded_league: dict) -> None:
     result = _evaluate(
         db,
@@ -85,6 +84,13 @@ def test_verified_illegal_trade_has_no_decision_score(db: Session, seeded_league
     assert result["composite_utility"] is None, (
         "an illegal trade must not receive an affirmative decision score"
     )
+    assert result["decision_status"] == "suppressed_illegal"
+    assert all(v is None for v in result["components"].values())
+    assert result["drivers"] == []
+    # The refusal must be explained, and must name the rule that caused it.
+    failing = result["suppression"]["failing_rules"]
+    assert failing and any(r["rule_code"] == "ROSTER_SIZE" for r in failing)
+    assert any("12" in r["message"] for r in failing), "the 12-man minimum must be named"
 
 
 @pytest.mark.xfail(strict=True, reason="QA-1: _performance treats vacated minutes as league average")
@@ -103,20 +109,21 @@ def test_gutting_a_roster_does_not_look_like_an_upgrade(db: Session, seeded_leag
 # --------------------------------------------------------------------- QA-5 / R1-3
 
 
-@pytest.mark.xfail(strict=True, reason="QA-5: prob_positive is 0.0 on an all-zero draw array")
 def test_empty_trade_reports_no_probability(db: Session, seeded_league: dict) -> None:
     result = _evaluate(db, seeded_league, seeded_league["team_a"], [])
     assert result["uncertainty"]["prob_positive"] is None
 
 
 def test_empty_trade_scores_neutral(db: Session, seeded_league: dict) -> None:
-    """Regression-protect: nothing happening must not read as a negative outcome.
+    """Nothing happening must read as neutral, not as a negative outcome.
 
-    Currently 46.36 because `risk` consumes `prob_positive = 0.0`; asserted loosely here
-    so the *direction* is pinned before R1-3 tightens it to exactly 50.
+    Before R1-3 this scored 46.36, because `risk` consumed `prob_positive = 0.0` from an
+    all-zero draw array.
     """
     result = _evaluate(db, seeded_league, seeded_league["team_a"], [])
     assert result["components"]["performance"] == pytest.approx(50.0, abs=0.01)
+    assert result["components"]["risk"] is None
+    assert result["composite_utility"] == pytest.approx(50.0, abs=0.01)
 
 
 # --------------------------------------------------------------------------- QA-6
@@ -152,7 +159,6 @@ def test_rotation_detail_always_includes_traded_players(db: Session, seeded_leag
 # --------------------------------------------------------------------------- QA-8
 
 
-@pytest.mark.xfail(strict=True, reason="QA-8: 0.85 availability fallback for an empty incoming list")
 def test_no_incoming_players_means_no_availability_number(
     db: Session, seeded_league: dict
 ) -> None:
@@ -201,7 +207,6 @@ def test_unmodeled_players_do_not_get_a_confident_band(db: Session, seeded_leagu
 # ---------------------------------------------------------------------- C13 drivers
 
 
-@pytest.mark.xfail(strict=True, reason="C13: drivers use pre-renormalization weights")
 def test_drivers_reconcile_with_the_composite(db: Session, seeded_league: dict) -> None:
     """Only bites when a component is excluded — `composite_utility` renormalizes the
     surviving weights but `drivers` keeps the originals."""
@@ -242,12 +247,10 @@ def test_monte_carlo_median_reproduces_the_point_estimate(
 # ------------------------------------------------------------- C13 sensitivity honesty
 
 
-@pytest.mark.xfail(strict=True, reason="C13: composite_utility returns 0.0, not None")
 def test_composite_utility_is_none_when_nothing_can_be_scored() -> None:
     assert composite_utility(dict.fromkeys(("performance", "fit"), None), {"performance": 1.0}) is None
 
 
-@pytest.mark.xfail(strict=True, reason="C13: normalize_weights silently re-enables zeroed sliders")
 def test_zeroed_weights_are_not_silently_re_enabled() -> None:
     zeroed = dict.fromkeys(("performance", "fit", "risk"), 0.0)
     assert all(v == 0.0 for v in normalize_weights(zeroed).values())
@@ -282,3 +285,53 @@ def test_excluded_components_are_reported_and_downgrade_confidence(
         assert result["components"][key] is None
     if result["excluded_components"]:
         assert result["confidence"] in ("medium", "low")
+
+
+# ------------------------------------------------------- the executive report (R1-3)
+
+
+def test_report_refuses_to_recommend_an_illegal_deal(db: Session, seeded_league: dict) -> None:
+    """The report is the highest-stakes artifact: it must not print a utility for a deal
+    that cannot be executed, and it must name the rules that stopped it."""
+    from app.services.reports import build_report_markdown
+
+    moves = _moves(
+        seeded_league["roster_a"], seeded_league["team_a"], seeded_league["team_b"]
+    )
+    legality = _legality(db, seeded_league, moves)
+    evaluation = _evaluate(db, seeded_league, seeded_league["team_a"], moves)
+    markdown = build_report_markdown(
+        trade_name="Roster giveaway",
+        focal_team_name="Alpha Test Club",
+        strategy="contend",
+        legality=legality,
+        evaluations={seeded_league["team_a"].id: evaluation},
+        focal_team_id=seeded_league["team_a"].id,
+    )
+    assert "Do not proceed — the trade fails implemented CBA rules" in markdown
+    assert "Composite utility" not in markdown
+    assert "Proceed with further diligence" not in markdown
+    assert "ROSTER_SIZE" in markdown
+
+
+def test_report_omits_the_availability_line_without_incoming_players(
+    db: Session, seeded_league: dict
+) -> None:
+    """QA-8: the report printed 'Historical availability of incoming players: 85%' for a
+    deal with no incoming players at all."""
+    from app.services.reports import build_report_markdown
+
+    moves = _moves(
+        seeded_league["roster_a"][:1], seeded_league["team_a"], seeded_league["team_b"]
+    )
+    legality = _legality(db, seeded_league, moves)
+    evaluation = _evaluate(db, seeded_league, seeded_league["team_a"], moves)
+    markdown = build_report_markdown(
+        trade_name="Salary dump",
+        focal_team_name="Alpha Test Club",
+        strategy="contend",
+        legality=legality,
+        evaluations={seeded_league["team_a"].id: evaluation},
+        focal_team_id=seeded_league["team_a"].id,
+    )
+    assert "Historical availability of incoming players" not in markdown

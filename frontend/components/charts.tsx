@@ -254,6 +254,27 @@ export function UncertaintyStrip({ u, compact = false }: { u: Uncertainty; compa
   const toPct = (x: number) => ((x - min) / span) * 100;
   const sign = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}`;
 
+  // No players move → every draw is exactly zero, so there is no distribution and no
+  // "chance it helps". Say that rather than rendering a 0% that reads as a prediction.
+  if (u.prob_positive === null || u.prob_positive === undefined) {
+    const message =
+      u.unavailable ?? "no players move, so there is no outcome distribution";
+    if (compact) return <p className="text-[11px] text-muted">Projected wins: {message}.</p>;
+    return (
+      <ChartFrame
+        title="Projected wins impact"
+        unit="unavailable"
+        why="An empty deal has no outcome distribution; a 0 % here would read as a prediction."
+        summary={`Projected wins impact is unavailable — ${message}.`}
+      >
+        <p className="rounded-md border border-hairline bg-panel3 px-3 py-4 text-sm text-muted">
+          Not applicable — {message}.
+        </p>
+      </ChartFrame>
+    );
+  }
+  const probPositive = u.prob_positive;
+
   const strip = (
     <div>
       <div className="relative h-7 overflow-hidden rounded-md border border-hairline bg-panel3">
@@ -283,7 +304,7 @@ export function UncertaintyStrip({ u, compact = false }: { u: Uncertainty; compa
         <span className="data">{sign(u.p10)}</span>
         <span className="text-foreground">
           median <span className="data text-signal">{sign(u.median)} wins</span> ·{" "}
-          {(u.prob_positive * 100).toFixed(0)}% chance it helps
+          {(probPositive * 100).toFixed(0)}% chance it helps
         </span>
         <span className="data">{sign(u.p90)}</span>
       </div>
@@ -299,7 +320,7 @@ export function UncertaintyStrip({ u, compact = false }: { u: Uncertainty; compa
       why="The band is the honest answer; the midpoint alone would overstate what the model knows."
       summary={`Median ${sign(u.median)} wins, with a 10th-to-90th percentile range of ${sign(
         u.p10,
-      )} to ${sign(u.p90)} wins, and a ${(u.prob_positive * 100).toFixed(0)} percent chance the deal helps.`}
+      )} to ${sign(u.p90)} wins, and a ${(probPositive * 100).toFixed(0)} percent chance the deal helps.`}
     >
       {strip}
     </ChartFrame>

@@ -17,6 +17,7 @@ from app.analytics.projection import (
     net_rating_delta_to_wins,
 )
 from app.analytics.sensitivity import (
+    component_contributions,
     composite_utility,
     normalize_weights,
     rank_stability,
@@ -35,9 +36,14 @@ class TestWeights:
         weights = normalize_weights({"a": -1, "b": 1})
         assert weights["a"] == 0.0 and weights["b"] == 1.0
 
-    def test_all_zero_becomes_uniform(self):
-        weights = normalize_weights({"a": 0, "b": 0})
-        assert weights == {"a": 0.5, "b": 0.5}
+    def test_all_zero_stays_zero(self):
+        """Replaces `test_all_zero_becomes_uniform` (R1-3).
+
+        The old invariant encoded a defect: zeroing every slider is a deliberate act, and
+        substituting a uniform prior silently re-enabled every component the user had
+        switched off, then produced a score from them.
+        """
+        assert normalize_weights({"a": 0, "b": 0}) == {"a": 0.0, "b": 0.0}
 
 
 class TestCompositeUtility:
@@ -48,8 +54,26 @@ class TestCompositeUtility:
         # both available → average
         assert composite_utility({"performance": 80, "contract": 40}, weights) == 60
 
-    def test_empty_components_scores_zero(self):
-        assert composite_utility({"a": None}, {"a": 1.0}) == 0.0
+    def test_nothing_scorable_returns_none_not_zero(self):
+        """Replaces `test_empty_components_scores_zero` (R1-3).
+
+        On a 0..100 scale, 0.0 reads as a catastrophic verdict — the opposite of "we
+        cannot say" — and contradicted the module's own docstring.
+        """
+        assert composite_utility({"a": None}, {"a": 1.0}) is None
+
+    def test_all_weight_removed_returns_none(self):
+        """Every scorable component weighted to zero leaves nothing to average."""
+        assert composite_utility({"a": 80, "b": 40}, {"a": 0.0, "b": 0.0}) is None
+
+    def test_contributions_reconcile_with_the_composite(self):
+        """The property the driver panel exists to satisfy, including the excluded case."""
+        weights = {"performance": 0.5, "contract": 0.3, "risk": 0.2}
+        components = {"performance": 80.0, "contract": None, "risk": 30.0}
+        utility = composite_utility(components, weights)
+        assert utility is not None
+        summed = sum(float(r["contribution"]) for r in component_contributions(components, weights))
+        assert summed == pytest.approx(utility - 50.0, abs=0.02)
 
 
 class TestSensitivity:

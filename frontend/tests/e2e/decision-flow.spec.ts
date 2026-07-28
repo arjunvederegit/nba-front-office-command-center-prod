@@ -106,13 +106,27 @@ test("full flow: team outlook → strategy → trade evaluator → rules → eva
       .first(),
   ).toBeVisible({ timeout: 25_000 });
 
-  // 6. Evaluate and read the fan verdict
+  // 6. Evaluate and read the verdict.
+  //
+  //    Two honest outcomes are possible and which one appears depends on the database:
+  //    a fan verdict, or an explicit refusal when the deal fails a verified rule (a
+  //    counterparty already carrying 18 players cannot receive a 19th). Both are
+  //    correct; a *decision score on an illegal deal* is not, which is what the next
+  //    assertion pins.
   await page.getByRole("button", { name: /Evaluate this deal/i }).click();
   await expect(
     page
-      .getByText(/Strong fit|Mixed outcome|High-risk upside|Poor strategic fit|Cannot fully evaluate/)
+      .getByText(
+        /Strong fit|Mixed outcome|High-risk upside|Poor strategic fit|Cannot fully evaluate|No decision score/,
+      )
       .first(),
   ).toBeVisible({ timeout: 40_000 });
+
+  const refused = await page.getByText("No decision score").first().isVisible();
+  if (refused) {
+    // The refusal must name the rule that caused it, not just withhold the number.
+    await expect(page.getByText(/ROSTER_SIZE|SALARY_MATCHING|STEPIEN|APRON/).first()).toBeVisible();
+  }
 
   // 7. Save the deal → full report
   await page.getByLabel(/Deal name/i).fill("E2E RosterLab deal");
