@@ -46,6 +46,14 @@ export const LEGALITY_EXPLAIN: Record<string, string> = {
   not_evaluated: "Not enough data was available to run meaningful rule checks.",
 };
 
+/** Chip-sized legality wording; the long form stays in the verdict frame. */
+export const LEGALITY_SHORT: Record<string, string> = {
+  verified_legal: "Legal",
+  verified_illegal: "Illegal",
+  conditionally_valid: "Incomplete",
+  not_evaluated: "Unchecked",
+};
+
 export const VERDICT_LABEL: Record<string, string> = {
   strong: "Strong fit",
   mixed: "Mixed outcome",

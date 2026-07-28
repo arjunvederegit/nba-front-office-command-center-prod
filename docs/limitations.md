@@ -33,8 +33,14 @@ itself, not fine print.
   conveniences, not positions.
 - **Contract value (when enabled) is a documented heuristic**, not a fitted market
   model, until historical salary data exists.
-- The candidate generator explores under constraints; its utility scores are not
-  evidence that any real front office would accept a deal.
+- **The candidate generator is hidden and experimental** (R1-8). It has no UI entry
+  point. Measured, it searches only about **14 % of counterparties** — it exhausts a
+  400-evaluation budget after roughly six teams — and applies no salary matching, so it
+  will propose packages that could never be executed. `POST /trades/generate` still
+  responds, and its `coverage` block states exactly which teams were and were not
+  searched. Its utility scores were never evidence that a real front office would accept
+  a deal, and with that coverage they are not evidence of anything league-wide either.
+  R5 rebuilds the search salary-matched and deterministic.
 
 ## CBA coverage
 

@@ -63,14 +63,20 @@ def generate_candidates(
 
     target_skills = {NEED_TO_SKILL[k] for k in need_skills if k in NEED_TO_SKILL}
 
-    teams = db.scalars(select(Team).where(Team.id != focal_team_id)).all()
+    # Deterministic order, so "the first six teams" is at least reproducible while
+    # the budget truncation stands (R5 removes the truncation itself).
+    teams = db.scalars(
+        select(Team).where(Team.id != focal_team_id).order_by(Team.abbreviation)
+    ).all()
     engine = TradeLegalityEngine()
     evaluated = 0
     candidates: list[dict] = []
+    counterparties_searched: list[str] = []
 
     for other in teams:
         if evaluated >= EVALUATION_BUDGET:
             break
+        counterparties_searched.append(other.abbreviation)
         other_roster = service._roster_cards(other.id)
 
         # incoming candidates: address the focal team's top needs, best first
@@ -164,15 +170,30 @@ def generate_candidates(
                     }
                 )
 
-    candidates.sort(key=lambda c: c["focal_utility"], reverse=True)
+    candidates.sort(key=lambda c: (c["focal_utility"] is not None, c["focal_utility"] or 0), reverse=True)
+    searched = len(counterparties_searched)
+    total = len(teams)
     return {
         "focal_team_id": focal_team_id,
         "strategy": strategy,
         "target_needs": [k for k, _ in top_needs],
         "evaluations_run": evaluated,
+        # The search stops at a fixed evaluation budget. Reporting only
+        # `evaluations_run` made a 4-of-29 sweep look like a league-wide one.
+        "coverage": {
+            "counterparties_searched": searched,
+            "counterparties_total": total,
+            "share_searched": round(searched / total, 3) if total else None,
+            "searched": counterparties_searched,
+            "not_searched": [t.abbreviation for t in teams][searched:],
+            "truncated_by_budget": searched < total,
+            "evaluation_budget": EVALUATION_BUDGET,
+        },
         "note": (
-            "Candidates are model-generated explorations under documented constraints; "
-            "utility scores are not evidence that a real front office would accept."
+            "EXPERIMENTAL. Candidates are model-generated explorations under documented "
+            "constraints; utility scores are not evidence that a real front office would "
+            f"accept. This search covered {searched} of {total} counterparties before "
+            "exhausting its evaluation budget, and applies no salary matching."
         ),
         "candidates": candidates[:max_candidates],
     }

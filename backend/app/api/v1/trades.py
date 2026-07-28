@@ -80,7 +80,17 @@ def evaluate_trade(payload: EvaluateRequest, db: Session = Depends(get_db)) -> d
     return {"legality": legality, "evaluations": evaluations}
 
 
-@router.post("/generate")
+@router.post(
+    "/generate",
+    summary="[experimental] Generate candidate trades",
+    description=(
+        "**Experimental — no UI entry point (R1-8).** The search reaches only about "
+        "14 % of counterparties: it exhausts a 400-evaluation budget after roughly six "
+        "teams, walks them in unordered insertion order, and applies no salary matching. "
+        "Responses carry a `coverage` block stating exactly what was and was not "
+        "searched. R5 rebuilds it."
+    ),
+)
 def generate_trades(payload: GenerateRequest, db: Session = Depends(get_db)) -> dict:
     strategy, weights, scenario_focal = _scenario_weights(db, payload.scenario_id)
     focal_team_id = payload.focal_team_id or scenario_focal
