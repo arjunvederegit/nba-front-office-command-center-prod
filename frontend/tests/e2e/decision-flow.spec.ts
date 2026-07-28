@@ -117,7 +117,7 @@ test("full flow: team outlook → strategy → trade evaluator → rules → eva
   await expect(
     page
       .getByText(
-        /Strong fit|Mixed outcome|High-risk upside|Poor strategic fit|Cannot fully evaluate|No decision score/,
+        /Clear win|Roughly neutral|Net negative|Clear loss|Cannot fully evaluate|No decision score/,
       )
       .first(),
   ).toBeVisible({ timeout: 40_000 });

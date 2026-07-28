@@ -60,10 +60,17 @@ def observability(request: Request, call_next):
         # Asset serving (photos/logos) is cheap, cacheable, and fired dozens of times
         # per page — it is exempt from the API rate window.
         is_asset = request.url.path.startswith(f"{API}/assets/")
+        if is_asset:
+            response = await call_next(request)
+            response.headers["x-request-id"] = request_id
+            return response
+        # `_request_log` is a defaultdict, so reading it for an exempt request still
+        # created a permanent key: asset traffic grew the dict the exemption was
+        # supposed to keep it out of. The exemption now returns before the read.
         window = _request_log[client_ip]
         while window and window[0] < now - 60:
             window.popleft()
-        if not is_asset and len(window) >= RATE_LIMIT_PER_MINUTE:
+        if len(window) >= RATE_LIMIT_PER_MINUTE:
             return JSONResponse(
                 status_code=429,
                 content={
@@ -74,8 +81,7 @@ def observability(request: Request, call_next):
                     }
                 },
             )
-        if not is_asset:
-            window.append(now)
+        window.append(now)
 
         response = await call_next(request)
         response.headers["x-request-id"] = request_id

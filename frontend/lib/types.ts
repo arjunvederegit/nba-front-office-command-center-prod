@@ -16,6 +16,26 @@ export interface Team {
   provenance?: Provenance | null;
 }
 
+/**
+ * The archetype cluster a player was assigned.
+ *
+ * Three incompatible local shapes existed for this: `string`, `{label, cluster_id}`, and
+ * an inline object on the comparables list. One name per shape, defined once.
+ */
+export interface ArchetypeAssignment {
+  label: string;
+  cluster_id: number;
+}
+
+/** A comparable player, as returned alongside a player detail. */
+export interface ComparablePlayer {
+  player_id: string;
+  name: string;
+  tei: number | null;
+  /** The cluster *label* only — comparables share the subject's cluster by construction. */
+  archetype: string | null;
+}
+
 export interface RosterPlayer {
   player_id: string;
   nba_player_id: number;
@@ -26,6 +46,7 @@ export interface RosterPlayer {
   height_inches: number | null;
   years_experience: number | null;
   tei: number | null;
+  /** Cluster label only; the full assignment lives on the player detail. */
   archetype: string | null;
   availability: number | null;
 }
@@ -247,6 +268,10 @@ export interface ComparisonAlternative {
   legality_status: LegalityStatus;
   decision_status: DecisionStatus;
   suppression: Suppression | null;
+  /** The backend's confidence — never re-derived on the client (C13). */
+  confidence: string;
+  has_unmodeled_players: boolean;
+  unmodeled_players: string[];
   composite_utility: number | null;
   components: Record<string, number | null>;
   delta_wins: number | null;

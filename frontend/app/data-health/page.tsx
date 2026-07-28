@@ -10,6 +10,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { dataHealthSchema } from "@/lib/schemas";
 import { formatDate } from "@/lib/format";
 import type { DataHealth, SourceCard } from "@/lib/types";
 import {
@@ -78,7 +79,7 @@ function coverageRatio(coverage: string): number | null {
 export default function DataHealthPage() {
   const { data, error, refetch, isFetching } = useQuery({
     queryKey: ["data-health"],
-    queryFn: () => api.get<DataHealth>("/data-health"),
+    queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
   });
 
   if (error) return <ErrorState message={`Could not load data health: ${String(error)}`} />;

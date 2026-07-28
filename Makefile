@@ -8,7 +8,7 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
 
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
         sync-data build-features train score seed-config migrate e2e help \
-        index-assets import-stats-csv import-kaggle seed-demo visual-qa
+        index-assets import-stats-csv import-kaggle seed-demo visual-qa worker
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -37,6 +37,9 @@ dev-backend:
 
 dev-frontend:
 	cd $(FRONTEND) && npm run dev
+
+worker: ## Run the background scheduler locally (the same one docker compose runs)
+	cd $(BACKEND) && .venv/bin/python -m app.worker
 
 test: test-backend test-frontend ## Run all tests
 

@@ -12,12 +12,14 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
+import { tradeDetailSchema } from "@/lib/schemas";
 import {
   COMPONENT_EXPLAIN,
   COMPONENT_LABEL,
   LEGALITY_EXPLAIN,
   LEGALITY_LABEL,
   VERDICT_LABEL,
+  VERDICT_STATUS,
   fanVerdict,
   formatDate,
   money,
@@ -47,19 +49,11 @@ const LEGALITY_ACCENT: Record<string, string> = {
   not_evaluated: "var(--unknown)",
 };
 
-const VERDICT_STATUS: Record<string, string> = {
-  strong: "pass",
-  mixed: "info",
-  upside: "warning",
-  poor: "fail",
-  unknown: "unavailable",
-};
-
 export default function TradeReportPage({ params }: { params: Promise<{ tradeId: string }> }) {
   const { tradeId } = use(params);
   const { data: trade, error } = useQuery({
     queryKey: ["trade", tradeId],
-    queryFn: () => api.get<TradeDetail>(`/trades/${tradeId}`),
+    queryFn: () => api.get<TradeDetail>(`/trades/${tradeId}`, tradeDetailSchema),
   });
   const [activeTeam, setActiveTeam] = useState<string | null>(null);
 

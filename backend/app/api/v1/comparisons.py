@@ -82,6 +82,11 @@ def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
                 "legality_status": detail["legality"]["overall_status"],
                 "decision_status": decision_status,
                 "suppression": evaluation.get("suppression"),
+                # Carried so the comparison board renders the same confidence the
+                # Trade Evaluator does, instead of synthesizing its own (C13).
+                "confidence": evaluation.get("confidence"),
+                "has_unmodeled_players": evaluation.get("has_unmodeled_players", False),
+                "unmodeled_players": evaluation.get("unmodeled_players", []),
                 "composite_utility": evaluation["composite_utility"],
                 "components": evaluation["components"],
                 # A suppressed evaluation carries no detail at all — the deal cannot be

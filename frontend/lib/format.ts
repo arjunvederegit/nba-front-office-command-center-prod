@@ -15,9 +15,18 @@ export function formatDate(iso: string | null | undefined): string {
   });
 }
 
+/**
+ * Signed one-decimal index value.
+ *
+ * The sign comes from the **rounded** value. Taking it from the raw one rendered 27 real
+ * players as "−0.0" — Draymond Green at −0.0173 rounds to zero but kept a minus sign. A
+ * negative-zero guard would not have helped: in JS `-0 >= 0` is true, so a literal `-0`
+ * already rendered "+0.0"; every real case was a small negative.
+ */
 export function tei(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
-  return value >= 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
+  const rounded = Number(value.toFixed(1));
+  return rounded >= 0 ? `+${rounded.toFixed(1)}` : rounded.toFixed(1);
 }
 
 export function pct(value: number | null | undefined, digits = 0): string {
@@ -54,22 +63,56 @@ export const LEGALITY_SHORT: Record<string, string> = {
   not_evaluated: "Unchecked",
 };
 
+/**
+ * Monotone in the score. The old labels were not: 46 → "High-risk upside" and 52 →
+ * "Mixed outcome" gave the *worse* score the more optimistic word (QA-12).
+ *
+ * Only the wording changes. The thresholds are unchanged and the bucket keys are
+ * renamed to match what each band actually says, so the mismatch cannot come back by
+ * someone reading `upside` and writing an optimistic string for it.
+ *
+ *   ≥ 58  clear win        58 is ~1.6 composite points above neutral on both sides
+ *   48–58 roughly neutral  straddles the neutral 50
+ *   40–48 net negative
+ *   < 40  clear loss
+ */
 export const VERDICT_LABEL: Record<string, string> = {
-  strong: "Strong fit",
-  mixed: "Mixed outcome",
-  upside: "High-risk upside",
-  poor: "Poor strategic fit",
+  clear_win: "Clear win",
+  neutral: "Roughly neutral",
+  net_negative: "Net negative",
+  clear_loss: "Clear loss",
   unknown: "Cannot fully evaluate",
 };
 
-/** Simple fan verdict derived from the composite score + confidence (documented). */
-export function fanVerdict(utility: number | null | undefined, confidence?: string): keyof typeof VERDICT_LABEL {
+/** One definition, shared by every surface that renders a verdict chip. */
+export const VERDICT_STATUS: Record<string, string> = {
+  clear_win: "pass",
+  neutral: "info",
+  net_negative: "warning",
+  clear_loss: "fail",
+  unknown: "unavailable",
+};
+
+/** Best → worst. Exported so callers do not re-derive an ordering of their own. */
+export const VERDICT_ORDER = ["clear_win", "neutral", "net_negative", "clear_loss"] as const;
+
+/**
+ * Fan verdict from the composite score and the backend's confidence.
+ *
+ * `confidence` is the backend's own field. The Strategy Lab used to synthesize its own
+ * from whether any component was missing, so the same deal could read "Cannot fully
+ * evaluate" on one page and "Strong fit" on another (C13).
+ */
+export function fanVerdict(
+  utility: number | null | undefined,
+  confidence?: string,
+): keyof typeof VERDICT_LABEL {
   if (utility === null || utility === undefined) return "unknown";
-  if (confidence === "low") return "unknown";
-  if (utility >= 58) return "strong";
-  if (utility >= 48) return "mixed";
-  if (utility >= 40) return "upside";
-  return "poor";
+  if (confidence === "low" || confidence === "not_applicable") return "unknown";
+  if (utility >= 58) return "clear_win";
+  if (utility >= 48) return "neutral";
+  if (utility >= 40) return "net_negative";
+  return "clear_loss";
 }
 
 export const NEED_LABEL: Record<string, string> = {

@@ -14,6 +14,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import { dataHealthSchema } from "@/lib/schemas";
 import type { DataHealth, Team } from "@/lib/types";
 import { BrandMark, BrandWordmark } from "@/components/brand";
 import { TeamLogo } from "@/components/media";
@@ -42,7 +43,7 @@ function isActive(pathname: string, href: string, exact?: boolean) {
 function useHealth() {
   return useQuery({
     queryKey: ["data-health"],
-    queryFn: () => api.get<DataHealth>("/data-health"),
+    queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
     staleTime: 120_000,
   });
 }

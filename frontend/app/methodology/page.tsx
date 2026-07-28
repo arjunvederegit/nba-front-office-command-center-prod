@@ -76,9 +76,10 @@ export default function MethodologyPage() {
               {"\n"}Σ w_k = 1 (user weights, renormalized over available components)
             </Formula>
             <p>
-              Components are normalized to 0–100. Fan verdicts map from the score: ≥58 Strong fit ·
-              48–58 Mixed · 40–48 High-risk upside · &lt;40 Poor fit · low confidence ⇒ &quot;Cannot
-              fully evaluate&quot;.
+              Components are normalized to 0–100. Verdict labels are monotone in the score:
+              ≥58 Clear win · 48–58 Roughly neutral · 40–48 Net negative · &lt;40 Clear loss ·
+              low confidence ⇒ &quot;Cannot fully evaluate&quot;. A deal that fails a verified
+              CBA rule receives no score at all — the failing rules are shown instead.
             </p>
           </Tech>
         </div>

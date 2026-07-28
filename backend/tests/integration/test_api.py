@@ -357,3 +357,34 @@ def test_report_format_is_validated(client, seeded):
     ).json()
     response = client.get(f"/api/v1/trades/{trade['id']}/report", params={"format": "pdf"})
     assert response.status_code == 422
+
+
+def test_asset_requests_do_not_grow_the_rate_limit_table(client):
+    """`_request_log` is a defaultdict, so reading it for an exempt request still created
+    a permanent key — asset traffic grew the dict the exemption exists to keep it out of."""
+    from app.main import _request_log
+
+    _request_log.clear()
+    client.get("/api/v1/assets/players/999999")
+    assert dict(_request_log) == {}, "asset traffic created a rate-limit bucket"
+
+    client.get("/api/v1/health")
+    assert _request_log, "non-asset traffic must still be counted"
+
+
+def test_admin_token_comparison_is_constant_time():
+    """A `!=` on strings short-circuits at the first differing byte, leaking the shared
+    prefix length to a caller who can time the response."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[2] / "app" / "api" / "deps.py"
+    tree = ast.parse(source.read_text())
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "compare_digest"
+    ]
+    assert calls, "admin token comparison must use hmac.compare_digest"

@@ -25,6 +25,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { api } from "@/lib/api";
+import { tradeDetailSchema } from "@/lib/schemas";
 import {
   COMPONENT_EXPLAIN,
   COMPONENT_LABEL,
@@ -301,7 +302,7 @@ function TradeEvaluator() {
 
   const { data: loadedTrade } = useQuery({
     queryKey: ["trade", loadTradeId],
-    queryFn: () => api.get<TradeDetail>(`/trades/${loadTradeId}`),
+    queryFn: () => api.get<TradeDetail>(`/trades/${loadTradeId}`, tradeDetailSchema),
     enabled: !!loadTradeId,
   });
   const [appliedTradeId, setAppliedTradeId] = useState<string | null>(null);

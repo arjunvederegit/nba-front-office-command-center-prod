@@ -18,12 +18,14 @@ import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import { dataHealthSchema, tradeDetailSchema } from "@/lib/schemas";
 import {
   COMPONENT_EXPLAIN,
   COMPONENT_LABEL,
   LEGALITY_EXPLAIN,
   LEGALITY_LABEL,
   VERDICT_LABEL,
+  VERDICT_STATUS,
   fanVerdict,
   formatDate,
   money,
@@ -66,14 +68,6 @@ type ComponentKey = (typeof COMPONENT_KEYS)[number];
 
 const MAX_SELECTED = 5;
 const MIN_SELECTED = 2;
-
-const VERDICT_STATUS: Record<string, string> = {
-  strong: "pass",
-  mixed: "warning",
-  upside: "info",
-  poor: "fail",
-  unknown: "unavailable",
-};
 
 const TABS = [
   { id: "summary", label: "Summary" },
@@ -206,7 +200,7 @@ export default function StrategyLabPage() {
   });
   const { data: health } = useQuery({
     queryKey: ["data-health"],
-    queryFn: () => api.get<DataHealth>("/data-health"),
+    queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
     staleTime: 120_000,
   });
 
@@ -221,7 +215,7 @@ export default function StrategyLabPage() {
   const detailQueries = useQueries({
     queries: (trades ?? []).map((trade) => ({
       queryKey: ["trade", trade.id],
-      queryFn: () => api.get<TradeDetail>(`/trades/${trade.id}`),
+      queryFn: () => api.get<TradeDetail>(`/trades/${trade.id}`, tradeDetailSchema),
       staleTime: 300_000,
     })),
   });
@@ -1076,7 +1070,10 @@ function LeaderPanel({
   photoIdFor: (tradeId: string, playerName: string) => number | null;
 }) {
   const missing = missingComponents(alt);
-  const verdict = fanVerdict(score, missing.length > 0 ? "low" : "high");
+  // C13: this page used to synthesize its own confidence from whether any component
+  // was missing, so the same saved deal could read "Cannot fully evaluate" here and
+  // "Strong fit" in the Trade Evaluator. The backend's confidence is the only one.
+  const verdict = fanVerdict(score, alt.confidence);
 
   return (
     <Panel accent="var(--signal)" padded={false}>
@@ -1183,8 +1180,10 @@ function ChallengerRow({
   score: number | null;
   rank: number;
 }) {
-  const missing = missingComponents(alt);
-  const verdict = fanVerdict(score, missing.length > 0 ? "low" : "high");
+  // C13: this page used to synthesize its own confidence from whether any component
+  // was missing, so the same saved deal could read "Cannot fully evaluate" here and
+  // "Strong fit" in the Trade Evaluator. The backend's confidence is the only one.
+  const verdict = fanVerdict(score, alt.confidence);
 
   return (
     <article className="rounded-lg border border-hairline bg-panel2/50 p-3.5">

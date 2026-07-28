@@ -14,7 +14,7 @@ import { use, useState } from "react";
 import { api } from "@/lib/api";
 import { height, money, pct, tei } from "@/lib/format";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
-import type { Team } from "@/lib/types";
+import type { ArchetypeAssignment, ComparablePlayer, Team } from "@/lib/types";
 import { TeamLogo, PlayerPhoto } from "@/components/media";
 import {
   Badge,
@@ -54,13 +54,8 @@ interface PlayerDetail {
     model?: string | null;
     note: string;
   };
-  archetype: { label: string; cluster_id: number } | null;
-  comparables: {
-    player_id: string;
-    name: string;
-    tei: number;
-    archetype: string;
-  }[];
+  archetype: ArchetypeAssignment | null;
+  comparables: ComparablePlayer[];
 }
 
 interface PlayerStats {

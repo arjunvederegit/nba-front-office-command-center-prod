@@ -345,6 +345,11 @@ class DataQualityIssue(Base, TimestampMixin):
 
 class ModelVersion(Base, TimestampMixin):
     __tablename__ = "model_versions"
+    # A version string must identify a model. Before R1-9 it was a training-run
+    # timestamp, so all three models trained in one run shared `v202607210204` and the
+    # table held it three times per model. Versions are content hashes now, and the
+    # constraint keeps them that way.
+    __table_args__ = (UniqueConstraint("model_name", "version", name="uq_model_version"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     model_name: Mapped[str] = mapped_column(String(50), index=True)

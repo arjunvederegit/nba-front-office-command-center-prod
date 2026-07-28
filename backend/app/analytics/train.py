@@ -4,6 +4,8 @@ Every trained artifact is recorded in model_versions with its algorithm, feature
 target, validation metrics, and training window. Random seeds are fixed for
 reproducibility."""
 
+import hashlib
+import json
 import subprocess
 from datetime import UTC, datetime
 from typing import Any
@@ -50,6 +52,44 @@ def _code_commit() -> str | None:
         return None
 
 
+def _content_version(
+    name: str, algorithm: str, training_period: str, features: list[str], metrics: dict
+) -> str:
+    """A version string that identifies the model, not the minute it was trained.
+
+    `datetime.now().strftime("v%Y%m%d%H%M")` gave all three models trained in one run the
+    *same* string, so `model_versions` held `v202607210204` three times over and a
+    version string could not identify a model. Hashing the model's own content makes the
+    string unique per model and stable across retrains that change nothing.
+    """
+    payload = json.dumps(
+        {
+            "name": name,
+            "algorithm": algorithm,
+            "training_period": training_period,
+            "features": sorted(features),
+            # Validation metrics move whenever the data moves, which is exactly when a
+            # retrain deserves a new identity.
+            "metrics": _stable(metrics),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:12]
+    return f"{datetime.now(UTC).strftime('%Y%m%d')}-{digest}"
+
+
+def _stable(value: Any) -> Any:
+    """Round floats so an identical retrain does not produce a new hash from noise."""
+    if isinstance(value, float):
+        return round(value, 6)
+    if isinstance(value, dict):
+        return {k: _stable(v) for k, v in sorted(value.items())}
+    if isinstance(value, list):
+        return [_stable(v) for v in value]
+    return value
+
+
 def _register_model(
     db: Session,
     name: str,
@@ -65,6 +105,22 @@ def _register_model(
         select(ModelVersion).where(ModelVersion.model_name == name, ModelVersion.is_active)
     ).all():
         old.is_active = False
+    version = _content_version(name, algorithm, training_period, features, metrics)
+    # Retraining on unchanged data produces the same content hash; reactivate that row
+    # rather than inserting a duplicate (the table has no unique constraint today, and
+    # gains one in the same release).
+    existing = db.scalar(
+        select(ModelVersion).where(
+            ModelVersion.model_name == name, ModelVersion.version == version
+        )
+    )
+    if existing is not None:
+        existing.is_active = True
+        existing.trained_at = datetime.now(UTC)
+        existing.validation_metrics = metrics
+        existing.artifact_path = artifact_path
+        db.flush()
+        return existing
     model = ModelVersion(
         model_name=name,
         version=version,
@@ -81,6 +137,34 @@ def _register_model(
     db.add(model)
     db.flush()
     return model
+
+
+def _gc_superseded_estimates(db: Session) -> int:
+    """Delete impact estimates belonging to inactive model versions.
+
+    Nothing ever removed them, so every `make train && make score` added a full copy:
+    1,536 rows for 512 players across three versions. Only the active version is ever
+    read (`EvaluationService._impacts` filters on it), so the rest are dead weight that
+    grows without bound.
+    """
+    active_ids = {
+        m.id
+        for m in db.scalars(
+            select(ModelVersion).where(
+                ModelVersion.model_name == "player_impact", ModelVersion.is_active
+            )
+        ).all()
+    }
+    stale = db.scalars(
+        select(PlayerImpactEstimate).where(
+            PlayerImpactEstimate.model_version_id.notin_(active_ids or {""})
+        )
+    ).all()
+    for row in stale:
+        db.delete(row)
+    if stale:
+        logger.info("garbage-collected %s superseded impact estimates", len(stale))
+    return len(stale)
 
 
 def train_all(db: Session) -> dict[str, Any]:
@@ -168,6 +252,8 @@ def train_all(db: Session) -> dict[str, Any]:
                 setattr(existing, k, v)
         written += 1
 
+    orphaned = _gc_superseded_estimates(db)
+
     # Archetypes
     assignments, archetype_meta = fit_archetypes(scored)
     archetype_written = 0
@@ -235,7 +321,8 @@ def train_all(db: Session) -> dict[str, Any]:
 
     db.commit()
     summary = {
-        "version": version,
+        "version": impact_model.version,
+        "superseded_estimates_removed": orphaned,
         "impact": {
             "chosen": result.chosen_model,
             "players_scored": written,

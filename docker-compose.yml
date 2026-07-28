@@ -27,7 +27,11 @@ services:
 
   backend:
     build: ./backend
-    env_file: .env
+    env_file:
+      # Optional: `.env` is gitignored, so a clean clone has none. Without
+      # `required: false` docker compose refuses to start at all.
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://tradelab:tradelab@postgres:5432/tradelab
       REDIS_URL: redis://redis:6379/0
@@ -44,7 +48,11 @@ services:
 
   worker:
     build: ./backend
-    env_file: .env
+    env_file:
+      # Optional: `.env` is gitignored, so a clean clone has none. Without
+      # `required: false` docker compose refuses to start at all.
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+psycopg://tradelab:tradelab@postgres:5432/tradelab
       REDIS_URL: redis://redis:6379/0
