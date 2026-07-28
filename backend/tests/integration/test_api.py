@@ -256,7 +256,6 @@ def _evaluate_payload(seeded, player_moves, **extra):
     }
 
 
-@pytest.mark.xfail(strict=True, reason="QA-2: no roster-membership validation (R1-2)")
 def test_phantom_move_is_rejected(client, seeded):
     """`b1` is on team B, so it cannot be sent *from* team A."""
     payload = _evaluate_payload(
@@ -272,11 +271,11 @@ def test_phantom_move_is_rejected(client, seeded):
     assert client.post("/api/v1/trades/evaluate", json=payload).status_code == 422
 
 
-@pytest.mark.xfail(strict=True, reason="QA-2: build_trade_context accepts phantom moves (R1-2)")
 def test_builder_rejects_phantom_move(db, cap_params, seeded):
     from app.cba.builder import build_trade_context
+    from app.core.errors import InvalidTradeError
 
-    with pytest.raises(Exception):  # noqa: B017 — the specific type lands with the fix
+    with pytest.raises(InvalidTradeError, match="not on the roster"):
         build_trade_context(
             db,
             [seeded["team_a"].id, seeded["team_b"].id],
@@ -291,7 +290,6 @@ def test_builder_rejects_phantom_move(db, cap_params, seeded):
         )
 
 
-@pytest.mark.xfail(strict=True, reason="QA-3: duplicate moves are not deduplicated (R1-2)")
 def test_duplicate_player_moves_are_rejected(client, seeded):
     move = {
         "player_id": seeded["a1"].id,
@@ -302,7 +300,6 @@ def test_duplicate_player_moves_are_rejected(client, seeded):
     assert client.post("/api/v1/trades/evaluate", json=payload).status_code == 422
 
 
-@pytest.mark.xfail(strict=True, reason="QA-7: unknown strategy silently falls back (R1-2)")
 def test_unknown_strategy_is_rejected(client, seeded):
     payload = _evaluate_payload(
         seeded,
@@ -318,7 +315,6 @@ def test_unknown_strategy_is_rejected(client, seeded):
     assert client.post("/api/v1/trades/evaluate", json=payload).status_code == 422
 
 
-@pytest.mark.xfail(strict=True, reason="QA-13: error bodies leak Pydantic internals (R1-9)")
 def test_validation_errors_do_not_leak_pydantic_internals(client, seeded):
     payload = {
         "team_ids": [seeded["team_a"].id, seeded["team_b"].id],
@@ -338,8 +334,6 @@ def test_validation_errors_do_not_leak_pydantic_internals(client, seeded):
         assert leak not in message, f"error message leaks {leak!r}: {message}"
 
 
-@pytest.mark.xfail(strict=True, reason="R1-2: ?format= is unvalidated and the row is "
-                                       "persisted before the branch")
 def test_report_format_is_validated(client, seeded):
     trade = client.post(
         "/api/v1/trades",

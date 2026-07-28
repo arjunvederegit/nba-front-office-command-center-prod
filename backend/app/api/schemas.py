@@ -5,6 +5,17 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# One definition of the strategy vocabulary. It was previously inlined in
+# `ScenarioIn` only, so `EvaluateRequest.strategy` and `GenerateRequest.strategy`
+# were bare `str` and silently fell back to different weights on a typo (QA-7).
+Strategy = Literal[
+    "contend", "improve", "retool", "rebuild", "youth", "cap_relief", "custom"
+]
+
+# The report renderer only produces these two; anything else used to be accepted,
+# recorded as the requested format, and then answered with markdown anyway.
+ReportFormat = Literal["markdown", "html"]
+
 
 class Provenance(BaseModel):
     source_provider: str = "nba_api"
@@ -64,9 +75,7 @@ class ScenarioWeightsIn(BaseModel):
 class ScenarioIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     focal_team_id: str
-    strategy: Literal[
-        "contend", "improve", "retool", "rebuild", "youth", "cap_relief", "custom"
-    ] = "custom"
+    strategy: Strategy = "custom"
     horizon_years: int = Field(ge=1, le=5, default=1)
     risk_tolerance: Literal["conservative", "balanced", "aggressive"] = "balanced"
     max_added_payroll: int | None = None
@@ -81,7 +90,7 @@ class ScenarioIn(BaseModel):
 
 class ScenarioPatch(BaseModel):
     name: str | None = None
-    strategy: str | None = None
+    strategy: Strategy | None = None
     horizon_years: int | None = None
     risk_tolerance: str | None = None
     untouchable_player_ids: list[str] | None = None
@@ -129,14 +138,14 @@ class TradeIn(ValidateRequest):
 
 class EvaluateRequest(ValidateRequest):
     scenario_id: str | None = None
-    strategy: str = "custom"
+    strategy: Strategy = "custom"
     weights: ScenarioWeightsIn | None = None
 
 
 class GenerateRequest(BaseModel):
     scenario_id: str | None = None
     focal_team_id: str | None = None
-    strategy: str = "custom"
+    strategy: Strategy = "custom"
     max_candidates: int = Field(ge=1, le=12, default=8)
 
 

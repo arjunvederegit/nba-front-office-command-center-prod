@@ -18,6 +18,18 @@ class DomainError(Exception):
         super().__init__(message)
 
 
+class InvalidTradeError(DomainError):
+    """The trade as constructed cannot exist — a phantom move, a duplicate, a bad enum.
+
+    422 rather than 400 so it lands in the same class as Pydantic's own request
+    validation from a caller's point of view; the difference is only that these checks
+    need a database session and therefore cannot live in a request model.
+    """
+
+    status_code = 422
+    code = "validation_error"
+
+
 class NotFoundError(DomainError):
     status_code = 404
     code = "not_found"
@@ -53,9 +65,34 @@ async def http_error_handler(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+def _field_path(location: tuple) -> str:
+    """`('body', 'pick_moves', 4, 'draft_year')` → `pick_moves[4].draft_year`."""
+    parts: list[str] = []
+    for item in location:
+        if item in ("body", "query", "path", "header"):
+            continue
+        if isinstance(item, int):
+            if parts:
+                parts[-1] = f"{parts[-1]}[{item}]"
+            else:
+                parts.append(f"[{item}]")
+        else:
+            parts.append(f".{item}" if parts else str(item))
+    return "".join(parts) or "request body"
+
+
 async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """QA-13: the body used to carry `str(exc.errors())` verbatim, leaking Pydantic
+    internals — `{'type': 'less_than_equal', 'loc': (...), 'ctx': {'le': 2033}}` — into
+    a field a user reads. Errors are mapped to `{field, message}` pairs; the structured
+    list is added alongside the flat `message` so the `{code, message, request_id}`
+    contract is preserved rather than replaced."""
     assert isinstance(exc, RequestValidationError)
-    return JSONResponse(
-        status_code=422,
-        content=error_body("validation_error", str(exc.errors()[:5]), request),
-    )
+    fields = [
+        {"field": _field_path(tuple(err.get("loc", ()))), "message": err.get("msg", "invalid")}
+        for err in exc.errors()[:5]
+    ]
+    message = "; ".join(f"{f['field']}: {f['message']}" for f in fields) or "invalid request"
+    body = error_body("validation_error", message, request)
+    body["error"]["fields"] = fields
+    return JSONResponse(status_code=422, content=body)

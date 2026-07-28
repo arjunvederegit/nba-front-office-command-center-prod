@@ -3,7 +3,13 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import EvaluateRequest, GenerateRequest, TradeIn, ValidateRequest
+from app.api.schemas import (
+    EvaluateRequest,
+    GenerateRequest,
+    ReportFormat,
+    TradeIn,
+    ValidateRequest,
+)
 from app.cba.builder import build_trade_context
 from app.cba.engine import TradeLegalityEngine
 from app.core.errors import DomainError, NotFoundError
@@ -263,7 +269,12 @@ def get_trade(trade_id: str, db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/{trade_id}/report")
-def get_trade_report(trade_id: str, format: str = "markdown", db: Session = Depends(get_db)):
+def get_trade_report(
+    trade_id: str, format: ReportFormat = "markdown", db: Session = Depends(get_db)
+):
+    """`format` is a closed set. It used to be a bare `str`, and the `GeneratedReport`
+    row was written *before* the branch, so `?format=pdf` returned markdown while
+    persisting a record claiming PDF."""
     detail = _trade_detail(db, trade_id)
     trade = db.get(TradeProposal, trade_id)
     assert trade is not None
@@ -288,15 +299,20 @@ def get_trade_report(trade_id: str, format: str = "markdown", db: Session = Depe
         focal_team_id=focal_team_id,
         data_freshness={"last_sync": last_sync.isoformat() if last_sync else "never"},
     )
-    report = GeneratedReport(
-        trade_id=trade.id,
-        scenario_id=trade.scenario_id,
-        format=format,
-        content=markdown_text,
-        llm_enhanced=False,
+    response = (
+        HTMLResponse(report_to_html(markdown_text))
+        if format == "html"
+        else PlainTextResponse(markdown_text, media_type="text/markdown")
     )
-    db.add(report)
+    # Recorded only once the response it describes actually exists.
+    db.add(
+        GeneratedReport(
+            trade_id=trade.id,
+            scenario_id=trade.scenario_id,
+            format=format,
+            content=markdown_text,
+            llm_enhanced=False,
+        )
+    )
     db.commit()
-    if format == "html":
-        return HTMLResponse(report_to_html(markdown_text))
-    return PlainTextResponse(markdown_text, media_type="text/markdown")
+    return response
