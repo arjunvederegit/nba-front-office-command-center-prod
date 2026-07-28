@@ -19,6 +19,36 @@ U(t,d) = w_P·P + w_F·F + w_C·C + w_T·T + w_A·A + w_R·R        Σ w_k = 1
 - **Missing data shrinks scope, never fakes a number**: an unavailable component
   (e.g. contract value with no contract provider) is excluded and remaining weights
   renormalized; the exclusion is surfaced in the API (`excluded_components`) and UI.
+  Driver contributions use the **renormalized** weights, so they sum to `U − 50`.
+- **`U` can be absent, and absence has two meanings.** The response carries
+  `decision_status`:
+  - `scored` — `composite_utility` is a number;
+  - `suppressed_illegal` — the deal fails a verified CBA rule, so it cannot be
+    executed. No score is reported and `suppression.failing_rules` says why. A number
+    here would invite comparing a deal that cannot happen against deals that can.
+  - `insufficient_data` — no component could be scored. `null`, never 0.0: on a 0–100
+    scale a zero reads as a catastrophic verdict rather than a refusal.
+- **Verdict labels are monotone in the score**: ≥58 Clear win · 48–58 Roughly neutral ·
+  40–48 Net negative · <40 Clear loss · low confidence ⇒ "Cannot fully evaluate". The
+  thresholds are unchanged from the original design; the labels were not monotone before
+  R1-9 (46 read "High-risk upside" while 52 read "Mixed outcome").
+- **Zeroing every weight yields no score.** A weight vector summing to zero is a
+  deliberate statement; substituting a uniform prior silently re-enabled components the
+  user had switched off.
+
+### Players the model has not scored
+
+43 of 530 rostered players (8.1 %) have no impact estimate — mostly two-way and
+late-signing players below the 200-minute window threshold the feature pipeline already
+applies. They are **excluded from the projection and named**, never averaged in:
+`has_unmodeled_players` and `unmodeled_players` appear on every evaluation, confidence
+drops to low when one is inside the deal, and they remain in the roster count so roster
+limits are unaffected.
+
+Before R1-4 they carried `tei = 0.0`. That is the **63rd percentile** of rostered
+players (306 of 487 sit below zero), so a player with no data was scored above the
+median — a silent default considerably more favourable than the −0.293 league mean
+suggests, and one that contradicted this document's own model card.
 
 ## 2. TEI — TradeLab Estimated Impact
 

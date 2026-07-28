@@ -1,5 +1,13 @@
 # RosterLab enhancement plan
 
+> **📎 Historical record, not a forward plan.**
+>
+> This documents the TradeLab → RosterLab transformation that has already shipped. It
+> was mislabeled as a plan, which made completed work read as backlog. The forward plan
+> is [`ROSTERLAB_IMPLEMENTATION_PLAN.md`](../ROSTERLAB_IMPLEMENTATION_PLAN.md) at the
+> repository root, and progress against it is tracked in
+> [`ROSTERLAB_AUTONOMOUS_STATE.md`](../ROSTERLAB_AUTONOMOUS_STATE.md).
+
 Working plan for the TradeLab → **RosterLab — NBA Front Office Simulator**
 transformation (July 2026). This is the Phase-1 audit + design document; the
 repository history shows the execution.

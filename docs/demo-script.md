@@ -1,5 +1,15 @@
 # Demo script (~6 minutes)
 
+> **⚠️ This script is out of date and does not run.**
+>
+> It walks routes that have since been renamed twice — "Decision Room" is now Team
+> Outlook, "Trade Machine" is the Trade Evaluator, "Cap Lab" is the Salary Cap Center —
+> and it describes verdict wording and freshness behaviour that R1 corrected. Following
+> it will not work.
+>
+> It is kept, rather than deleted, because R7 rewrites it against the current product.
+> Until then, use `README.md` and `docs/product-requirements.md`.
+
 Prep: `make dev` with an ingested + trained database (`make sync-data && make train
 && make score`). Have `/` open.
 
