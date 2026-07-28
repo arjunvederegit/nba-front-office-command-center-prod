@@ -215,3 +215,26 @@ def test_idempotent_rerun_updates_in_place(db: Session, tmp_path: Path) -> None:
     assert rows[0].minutes == 120.0
     assert rows[0].stats["PTS"] == 60
     assert rows[0].stats["per_game"]["PTS"] == 12.0
+
+
+# ------------------------------------------------------------------ QA-11 pin (R0-1)
+
+
+@pytest.mark.xfail(strict=True, reason="QA-11: EFF is a season total sitting in _RATE_FIELDS (R7)")
+def test_eff_is_scale_dependent_and_belongs_with_totals(db: Session, tmp_path: Path) -> None:
+    """`EFF` is a season *total*: 60 over 4 games is 15.0 per game, not 60.
+
+    Per C12 the move needs a third field category — `_TOTAL_FIELDS` uses
+    `_required_float` and would start rejecting rows with a blank `EFF`, which
+    `_RATE_FIELDS`'s `_optional_float` tolerates today.
+    """
+    make_team(db, 1, "AAA")
+    make_player(db, 900001, "Fixture Player A")
+    path = _write_csv(tmp_path, [_row()])
+    import_stats_csv(db, path, season="2025-26")
+    stat = db.scalar(
+        select(PlayerSeasonStats).where(PlayerSeasonStats.stat_type == "csv_totals")
+    )
+    assert stat is not None
+    assert "EFF" not in stat.stats["rates"], "EFF is not scale-independent"
+    assert stat.stats["per_game"]["EFF"] == 15.0

@@ -47,9 +47,37 @@ test("player explorer lists imported season totals", async ({ page }) => {
   await expect(page.getByText(/season totals/i).first()).toBeVisible({ timeout: 20_000 });
 });
 
+/**
+ * The Strategy Lab is a *comparison* board: with fewer than two saved deals it renders
+ * an empty state by design, so the flow below needs a second deal to exist. Creating it
+ * through the API is deliberate test setup — the UI path is what the flow itself
+ * exercises. Without this the test only passed because a developer database happened to
+ * carry deals left over from earlier runs (the pollution R1-7 removes).
+ */
+async function seedComparisonDeal(request: import("@playwright/test").APIRequestContext) {
+  const api = "http://localhost:8000/api/v1";
+  const teams = await (await request.get(`${api}/teams`)).json();
+  const [teamA, teamB] = teams.slice(0, 2);
+  const roster = await (await request.get(`${api}/teams/${teamA.id}/roster`)).json();
+  const player = roster.roster[0];
+  await request.post(`${api}/trades`, {
+    data: {
+      name: "E2E comparison baseline",
+      team_ids: [teamA.id, teamB.id],
+      player_moves: [
+        { player_id: player.player_id, from_team_id: teamA.id, to_team_id: teamB.id },
+      ],
+      pick_moves: [],
+    },
+  });
+}
+
 test("full flow: team outlook → strategy → trade evaluator → rules → evaluate → save → compare", async ({
   page,
+  request,
 }) => {
+  await seedComparisonDeal(request);
+
   // 1. Team Outlook: open a team
   await page.goto("/team-outlook");
   await page.getByRole("link", { name: /Celtics/ }).first().click();

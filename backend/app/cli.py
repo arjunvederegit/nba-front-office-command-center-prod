@@ -15,6 +15,8 @@ Commands
   import-stats-csv <path>  Import the user-supplied season-totals CSV (default
                    data/imports/nba_player_stats_2026.csv)
   import-kaggle    Import historical enrichment from the Kaggle basketball dataset
+  seed-demo        Populate a DEDICATED database with the synthetic demo league used by
+                   the end-to-end suite. Refuses to run where nba_api rows exist.
 """
 
 import json
@@ -90,6 +92,16 @@ def main() -> None:
 
     if command == "seed-config":
         seed_config()
+    elif command == "seed-demo":
+        from app.ingestion.demo_seed import DemoSeedRefused, seed_demo
+
+        try:
+            with SessionLocal() as db:
+                summary = seed_demo(db)
+        except DemoSeedRefused as exc:
+            print(f"seed-demo refused: {exc}")
+            sys.exit(2)
+        print(json.dumps(summary, indent=2, default=str))
     elif command == "sync-all":
         with SessionLocal() as db:
             results = jobs.sync_all(db)

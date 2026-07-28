@@ -1,12 +1,22 @@
 // Visual QA harness: screenshots every required route at every required viewport,
-// and reports console errors + horizontal overflow per page.
+// reports console errors, horizontal overflow and empty pages, and **exits non-zero**
+// when it finds any of them, so it can be used as a gate.
 //
-// Usage (from frontend/, where @playwright/test resolves):
-//   node ../scripts/visual_qa.mjs [outDir] [routeFilter]
+// Usage (from anywhere in the repo):
+//   node scripts/visual_qa.mjs [outDir] [routeFilter]
+//   make visual-qa OUT=docs/qa/run
 // Requires the local stack running (frontend :3000, backend :8000).
 
-import { chromium } from "@playwright/test";
+import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync } from "fs";
+
+// ESM resolves bare specifiers from *this file's* directory upward, and there is no
+// node_modules at the repo root — only under frontend/. Resolve from there explicitly
+// rather than depending on the caller's working directory.
+const requireFromFrontend = createRequire(
+  new URL("../frontend/package.json", import.meta.url),
+);
+const { chromium } = requireFromFrontend("@playwright/test");
 
 const OUT = decodeURIComponent(
   new URL(`../${process.argv[2] ?? "docs/qa/current"}/`, import.meta.url).pathname,
@@ -30,6 +40,8 @@ const api = "http://localhost:8000/api/v1";
 const teams = await (await fetch(`${api}/teams`)).json();
 const team = teams.find((t) => t.abbreviation === "BOS") ?? teams[0];
 const trades = await (await fetch(`${api}/trades`)).json();
+const players = await (await fetch(`${api}/players?limit=1`)).json();
+const player = players.players?.[0];
 
 const ROUTES = [
   { name: "overview", path: "/" },
@@ -42,6 +54,11 @@ const ROUTES = [
   { name: "salary-cap-center", path: `/salary-cap-center?team=${team.id}` },
   { name: "methodology", path: "/methodology" },
   { name: "data-health", path: "/data-health" },
+  ...(player ? [{ name: "player-detail", path: `/players/${player.id}` }] : []),
+  // Error paths are part of the product surface: an unknown id must render a designed
+  // not-found state, not an unstyled crash.
+  { name: "player-invalid", path: "/players/not-a-real-player-id", expectNotFound: true },
+  { name: "team-invalid", path: "/team-outlook/not-a-real-team-id", expectNotFound: true },
   ...(trades.length
     ? [{ name: "trade-result", path: `/trades/${trades[0].id}` }]
     : []),
@@ -81,11 +98,24 @@ for (const viewport of VIEWPORTS) {
       fullPage: viewport.width >= 1024,
     });
 
+    // A designed not-found state must actually render something; a blank body means
+    // the route crashed rather than refusing politely.
+    const bodyChars = await page.evaluate(
+      () => (document.body?.innerText ?? "").trim().length,
+    );
+
+    // On a deliberately invalid id the browser logs the 404 fetch itself. That is the
+    // app behaving correctly, so it is not a problem — an *unhandled* error still is.
+    const reported = route.expectNotFound
+      ? errors.filter((e) => !/Failed to load resource.*404/i.test(e))
+      : [...errors];
+
     report.push({
       route: route.name,
       viewport: viewport.name,
       horizontalOverflowPx: Math.max(0, overflow.scrollWidth - overflow.clientWidth),
-      consoleErrors: [...errors],
+      consoleErrors: reported,
+      emptyBody: bodyChars < 40,
     });
   }
   await context.close();
@@ -94,17 +124,23 @@ for (const viewport of VIEWPORTS) {
 await browser.close();
 
 const problems = report.filter(
-  (r) => r.horizontalOverflowPx > 0 || r.consoleErrors.length > 0,
+  (r) => r.horizontalOverflowPx > 0 || r.consoleErrors.length > 0 || r.emptyBody,
 );
 writeFileSync(`${OUT}report.json`, JSON.stringify({ report, problems }, null, 2));
 console.log(`captured ${report.length} screenshots into ${OUT}`);
 if (problems.length === 0) {
-  console.log("CLEAN: no horizontal overflow, no console errors");
+  console.log("CLEAN: no horizontal overflow, no console errors, no empty pages");
 } else {
   console.log(`PROBLEMS (${problems.length}):`);
   for (const p of problems) {
     console.log(
-      `  ${p.route} @ ${p.viewport}: overflow=${p.horizontalOverflowPx}px errors=${p.consoleErrors.length ? p.consoleErrors[0] : 0}`,
+      `  ${p.route} @ ${p.viewport}: overflow=${p.horizontalOverflowPx}px` +
+        ` errors=${p.consoleErrors.length ? p.consoleErrors[0] : 0}` +
+        `${p.emptyBody ? " EMPTY-BODY" : ""}`,
     );
   }
 }
+
+// The harness is a gate, not a log. Without this it can never fail a build, and wiring
+// it into CI would produce a vacuous check.
+process.exit(problems.length === 0 ? 0 : 1);

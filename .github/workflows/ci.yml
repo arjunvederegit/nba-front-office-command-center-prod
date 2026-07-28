@@ -23,12 +23,17 @@ jobs:
         run: ruff check app tests
       - name: mypy
         run: mypy app
+      # --cov-fail-under is the measured floor at the R0 baseline (68 %). It exists so
+      # coverage cannot slide silently during the correctness releases; raise it when a
+      # release genuinely improves coverage, never lower it to make a run green.
       - name: Tests (no network — recorded fixtures only)
-        run: pytest -q --cov=app --cov-report=term-missing
+        run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=68
       - name: Migration check (SQLite)
+        # No `|| true`: R2 will produce model/migration drift and this is the only
+        # check that detects it.
         run: |
           alembic upgrade head
-          alembic check || true
+          alembic check
 
   frontend:
     runs-on: ubuntu-latest
@@ -53,11 +58,65 @@ jobs:
       - name: Build
         run: npm run build
 
+  e2e:
+    # Guards the decision flow the audit reproduced QA-1…QA-13 against. Runs against a
+    # dedicated, freshly migrated database seeded with the SYNTHETIC demo league
+    # (backend/app/ingestion/demo_seed.py) — never a developer's ingested data, and
+    # never NBA.com at request time.
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:////tmp/rosterlab-e2e.db
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      E2E_BACKEND_CMD: cd ../backend && uvicorn app.main:app --port 8000
+      E2E_FRONTEND_CMD: npm start
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend
+        run: pip install -e ./backend
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+      - name: Migrate and seed the demo database
+        working-directory: backend
+        run: |
+          alembic upgrade head
+          python -m app.cli seed-config
+          python -m app.cli seed-demo
+          python -m app.cli train
+          python -m app.cli score
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Playwright
+        working-directory: frontend
+        run: npx playwright test
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/test-results
+            frontend/playwright-report
+          retention-days: 7
+
   docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build backend image
-        run: docker build -t tradelab-backend ./backend
+        run: docker build -t rosterlab-backend ./backend
       - name: Build frontend image
-        run: docker build -t tradelab-frontend ./frontend
+        run: docker build -t rosterlab-frontend ./frontend

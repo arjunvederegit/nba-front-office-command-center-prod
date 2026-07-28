@@ -4,12 +4,16 @@ FRONTEND := frontend
 PY := $(BACKEND)/.venv/bin/python
 PIP := $(BACKEND)/.venv/bin/pip
 
+E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
+
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
         sync-data build-features train score seed-config migrate e2e help \
-        index-assets import-stats-csv import-kaggle
+        index-assets import-stats-csv import-kaggle seed-demo visual-qa
 
+# `[a-z-]+` missed targets containing a digit or ending the alternation early, so
+# `e2e` never appeared. Match the full target token instead.
 help:
-	@grep -E '^[a-z-]+:' Makefile | sed 's/:.*//' | sort -u
+	@grep -E '^[a-z0-9][a-z0-9-]*:' Makefile | sed 's/:.*//' | sort -u
 
 setup: ## Create backend venv, install backend + frontend dependencies
 	python3.12 -m venv $(BACKEND)/.venv 2>/dev/null || python3.11 -m venv $(BACKEND)/.venv
@@ -36,14 +40,27 @@ dev-frontend:
 
 test: test-backend test-frontend ## Run all tests
 
+# Mirrors CI exactly (see .github/workflows/ci.yml) so a green local run means a green
+# CI run — including the coverage floor.
 test-backend:
-	cd $(BACKEND) && .venv/bin/pytest -q
+	cd $(BACKEND) && .venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under=68
 
 test-frontend:
 	cd $(FRONTEND) && npm run test -- --run
 
-e2e: ## Playwright end-to-end tests (requires running stack or fixture mode)
-	cd $(FRONTEND) && npx playwright test
+seed-demo: ## Build a DEDICATED e2e database from the synthetic demo league
+	rm -f "$(E2E_DB)"
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/alembic upgrade head
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli seed-config
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli seed-demo
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli train
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli score
+
+e2e: seed-demo ## Playwright end-to-end tests against the dedicated demo database
+	cd $(FRONTEND) && DATABASE_URL="sqlite:///$(E2E_DB)" npx playwright test
+
+visual-qa: ## Screenshot every route at every supported viewport; fails on problems
+	cd $(FRONTEND) && node ../scripts/visual_qa.mjs $(OUT)
 
 lint: ## Ruff + mypy + eslint + tsc
 	cd $(BACKEND) && .venv/bin/ruff check app tests && .venv/bin/mypy app
