@@ -9,7 +9,7 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
         sync-data build-features train score seed-config migrate e2e help \
         index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
-        purge-fixtures
+        purge-fixtures import-contracts contract-coverage
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -51,6 +51,12 @@ test-backend:
 
 test-frontend:
 	cd $(FRONTEND) && npm run test -- --run
+
+import-contracts: ## Import contracts from the configured provider and report ROSTER-side coverage
+	cd $(BACKEND) && .venv/bin/python -m app.cli sync-contracts
+
+contract-coverage: ## Report contract coverage without importing anything
+	cd $(BACKEND) && .venv/bin/python -m app.cli contract-coverage
 
 purge-fixtures: ## List test-run leftovers in the dev DB (add APPLY=1 to delete)
 	cd $(BACKEND) && .venv/bin/python -m app.cli purge-fixtures $(if $(APPLY),--apply,)

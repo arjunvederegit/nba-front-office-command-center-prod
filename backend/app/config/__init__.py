@@ -68,6 +68,19 @@ class Settings(BaseSettings):
         )
 
     @property
+    def contract_data_path(self) -> Path | None:
+        """`CONTRACT_DATA_FILE` resolved against the repo root, not the process CWD.
+
+        A relative path such as `data/imports/contracts/players.html` resolved
+        differently depending on where the process started — it worked from the repo
+        root and silently found nothing from `backend/`, which is where `make` runs
+        every backend command from."""
+        if not self.contract_data_file:
+            return None
+        candidate = Path(self.contract_data_file)
+        return candidate if candidate.is_absolute() else (BACKEND_DIR.parent / candidate)
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 

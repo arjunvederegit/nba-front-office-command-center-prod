@@ -5,6 +5,7 @@ failed endpoint never destroys the last valid snapshot. All NBA.com access goes 
 SwarNBAApiProvider — jobs never import nba_api directly."""
 
 import asyncio
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,13 @@ from app.db.models import (
     Team,
     TeamSeasonStats,
 )
+from app.ingestion.contract_coverage import (
+    contract_coverage,
+    roster_side_unmatched,
+    summarize,
+)
+from app.ingestion.identity import PlayerIdentityIndex
+from app.ingestion.quality import _record as record_quality_issue
 from app.ingestion.runs import sync_run
 from app.integrations.contracts import get_contract_provider
 from app.integrations.nba_api.provider import SwarNBAApiProvider, get_provider
@@ -322,25 +330,68 @@ def sync_contracts(db: Session) -> int:
     records an explicit no-op run — salary features stay honestly unavailable."""
     contract_provider = get_contract_provider()
     with sync_run(db, "sync_contracts") as run:
+        settings = get_settings()
         if contract_provider is None:
-            run.detail = {"provider": None, "note": "no contract provider configured"}
+            # Report coverage even with no provider: the gap is the point, and an
+            # operator should be able to see it before deciding to import anything.
+            coverage = contract_coverage(
+                db, settings.current_season, settings.cap_league_year
+            )
+            run.detail = {
+                "provider": None,
+                "note": "no contract provider configured",
+                "coverage": coverage,
+                "summary": summarize(coverage, []),
+            }
             db.commit()
             return 0
+        settings = get_settings()
         records = contract_provider.fetch_contracts()
-        players = {p.full_name.lower(): p for p in db.scalars(select(Player)).all()}
-        players_by_nba_id = _player_map(db)
+        # Tiered identity resolution; see app/ingestion/identity.py. The old join was
+        # `{full_name.lower(): p}` over 5,121 players with no disambiguation, so for the
+        # 38 duplicated names a coin flip decided which player got the contract.
+        index = PlayerIdentityIndex(db, settings.current_season)
         now = datetime.now(UTC)
         matched = 0
         unmatched: list[str] = []
+        ambiguous: list[dict] = []
+        methods: Counter[str] = Counter()
         for record in records:
-            player = None
-            if record.nba_player_id is not None:
-                player = players_by_nba_id.get(record.nba_player_id)
+            resolution = index.resolve(
+                nba_player_id=record.nba_player_id, name=record.player_name
+            )
+            player = resolution.player
             if player is None:
-                player = players.get(record.player_name.lower())
-            if player is None:
-                unmatched.append(record.player_name)
+                if resolution.method == "ambiguous":
+                    # Never silently picked. The record is dropped and named, because a
+                    # wrong binding is worse than a missing one: it puts one team's
+                    # salary on another team's books.
+                    ambiguous.append(
+                        {
+                            "name": record.player_name,
+                            "candidates": [
+                                {"nba_player_id": c.nba_player_id, "name": c.full_name}
+                                for c in resolution.ambiguous_candidates
+                            ],
+                        }
+                    )
+                    record_quality_issue(
+                        db,
+                        "contract_ambiguous_player",
+                        (
+                            f"contract row for '{record.player_name}' matched "
+                            f"{len(resolution.ambiguous_candidates)} players "
+                            f"({', '.join(str(c.nba_player_id) for c in resolution.ambiguous_candidates)}); "
+                            "not bound — a wrong binding puts one team's salary on "
+                            "another team's books"
+                        ),
+                        severity="error",
+                        entity=record.player_name,
+                    )
+                else:
+                    unmatched.append(record.player_name)
                 continue
+            methods[resolution.method] += 1
             contract = db.scalar(select(Contract).where(Contract.player_id == player.id))
             if contract is None:
                 contract = Contract(
@@ -385,13 +436,27 @@ def sync_contracts(db: Session) -> int:
             else:
                 _apply(year, values)
             matched += 1
+        db.flush()
+        # Coverage is measured from the ROSTER side, after the write. A provider-side
+        # match rate can read 98 % while the question the product needs answered — can
+        # we compute this team's payroll — is 60 %.
+        coverage = contract_coverage(db, settings.current_season, settings.cap_league_year)
+        uncovered = roster_side_unmatched(db, settings.current_season, settings.cap_league_year)
         run.rows_written = matched
         run.detail = {
             "provider": contract_provider.name,
             "matched": matched,
+            "match_methods": dict(methods),
             "unmatched_players": unmatched[:50],
+            "unmatched_players_total": len(unmatched),
+            "ambiguous_players": ambiguous[:50],
+            "ambiguous_players_total": len(ambiguous),
             "rejected_rows": getattr(contract_provider, "rejected_rows", [])[:50],
+            "coverage": coverage,
+            "roster_players_without_salary": uncovered,
+            "summary": summarize(coverage, uncovered),
         }
+        logger.info("sync_contracts: %s", run.detail["summary"])
         db.commit()
         return matched
 

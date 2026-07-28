@@ -17,6 +17,10 @@ Commands
   import-kaggle    Import historical enrichment from the Kaggle basketball dataset
   seed-demo        Populate a DEDICATED database with the synthetic demo league used by
                    the end-to-end suite. Refuses to run where nba_api rows exist.
+  contract-coverage
+                   Report ROSTER-side contract coverage without importing anything:
+                   how many rostered players have a salary for the cap league year,
+                   and how many teams therefore have a computable payroll.
   purge-fixtures [--apply]
                    List (or with --apply, delete) scenarios, trade proposals and
                    comparison sets whose names look like automated-test leftovers.
@@ -96,6 +100,19 @@ def main() -> None:
 
     if command == "seed-config":
         seed_config()
+    elif command == "contract-coverage":
+        from app.ingestion.contract_coverage import (
+            contract_coverage,
+            roster_side_unmatched,
+            summarize,
+        )
+
+        settings = get_settings()
+        with SessionLocal() as db:
+            coverage = contract_coverage(db, settings.current_season, settings.cap_league_year)
+            uncovered = roster_side_unmatched(db, settings.current_season, settings.cap_league_year)
+        print(json.dumps({**coverage, "roster_players_without_salary": uncovered}, indent=2, default=str))
+        print("\n" + summarize(coverage, uncovered))
     elif command == "purge-fixtures":
         from app.ingestion.fixtures import purge_fixtures
 
