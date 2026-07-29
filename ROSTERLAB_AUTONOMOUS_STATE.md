@@ -41,10 +41,11 @@
 
 ## Current position
 
-**Releases complete and pushed:** R0, R1, R2a, **R2c**, **R2b** (feasible scope).
+**Releases complete and pushed:** R0, R1, R2a, **R2c**, **R2b** (feasible scope), **R3**.
 **R2b's original gate was invalid and has been replaced** — see "R2b gate, reassessed".
-**Next:** R3 (impact units and calibration), the critical path; depends only on R1.
-**Status:** working, clean, pushed tree.
+**Next:** R4 (basketball methodology) — R3 unblocked it, and R4-1 needs no new data.
+**Status:** working, clean, pushed tree. Full CI-equivalent, migration, build, Playwright
+and visual-QA suites all green at `8f943cf`.
 
 ## Completed work
 
@@ -66,15 +67,20 @@
 | **QA find** — provider factory thread-safe and file-backed | `627f151` | `/teams/{id}/payroll` 500 under concurrent load with a provider configured; `base.py` breaks the cycle; a missing file no longer counts as configured |
 | **R2c** — disclosed-coverage payroll | `3d85c59` | teams showing a payroll **0/30 → 30/30**; teams verifying one 0/30 → 0/30 (unchanged by design); 23 new tests |
 | **R2b** — contract-activation honesty | `3cc0fbc` | `contract_type` NULL not "standard"; ROSTER_SIZE **(warning, medium) on all 30 teams**; 7 rule codes not 5; salary cell renders real numbers; allowance scales with the cap |
+| **R3** — impact units and calibration | `c103812` `8f943cf` | ridge retired (team R² 0.0039 vs index 0.7505); train/serve scale unified (r 0.387 → 0.911); conversion fitted at **14.977** (t 9.80, n 60); roster-gut **56.4 → ≤ 14.7** on all 30; performance sd **1.27 → 18.2** |
 
-Remaining xfail pins: **3** (20 of 23 flipped)
-- QA-1 roster-gut `performance < 25` → R3-3 (unreachable before the calibration; C12)
-- C2/R3-5 Monte-Carlo/point-estimate agreement → R3-5
+Remaining xfail pins: **1** (22 of 23 flipped)
 - QA-11 `EFF` classification → R7 (needs a third field category; C12)
+
+Flipped in R3: QA-1 roster-gut `performance < 25` (R3-3) and C2/R3-5 Monte-Carlo /
+point-estimate agreement (R3-5).
 
 ## Commits
 
 ```
+8f943cf fix(methodology): keep the band formula out of a paragraph
+c103812 feat(analytics): put team impact in net-rating points, fitted not assumed
+d63c463 docs(state): record R2c, R2b, and the gate that had to be replaced
 3cc0fbc fix(cba): stop asserting contract types no provider reports
 3d85c59 feat(cba): disclose partial payroll coverage instead of withholding payroll
 627f151 fix(contracts): make the provider factory thread-safe and file-backed
@@ -209,42 +215,56 @@ Expected at `data/external/` (also `KAGGLE_DATA_DIR`; consumed by
 `backend/app/integrations/kaggle_nba/importer.py` via `make import-kaggle`). Blocks R6's
 lineup-aware fit and any tracking/play-type work. **Blocks nothing in R0–R5.**
 
+## R3 gate — measured, all criteria met
+
+| Criterion | Gate | Measured | |
+| --- | --- | --- | --- |
+| `tei_to_net_rating` registered with slope, SE, n, per-fold slopes, LOTO, construction | present | all present | ✅ |
+| Slope significance | t > 5 | **9.80** | ✅ |
+| LOTO out-of-sample RMSE | < 4.5 | 2.944 / **3.773** | ✅ |
+| …as a share of predicting zero | < 75 % | 56.6 % / **65.0 %** | ✅ |
+| Per-fold slopes vs pooled 14.977 | ±15 % | 14.716 / 15.276 (**±2 %**) | ✅ |
+| Roster-gut performance | < 25 on all 30 | max **14.70**, 0 teams ≥ 25 | ✅ |
+| Clamp binds on a realistic sample | < 5 % | **2.7 %** of 150 | ✅ |
+| Performance-component sd | > 8 (was 1.27) | **18.211** | ✅ |
+| Distinct band widths | > 400 of 512 | **507 of 512** | ✅ |
+| Band width monotone in minutes | ρ < −0.95 | **−1.000** | ✅ |
+| No literal ×5 on `team_tei_per_minute` | none | `PLAYERS_ON_COURT` deleted; test greps for it | ✅ |
+| No doc/UI asserts "points per 100" unless b = 1.0 | none | 7 docs + the in-product page rewritten | ✅ |
+
 ## Exact next step
 
-**R3 — impact units and calibration.** It is the critical path (blocks R4 and R5), depends
-only on R1, and needs no data the repository lacks.
+**R4 — basketball methodology.** Depends on R1 and R3, both complete. R4-1 is the highest
+value-per-unit-risk work left and needs no data the repository lacks.
 
 ```bash
 git checkout feat/rosterlab-autonomous-roadmap
 cd "nba front office command center prod"
-backend/.venv/bin/pytest -q          # 251 passed, 3 xfailed at 3cc0fbc
+make test        # 276 passed / 1 skipped / 1 xfailed · 43 frontend at 8f943cf
 ```
 
-Order matters, and the plan is explicit about why:
+R4-1, in the plan's order:
 
-1. **R3-1 first — promote the transparent index, retire the ridge.** The ridge has no
-   team-level validity (R² = 0.004 in levels, 0.003 change-on-change; the index gets 0.750
-   and 0.624 on identical data) and is not computable per season, so R3-2 would fit on
-   n = 30 of a metric with no signal. Fitting on ridge TEI returns a coefficient
-   indistinguishable from zero, which would be misdiagnosed as a calibration bug rather
-   than a metric one.
-2. **R3-3 must be atomic with R3-2.** Applying the fitted ~14.5× on today's allocator
-   drives the roster-gut performance score from 56.4 to 99.8 with 96.7 % of teams clipped
-   — a correct calibration shipping as a dramatic visible regression.
-3. **R3-4 lands in the same release as R3-1.** With the index forced, the interval band is
-   still 3.1553 sourced from `ridge_residual_std` — an interval derived from a retired
-   model.
-4. Watch the highest-probability silent failure: a coefficient fitted on single-season-z
-   features is **27 % too large** applied to production window-z TEI (21.29 vs 16.71 on
-   identical teams). Nothing in the codebase would catch it.
+1. **`fit.py` per-skill aggregation.** Accumulate per *skill* before applying severity.
+   Fixing the proxies without this leaves `perimeter_defense` double-counted for 9 of 21
+   teams, so most of the measurement error survives the data improvement while credit is
+   claimed for fixing it.
+2. **`ball_security → turnover_avoidance = pct_inv(TM_TOV_PCT)`.** There is no inversion
+   mechanism in the skill path to copy — the two that exist are team-side severity and a
+   negative index weight, neither reusable. Add a named `pct_inv` helper, not a bare
+   literal.
+3. R4-2's defensive input must be **team-demeaned**, or it reproduces the reflection
+   problem that made ridge TEI worthless under a new label (C12).
 
-Two of the three remaining xfail pins flip in R3 (QA-1 roster-gut `performance < 25` in
-R3-3; C2/R3-5 Monte-Carlo agreement in R3-5). QA-11 stays pinned to R7.
+Two things R3 changed that R4 must not undo: the conversion coefficient is valid only for
+the regressor construction recorded in `model_versions`, and any change to how team TEI is
+built invalidates it. `test_impact_units.py` fails loudly if the served constant and the
+registered fit diverge.
 
 If contract work resumes instead, the only thing that moves the legality verdict is a
 hand-curated `data/contracts/contracts.csv`; no further BBRef parsing will.
 
 ## Push status
 
-`origin/feat/rosterlab-autonomous-roadmap` is up to date through `3cc0fbc` (R2b). `main`
+`origin/feat/rosterlab-autonomous-roadmap` is up to date through `8f943cf` (R3). `main`
 untouched; no history rewritten; nothing force-pushed.
