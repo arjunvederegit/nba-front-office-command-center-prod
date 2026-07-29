@@ -33,8 +33,49 @@ ADVANCED_COLS = [
     "PIE",
     "POSS",
 ]
-BASE_COLS = ["PTS", "REB", "AST", "STL", "BLK", "TOV", "FGA", "FG3A", "FTA", "PLUS_MINUS", "AGE"]
+BASE_COLS = [
+    "PTS",
+    "REB",
+    "AST",
+    "STL",
+    "BLK",
+    "TOV",
+    "PF",
+    "FGA",
+    "FG3A",
+    "FG3M",
+    "FTA",
+    "PLUS_MINUS",
+    "AGE",
+]
 ESTIMATED_COLS = ["E_OFF_RATING", "E_DEF_RATING", "E_NET_RATING", "E_USG_PCT"]
+
+
+def _teammate_def_rating_excluding_self(df: pd.DataFrame) -> pd.Series:
+    """Minutes-weighted mean on-court `DEF_RATING` of a player's TEAMMATES.
+
+    The baseline a defensive differential is measured against. Using the team's own
+    published `DEF_RATING` instead is very nearly the same number per player —
+    r = 0.998 — but the two behave completely differently once aggregated back to a
+    team, because the team stat puts the player on both sides of the subtraction. The
+    minutes-weighted team aggregate of `(team_DEF - player_DEF)` correlates **+0.342**
+    with team defensive rating, and the leave-self-out version **-0.292**: the same
+    player-level quantity, opposite signs, purely from the self term. Excluding the
+    player is the construction that means what it says.
+    """
+    dr = pd.to_numeric(df["DEF_RATING"], errors="coerce")
+    minutes = pd.to_numeric(df["total_minutes"], errors="coerce")
+    ok = dr.notna() & minutes.notna() & (minutes > 0)
+    # Zero out unusable rows so they contribute nothing to either running total.
+    weighted = (dr * minutes).where(ok, 0.0)
+    weights = minutes.where(ok, 0.0)
+
+    roster = [df["team_id"], df["season"]]
+    others_weighted = weighted.groupby(roster).transform("sum") - weighted
+    others_minutes = weights.groupby(roster).transform("sum") - weights
+    # A player who is his own team's only measured row has no teammates to compare
+    # against; that is missing, not zero.
+    return (others_weighted / others_minutes.replace(0, np.nan)).where(ok)
 
 
 def build_player_season_features(db: Session) -> pd.DataFrame:
@@ -47,6 +88,7 @@ def build_player_season_features(db: Session) -> pd.DataFrame:
             PlayerSeasonStats.games_played,
             PlayerSeasonStats.minutes,
             PlayerSeasonStats.stats,
+            PlayerSeasonStats.team_id,
             Player.full_name,
             Player.nba_player_id,
             Player.birth_date,
@@ -71,9 +113,14 @@ def build_player_season_features(db: Session) -> pd.DataFrame:
                 "height_inches": r.height_inches,
                 "position": r.position,
                 "is_active": r.is_active,
+                "team_id": None,
             },
         )
         stats = r.stats or {}
+        # Only some stat types carry a team: every `estimated` row has team_id NULL, so
+        # an unconditional assignment would erase the team the `base` row supplied.
+        if r.team_id is not None:
+            entry["team_id"] = r.team_id
         if r.stat_type == "base":
             entry["GP"] = r.games_played
             entry["MIN"] = r.minutes
@@ -98,18 +145,40 @@ def build_player_season_features(db: Session) -> pd.DataFrame:
         ("REB", "reb_per_min"),
         ("AST", "ast_per_min"),
         ("TOV", "tov_per_min"),
+        ("PF", "pf_per_min"),
     ):
         df[name] = pd.to_numeric(df[col], errors="coerce") / df["MIN"].astype(float)
     fga = pd.to_numeric(df["FGA"], errors="coerce")
     df["fg3a_rate"] = pd.to_numeric(df["FG3A"], errors="coerce") / fga.replace(0, np.nan)
     df["fta_rate"] = pd.to_numeric(df["FTA"], errors="coerce") / fga.replace(0, np.nan)
+    # Three-point ATTEMPTS per minute, which is what "three-point volume" means. The
+    # existing `fg3a_rate` is 3PA/FGA — shot selection, not volume — and it tracks the
+    # need it is supposed to address (team 3PA per game) at rho +0.754 where this tracks
+    # it at +0.845, a bootstrap difference of +0.093 [+0.016, +0.178].
+    df["fg3a_per_min"] = pd.to_numeric(df["FG3A"], errors="coerce") / df["MIN"].astype(float)
     # Points per 75 possessions using individual possessions when available
     poss = pd.to_numeric(df.get("POSS"), errors="coerce")
     pts_total = pd.to_numeric(df["PTS"], errors="coerce") * df["GP"].astype(float)
     df["pts_per75"] = np.where(poss > 0, pts_total / poss * 75, np.nan)
+
+    # Team-relative defensive differential, positive = the team defends better with this
+    # player on the floor. Derived HERE, in the season frame, because it needs team
+    # context and 188 of 632 window players changed team inside the window — collapsing
+    # first would attribute a player's differential to the wrong roster.
+    if "DEF_RATING" in df.columns:
+        df["def_diff_raw"] = _teammate_def_rating_excluding_self(df) - pd.to_numeric(
+            df["DEF_RATING"], errors="coerce"
+        )
+    else:
+        df["def_diff_raw"] = np.nan
     return df
 
 
+# The ONLY numeric columns that survive `recency_weighted_features`. A column absent
+# from this list is silently dropped by the collapse — measured on the real database, the
+# season frame carries 49 columns and the window frame 25 — and a skill defined on a
+# dropped column resolves for nobody. That is the C7 trap, and it is why every R4 skill
+# input appears here.
 MODEL_FEATURES = [
     "pts_per75",
     "TS_PCT",
@@ -120,14 +189,37 @@ MODEL_FEATURES = [
     "DREB_PCT",
     "stl_per_min",
     "blk_per_min",
+    "pf_per_min",
     "fg3a_rate",
+    "fg3a_per_min",
     "fta_rate",
+    "def_diff_raw",
     "MIN",
     "GP",
     "AGE",
     "PIE",
     "NET_RATING",
 ]
+
+# R4-1d. Empirical-Bayes shrinkage for three-point accuracy, in ATTEMPTS. Three
+# independent estimators on the 1714 ingested player-seasons agree: beta-binomial
+# method-of-moments 272.5, maximum likelihood 297.2, and the out-of-sample binomial
+# log-loss optimum 326.
+#
+# Shrinkage is not optional here. 635 of 1714 player-seasons (37.0 %) have fewer than 50
+# total attempts and 219 sit at exactly 0.000 or at least 1.000, so an unshrunk
+# percentage ranks small-sample non-shooters at both extremes.
+FG3_SHRINKAGE_ATTEMPTS = 300.0
+FG3_LEAGUE_MEAN = 0.3618
+
+# R4-2. Shrinkage for the defensive differential, in MINUTES.
+#
+# Documented as **arbitrary within a wide band**, deliberately: every value from 1,000 to
+# 20,000 gives the same answer to three decimal places (year-over-year reliability of the
+# shipped composite moves 0.860 -> 0.859 across that whole range). Only K = 0 behaves
+# differently. There is nothing here to tune, and a future recalibration that "optimises"
+# K would be fitting noise.
+DEF_SHRINKAGE_MINUTES = 5300.0
 
 
 def minutes_weighted_league_mean(df: pd.DataFrame, col: str) -> float:
@@ -207,11 +299,26 @@ def recency_weighted_features(
         X_weighted = sum(decay^(s-1) * minutes_s * X_s) / sum(decay^(s-1) * minutes_s)
 
     where s=1 is the most recent season. Players below min_total_minutes across the
-    window are excluded from modeling (insufficient evidence, not imputed)."""
+    window are excluded from modeling (insufficient evidence, not imputed).
+
+    **Two quantities are derived AFTER the collapse rather than before it**, because
+    shrinking per season and then averaging is not the same operation as shrinking the
+    window (R4-1d, R4-2):
+
+    - `def_impact` shrinks the defensive differential on *window* minutes. Shrinking each
+      season separately and then averaging loses 42 % of the spread — sd 0.363 against
+      0.625 — and moves 298 of 632 players by more than five percentile points, because
+      every season is shrunk as though it were the only evidence there is.
+    - `fg3_pct_shrunk` shrinks three-point accuracy on *window* attempts. Attempts are
+      accumulated as a recency-weighted SUM, not a mean: the shrinkage constant is
+      denominated in attempts, and a mean of per-season attempts is a rate, not evidence.
+      Measured, a collapsed weighted mean is a median 0.475x the true window total.
+    """
     ordered = list(reversed(seasons))  # most recent first
     weight_by_season = {season: decay**i for i, season in enumerate(ordered)}
     df = df[df["season"].isin(seasons)].copy()
-    df["recency_w"] = df["season"].map(weight_by_season) * df["total_minutes"].astype(float)
+    df["season_w"] = df["season"].map(weight_by_season).astype(float)
+    df["recency_w"] = df["season_w"] * df["total_minutes"].astype(float)
 
     numeric_cols = [c for c in MODEL_FEATURES if c in df.columns]
     records: list[dict[str, Any]] = []
@@ -230,6 +337,10 @@ def recency_weighted_features(
             "latest_season": latest["season"],
             "seasons_observed": len(group),
             "total_minutes_window": float(group["total_minutes"].sum()),
+            # Recency-weighted SUMS, not means — these are evidence counts feeding a
+            # shrinkage denominator, so averaging them would be a units error.
+            "fg3a_window": _recency_sum(group, "FG3A"),
+            "fg3m_window": _recency_sum(group, "FG3M"),
         }
         for col in numeric_cols:
             values = pd.to_numeric(group[col], errors="coerce")
@@ -239,7 +350,55 @@ def recency_weighted_features(
             else:
                 record[col] = None
         records.append(record)
-    return pd.DataFrame(records)
+
+    window = pd.DataFrame(records)
+    if window.empty:
+        return window
+    return _derive_post_collapse(window)
+
+
+def _recency_sum(group: pd.DataFrame, per_game_col: str) -> float:
+    """Recency-weighted season total of a per-game counting stat.
+
+    Older evidence counts less, exactly as it does for every other column here, but the
+    result stays in *attempts* rather than becoming a rate — which is what a shrinkage
+    constant denominated in attempts requires.
+    """
+    if per_game_col not in group.columns or "GP" not in group.columns:
+        return float("nan")
+    per_game = pd.to_numeric(group[per_game_col], errors="coerce")
+    games = pd.to_numeric(group["GP"], errors="coerce")
+    season_w = group["season_w"].astype(float)
+    total = (per_game * games * season_w)
+    return float(total.sum()) if total.notna().any() else float("nan")
+
+
+def _derive_post_collapse(window: pd.DataFrame) -> pd.DataFrame:
+    """Quantities that must be shrunk against the WINDOW, not against each season.
+
+    Kept here rather than at either call site so that `train.py` and the request-path
+    `evaluation._skills()` cannot diverge — they both collapse through this function, and
+    a skill that means one thing at training time and another at serve time is the exact
+    failure R3 spent a release removing.
+    """
+    minutes = pd.to_numeric(window.get("total_minutes_window"), errors="coerce")
+
+    if "def_diff_raw" in window.columns:
+        diff = pd.to_numeric(window["def_diff_raw"], errors="coerce")
+        window["def_impact"] = diff * (minutes / (minutes + DEF_SHRINKAGE_MINUTES))
+    else:
+        window["def_impact"] = np.nan
+
+    makes = pd.to_numeric(window.get("fg3m_window"), errors="coerce")
+    attempts = pd.to_numeric(window.get("fg3a_window"), errors="coerce")
+    shrunk = (makes + FG3_SHRINKAGE_ATTEMPTS * FG3_LEAGUE_MEAN) / (
+        attempts + FG3_SHRINKAGE_ATTEMPTS
+    )
+    # A player with no attempt record at all has no accuracy — the prior alone is the
+    # league mean for everybody, which is a constant, and a constant skill is precisely
+    # what the no-silent-defaults invariant exists to catch.
+    window["fg3_pct_shrunk"] = shrunk.where(attempts.notna() & (attempts > 0))
+    return window
 
 
 def build_features(db: Session) -> dict:

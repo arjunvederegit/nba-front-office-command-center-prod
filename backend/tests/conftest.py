@@ -146,12 +146,23 @@ def tmp_sqlite_url() -> str:
 
 
 def _season_stat_rows(
-    db: Session, player: Player, index: int, season: str, retrieved_at: datetime
+    db: Session,
+    player: Player,
+    index: int,
+    season: str,
+    retrieved_at: datetime,
+    team_id: str | None = None,
 ) -> None:
-    """Deterministic, index-varied base/advanced rows so percentile skills are not constant."""
+    """Deterministic, index-varied base/advanced rows so percentile skills are not constant.
+
+    `team_id` is set because R4's defensive differential is measured against a player's
+    *teammates*; without it every fixture player lands in one nameless roster and the
+    differential collapses toward a league-wide mean.
+    """
     minutes = 8.0 + (index % 12) * 2.4  # 8.0 .. 34.4 mpg
     games = 55 + (index % 7) * 4  # 55 .. 79
     possessions = games * minutes * 2.1
+    attempts_3 = 0.5 + (index % 9) * 0.95
     db.add(
         PlayerSeasonStats(
             player_id=player.id,
@@ -159,6 +170,7 @@ def _season_stat_rows(
             stat_type="base",
             games_played=games,
             minutes=minutes,
+            team_id=team_id,
             stats={
                 "PTS": 4.0 + (index % 11) * 2.3,
                 "REB": 2.0 + (index % 9) * 0.9,
@@ -166,8 +178,13 @@ def _season_stat_rows(
                 "STL": 0.3 + (index % 6) * 0.22,
                 "BLK": 0.1 + (index % 5) * 0.31,
                 "TOV": 0.6 + (index % 7) * 0.24,
+                # R4: fouls feed the defensive composite, three-point makes feed shrunk
+                # accuracy. Varied on a different modulus from attempts so the resulting
+                # percentage is not a step function of the index.
+                "PF": 0.9 + (index % 8) * 0.34,
                 "FGA": 4.0 + (index % 10) * 1.7,
-                "FG3A": 0.5 + (index % 9) * 0.95,
+                "FG3A": attempts_3,
+                "FG3M": attempts_3 * (0.28 + (index % 13) * 0.011),
                 "FTA": 0.8 + (index % 6) * 0.7,
                 "PLUS_MINUS": -4.0 + (index % 13) * 0.8,
                 "AGE": 21.0 + (index % 14),
@@ -273,7 +290,7 @@ def seeded_league(db: Session, cap_params: LeagueCapParameters) -> dict:
             )
             player.height_inches = 72 + (index % 12)
             for season in ("2024-25", "2025-26"):
-                _season_stat_rows(db, player, index, season, now)
+                _season_stat_rows(db, player, index, season, now, team_id=team.id)
             # The final AAA player is intentionally unmodelled.
             if not (abbr == "AAA" and i == 14):
                 tei = -3.0 + (index % 15) * 0.5

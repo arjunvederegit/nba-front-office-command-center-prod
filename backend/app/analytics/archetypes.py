@@ -4,13 +4,17 @@ K-means over standardized role features; cluster labels are assigned from cluste
 centers by deterministic rules (never arbitrarily). Silhouette score is recorded with
 the model version so clustering quality is inspectable."""
 
+import hashlib
+import inspect
+from functools import lru_cache
+
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
-from .features import RANDOM_SEED
+from .features import MODEL_FEATURES, RANDOM_SEED
 
 ARCHETYPE_FEATURES = [
     "USG_PCT",
@@ -195,3 +199,28 @@ def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float
         "scoring": pct("pts_per75"),
     }
     return {key: value for key, value in candidates.items() if value is not None}
+
+
+@lru_cache(maxsize=1)
+def skill_schema_fingerprint() -> str:
+    """Identity of the skill-vector *contract*, for cache invalidation.
+
+    `evaluation._skills()` caches the whole league's skill vectors under
+    `cache.versioned_key("skills", ...)`, and that version namespace is bumped only by an
+    ingestion run — never by a deploy. So a release that changes what a skill vector
+    contains would keep serving the previous shape for the remainder of the six-hour TTL:
+    new skills missing, renamed skills stale, no error anywhere. The failure cannot
+    reproduce locally either, because the in-process fallback cache dies with the process
+    while Redis, which production runs in a separate container, does not.
+
+    Fingerprinting the declared keys, the function that computes them, and the feature
+    list they read means the key changes exactly when the contract does.
+    """
+    payload = b"".join(
+        (
+            "|".join(SKILL_KEYS).encode(),
+            inspect.getsource(player_skill_vector).encode(),
+            repr(MODEL_FEATURES).encode(),
+        )
+    )
+    return hashlib.sha256(payload).hexdigest()[:12]

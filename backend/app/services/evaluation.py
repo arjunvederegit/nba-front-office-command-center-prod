@@ -15,7 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.analytics.age_curve import timeline_alignment
-from app.analytics.archetypes import SKILL_KEYS, player_skill_vector
+from app.analytics.archetypes import (
+    SKILL_KEYS,
+    player_skill_vector,
+    skill_schema_fingerprint,
+)
 from app.analytics.features import build_player_season_features, recency_weighted_features
 from app.analytics.fit import fit_score
 from app.analytics.needs import NEED_TO_SKILL
@@ -209,7 +213,10 @@ class EvaluationService:
     def _skills(self) -> dict[str, dict[str, float]]:
         if self._skills_cache is None:
             cache = get_cache()
-            key = cache.versioned_key("skills")
+            # The data-version namespace alone is bumped by ingestion, never by a
+            # deploy, so a release that changes the skill contract would keep serving the
+            # previous shape for the rest of the six-hour TTL. The fingerprint closes it.
+            key = cache.versioned_key("skills", skill_schema_fingerprint())
             cached = cache.get_json(key)
             if cached:
                 self._skills_cache = cached
