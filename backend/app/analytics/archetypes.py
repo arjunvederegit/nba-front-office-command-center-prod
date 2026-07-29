@@ -117,10 +117,12 @@ def fit_archetypes(weighted: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 # Skill dimensions used by roster-fit; derived from the same feature space so that
 # team needs and player skills are directly comparable.
 SKILL_KEYS = [
-    "shooting",
+    "shooting_volume",
+    "shooting_accuracy",
     "creation",
     "turnover_avoidance",
-    "perimeter_defense",
+    "team_defense",
+    "point_of_attack_defense",
     "rim_protection",
     "rebounding",
     "size",
@@ -187,12 +189,28 @@ def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float
         return sum(v * w for v, w in known) / total
 
     candidates: dict[str, float | None] = {
-        "shooting": blend(("fg3a_rate", 0.5), ("TS_PCT", 0.5)),
+        # R4-1d. `shooting` was 0.5*pct(fg3a_rate) + 0.5*pct(TS_PCT), which answered two
+        # different needs — "we do not shoot enough threes" and "we do not shoot them
+        # well" — with one number. They are now separate skills, and volume is attempts
+        # per minute rather than the old 3PA/FGA, which is shot *selection*: against the
+        # quantity the `three_point_volume` need is actually built from, team 3PA per
+        # game, attempts-per-minute tracks at rho +0.845 and 3PA/FGA at +0.754.
+        "shooting_volume": pct("fg3a_per_min"),
+        # Accuracy is empirical-Bayes shrunk before it is ranked. 37 % of player-seasons
+        # have under 50 attempts and 219 sit at exactly 0.000 or 1.000, so an unshrunk
+        # percentage ranks small-sample non-shooters at both extremes.
+        "shooting_accuracy": blend(("fg3_pct_shrunk", 0.7), ("TS_PCT", 0.3)),
         "creation": pct("AST_PCT"),
         # Ball security is its own skill, not a synonym for creation (R4-1b). See
         # `needs.NEED_TO_SKILL` for the mapping this replaces and why it was backwards.
         "turnover_avoidance": pct_inv("TM_TOV_PCT"),
-        "perimeter_defense": pct("stl_per_min"),
+        # R4-1c/R4-2. `perimeter_defense = pct(stl_per_min)` served BOTH the
+        # `defense_overall` and `point_of_attack_defense` needs, so a team told it
+        # defended badly overall and a team told it could not contain a ball handler were
+        # given the same answer, from steals alone. They are now two composites over
+        # different terms — see `features.TEAM_DEFENSE_WEIGHTS` for what selected them.
+        "team_defense": pct("team_defense_score"),
+        "point_of_attack_defense": pct("poa_defense_score"),
         "rim_protection": pct("blk_per_min"),
         "rebounding": blend(("DREB_PCT", 0.7), ("OREB_PCT", 0.3)),
         "size": pct("height_inches"),

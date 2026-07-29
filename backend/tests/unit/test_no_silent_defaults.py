@@ -50,6 +50,14 @@ def _league_frame() -> pd.DataFrame:
             "OREB_PCT": [0.01 + i * 0.004 for i in range(20)],
             "height_inches": [72 + i % 12 for i in range(20)],
             "pts_per75": [8.0 + i * 0.9 for i in range(20)],
+            # R4 inputs. The two `*_score` columns are composites derived after the
+            # recency collapse in `features._derive_post_collapse`; a fixture stands in
+            # for them directly, because what this file tests is what happens to a skill
+            # when its source column is present or absent, not how the source is built.
+            "fg3a_per_min": [0.02 + i * 0.014 for i in range(20)],
+            "fg3_pct_shrunk": [0.31 + i * 0.004 for i in range(20)],
+            "team_defense_score": [-1.2 + i * 0.13 for i in range(20)],
+            "poa_defense_score": [-1.0 + i * 0.11 for i in range(20)],
         }
     )
 
@@ -66,12 +74,23 @@ def test_skill_vector_is_complete_when_every_input_is_present() -> None:
 
 def test_a_missing_column_omits_the_skill_instead_of_returning_half() -> None:
     """The C7 trap, asserted directly."""
-    league = _league_frame().drop(columns=["stl_per_min", "blk_per_min"])
+    league = _league_frame().drop(
+        columns=["blk_per_min", "team_defense_score", "poa_defense_score"]
+    )
     vector = player_skill_vector(league.iloc[10], league)
-    assert "perimeter_defense" not in vector
     assert "rim_protection" not in vector
+    assert "team_defense" not in vector
+    assert "point_of_attack_defense" not in vector
     # the rest still resolve, from their own columns
-    assert {"shooting", "creation", "rebounding", "size", "scoring"} <= set(vector)
+    assert {
+        "shooting_volume",
+        "shooting_accuracy",
+        "creation",
+        "turnover_avoidance",
+        "rebounding",
+        "size",
+        "scoring",
+    } <= set(vector)
 
 
 def test_a_missing_value_for_one_player_omits_only_that_skill() -> None:
@@ -84,12 +103,13 @@ def test_a_missing_value_for_one_player_omits_only_that_skill() -> None:
 
 
 def test_a_blend_renormalizes_over_the_components_that_exist() -> None:
-    """`shooting` is 0.5·fg3a_rate + 0.5·TS_PCT. With one half absent the other must
-    carry the skill on its own, not be halved toward zero."""
-    league = _league_frame().drop(columns=["fg3a_rate"])
+    """`shooting_accuracy` is 0.7·fg3_pct_shrunk + 0.3·TS_PCT. With one part absent the
+    other must carry the skill on its own, not be scaled toward zero by the missing
+    weight."""
+    league = _league_frame().drop(columns=["fg3_pct_shrunk"])
     vector = player_skill_vector(league.iloc[10], league)
     ts_only = float((pd.to_numeric(league["TS_PCT"]) < league.iloc[10]["TS_PCT"]).mean())
-    assert vector["shooting"] == pytest.approx(ts_only)
+    assert vector["shooting_accuracy"] == pytest.approx(ts_only)
 
 
 def test_no_skill_is_constant_across_the_population() -> None:

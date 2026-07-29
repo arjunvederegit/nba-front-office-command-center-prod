@@ -160,12 +160,22 @@ def compute_team_needs(
 # 10 of the top 12 by assist rate sit below the median in turnover avoidance, and those
 # twelve average 0.285 against a 0.5 median. The mapping did not merely fail to help — it
 # pointed at the worst available answer.
+#
+# `defense_overall` and `point_of_attack_defense` both resolved to `perimeter_defense`,
+# which was steals per minute. Two different questions — "we defend badly" and "we cannot
+# contain a ball handler" — got one answer, and it was the answer that made acquiring a
+# high-usage lead guard read as a point-of-attack upgrade. They now address separate
+# skills built from different terms (R4-1c).
+#
+# `three_point_volume` and `shooting_efficiency` likewise shared one `shooting` skill,
+# so a team that shot plenty of threes badly and a team that shot few threes well were
+# handed the same recommendation (R4-1d).
 NEED_TO_SKILL = {
-    "three_point_volume": "shooting",
-    "shooting_efficiency": "shooting",
+    "three_point_volume": "shooting_volume",
+    "shooting_efficiency": "shooting_accuracy",
     "offense_overall": "scoring",
-    "defense_overall": "perimeter_defense",
-    "point_of_attack_defense": "perimeter_defense",
+    "defense_overall": "team_defense",
+    "point_of_attack_defense": "point_of_attack_defense",
     "rim_protection": "rim_protection",
     "defensive_rebounding": "rebounding",
     "playmaking": "creation",

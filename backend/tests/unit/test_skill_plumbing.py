@@ -54,7 +54,14 @@ CARRIED_IDENTITY_COLUMNS = {
     "player_id",
 }
 # Derived after the collapse, so not in MODEL_FEATURES but present in the window frame.
-POST_COLLAPSE_COLUMNS = {"def_impact", "fg3_pct_shrunk", "fg3a_window", "fg3m_window"}
+POST_COLLAPSE_COLUMNS = {
+    "def_impact",
+    "fg3_pct_shrunk",
+    "fg3a_window",
+    "fg3m_window",
+    "team_defense_score",
+    "poa_defense_score",
+}
 
 
 def _source_columns_read_by_skills() -> set[str]:

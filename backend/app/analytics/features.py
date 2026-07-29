@@ -221,6 +221,62 @@ FG3_LEAGUE_MEAN = 0.3618
 # K would be fitting noise.
 DEF_SHRINKAGE_MINUTES = 5300.0
 
+# R4-2. The defensive composites. **Committed before any named-player check was run**,
+# which is the anti-overfitting requirement (A'''): no player's value selected these
+# weights, and the face-validity review that follows is reported, never gated.
+#
+# The plan prescribed the team-demeaned on-court differential as the PRIMARY term at
+# >= 50 % weight, with event rates minor. The data contradicts that, and the criteria the
+# plan proposed to justify it turn out not to test the release:
+#
+#   - A placebo that ignores the player entirely — score everyone by their own team's
+#     defensive rating — scores rho -0.988 on the plan's A', a decile gap of 11.01 on A''
+#     (threshold 3.0) and R2 0.904 on the supporting change-on-change design. A criterion
+#     a zero-information metric wins by 2.6x cannot discriminate.
+#   - A' is additionally degenerate by construction for a demeaned quantity: each
+#     possession is charged to five on-court players, so the possession-weighted mean of
+#     on-court DEF_RATING over a full roster IS the team rating, and aggregation destroys
+#     94.7 % of the dispersion (player sd 8.66 -> team aggregate 0.455).
+#   - On the non-circular test — does the metric add anything beyond the persistence of
+#     the differential itself — the differential adds nothing (partial r -0.056) while the
+#     event rates add the most (+0.133). Out-of-sample gain against a team's own prior
+#     defensive rating falls monotonically as the impact weight rises: +0.0253 at weight
+#     0.00, +0.0093 at 0.30, -0.0089 at 0.60.
+#   - Reliability decides the rest. Year-over-year, the shipped composite is 0.859
+#     (0.869 for players who changed team); the plan's 0.60-impact blend is 0.44 and 0.37.
+#     A trade tool projects a player onto a new roster, so a metric that does not survive
+#     the move is not fit for the one thing it is for.
+#
+# The differential is kept as a 0.10 minority term rather than dropped, because it is the
+# only term carrying any signal on the question the product actually asks: for the 100
+# players who changed team, prior-season defensive value against the change in the
+# RECEIVING team's defensive rating gives -0.151 for the differential and +0.001 for
+# steals. That correlation is not distinguishable from zero at this sample size, and is
+# reported as such — it is a reason to keep a minority term, not a claim of validation.
+#
+# What is NOT claimed: none of this validates the composite as a measure of defensive
+# ability. Every target available in this repository is derived from on-court DEF_RATING,
+# so every test is circular to some degree. Honest validation needs the matchup and
+# tracking data that R6 defers, and `docs/limitations.md` says so.
+TEAM_DEFENSE_WEIGHTS = {
+    "def_impact": 0.10,
+    "blk_per_min": 0.36,
+    "stl_per_min": 0.27,
+    "DREB_PCT": 0.22,
+    "pf_per_min": -0.05,
+}
+
+# Point-of-attack defence is on-ball perimeter pressure, so it is deliberately NOT the
+# same blend: rim protection and defensive rebounding are what a *big* contributes, and
+# including them is what let a shot-blocking centre read as an elite on-ball defender.
+# Ball pressure achieved without fouling is the construct, which is why the foul term is
+# three times heavier here than in the overall composite.
+POA_DEFENSE_WEIGHTS = {
+    "def_impact": 0.15,
+    "stl_per_min": 0.60,
+    "pf_per_min": -0.25,
+}
+
 
 def minutes_weighted_league_mean(df: pd.DataFrame, col: str) -> float:
     values = pd.to_numeric(df[col], errors="coerce")
@@ -398,7 +454,43 @@ def _derive_post_collapse(window: pd.DataFrame) -> pd.DataFrame:
     # league mean for everybody, which is a constant, and a constant skill is precisely
     # what the no-silent-defaults invariant exists to catch.
     window["fg3_pct_shrunk"] = shrunk.where(attempts.notna() & (attempts > 0))
+
+    for name, weights in (
+        ("team_defense_score", TEAM_DEFENSE_WEIGHTS),
+        ("poa_defense_score", POA_DEFENSE_WEIGHTS),
+    ):
+        window[name] = _weighted_z_composite(window, weights, minutes)
     return window
+
+
+def _weighted_z_composite(
+    window: pd.DataFrame, weights: dict[str, float], minutes: pd.Series
+) -> pd.Series:
+    """Minutes-weighted z-scores of each term, combined on fixed weights.
+
+    Every term is standardised against the *window population itself*, which is the same
+    632-player frame at training time and at serve time because both paths collapse
+    through `recency_weighted_features`. A component that is entirely missing is dropped
+    and the remaining weights renormalised, so the composite keeps its scale rather than
+    quietly shrinking toward zero — the same rule `player_skill_vector.blend` follows.
+    """
+    total = pd.Series(np.zeros(len(window)), index=window.index, dtype=float)
+    used = 0.0
+    for col, weight in weights.items():
+        if col not in window.columns:
+            continue
+        values = pd.to_numeric(window[col], errors="coerce")
+        mask = values.notna() & minutes.notna() & (minutes > 0)
+        if mask.sum() < 10:
+            continue
+        mean = float(np.average(values[mask], weights=minutes[mask]))
+        var = float(np.average((values[mask] - mean) ** 2, weights=minutes[mask]))
+        std = np.sqrt(var) if var > 0 else 1.0
+        total = total + weight * ((values - mean) / std).fillna(0.0)
+        used += abs(weight)
+    if used <= 0:
+        return pd.Series(np.nan, index=window.index, dtype=float)
+    return total * (sum(abs(w) for w in weights.values()) / used)
 
 
 def build_features(db: Session) -> dict:
