@@ -132,7 +132,13 @@ class TestBBRefSnapshotProvider:
             assert record.source_name == "basketball-reference.com contracts snapshot"
             assert record.source_date == expected_date
             assert record.nba_player_id is None  # name matching happens downstream
-            assert record.contract_type == "standard"
+            # C9: the page has no contract-type column, so the field is UNKNOWN. Emitting
+            # "standard" flipped ROSTER_SIZE to (pass, high) league-wide on data nobody
+            # had, and let a two-way salary inflate the salary-matching maximum.
+            assert record.contract_type is None
+            # The page has no signing-date or no-trade column either; neither is guessed.
+            assert record.signed_date is None
+            assert record.no_trade_clause is None
         maxplayer = _by_player(records)["Fixture Maxplayer"][0]
         assert maxplayer.guaranteed == 40_000_000  # contract-level remain_gtd total
 

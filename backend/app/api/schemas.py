@@ -47,6 +47,13 @@ class RosterPlayerOut(BaseModel):
     tei: float | None = None
     archetype: str | None = None
     availability: float | None = None
+    # Contract facts for the cap league year. All three are None when unknown — the
+    # trade-evaluator roster cell rendered a hardcoded "salary — · years —" before R2b,
+    # so importing contract data changed nothing on screen and the bug would have become
+    # invisible the moment someone marked the import done.
+    salary: int | None = None
+    contract_years_remaining: int | None = None
+    contract_type: str | None = None
 
 
 class PlayerOut(BaseModel):

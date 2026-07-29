@@ -218,7 +218,10 @@ class Contract(Base, ProvenanceMixin):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     player_id: Mapped[str] = mapped_column(ForeignKey("players.id"), index=True)
-    contract_type: Mapped[str] = mapped_column(String(30), default="standard")
+    # Nullable: NULL means the provider does not report contract type. A default of
+    # "standard" asserted that every contract was standard, which flipped ROSTER_SIZE
+    # from (warning, medium) to (pass, high) on data nobody had (C9).
+    contract_type: Mapped[str | None] = mapped_column(String(30), nullable=True, default=None)
     signed_date: Mapped[date | None] = mapped_column(Date)
     no_trade_clause: Mapped[bool | None] = mapped_column(Boolean)
     source_name: Mapped[str] = mapped_column(String(100))

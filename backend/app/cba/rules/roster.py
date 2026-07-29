@@ -21,10 +21,13 @@ class RosterSizeRule:
         results = []
         for team in context.teams:
             after = team.roster_count_after
-            types_known = (
-                all(p.contract_type is not None for p in team.outgoing + team.incoming)
-                and context.contract_provider_configured
-            )
+            # The 15-standard limit counts the whole post-trade roster, so it needs the
+            # contract type of every player on it — the ones staying as well as the ones
+            # moving. Gating on the traded players alone (C9) let one curated row promote
+            # a whole roster from (warning, medium) to (pass, high); gating additionally
+            # on `contract_provider_configured` asked about the environment rather than
+            # the data, and a provider that reports no types satisfied it for all 30 teams.
+            types_known = team.roster_contract_types_known and team.contract_types_known
 
             if types_known:
                 if after > MAX_STANDARD + 3:

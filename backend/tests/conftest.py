@@ -81,7 +81,7 @@ def make_player(
     season: str = "2025-26",
     salary: int | None = None,
     league_year: str = "2026-27",
-    contract_type: str = "standard",
+    contract_type: str | None = "standard",
     signed_date: date | None = None,
     no_trade_clause: bool | None = None,
     birth_date: date | None = date(1998, 1, 1),

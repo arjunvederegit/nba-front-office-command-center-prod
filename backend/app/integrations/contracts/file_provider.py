@@ -75,7 +75,7 @@ class FileContractProvider:
                             team_abbreviation=row["team_abbreviation"].strip().upper(),
                             season=row["season"].strip(),
                             salary=salary,
-                            contract_type=(row.get("contract_type") or "standard").strip(),
+                            contract_type=((row.get("contract_type") or "").strip() or None),
                             signed_date=_parse_date(row.get("signed_date")),
                             no_trade_clause=_parse_bool(row.get("no_trade_clause")),
                             player_option=_parse_bool(row.get("player_option")),
