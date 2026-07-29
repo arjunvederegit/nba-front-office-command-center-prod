@@ -106,7 +106,7 @@ def score_all(db: Session) -> dict[str, Any]:
         if not team_stats:
             continue
         profile = _roster_profile(db, team.id, season)
-        needs = compute_team_needs(team_stats, league, profile)
+        needs = compute_team_needs(team_stats, league, profile, team_id=team.id)
 
         # Update in place, insert what is new, delete what no longer applies.
         #

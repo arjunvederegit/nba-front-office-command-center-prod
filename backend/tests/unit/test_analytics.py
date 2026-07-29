@@ -178,7 +178,9 @@ class TestAvailability:
 class TestAgeCurve:
     def test_young_players_improve_old_players_decline(self):
         assert age_delta(20) > 0
-        assert age_delta(28) == 0.0
+        # The plateau sits at the midpoint of the old 27..30 bucket, not at its left
+        # edge: the curve is now the linear interpolant through those midpoints (R4-4).
+        assert age_delta(28.5) == pytest.approx(0.0)
         assert age_delta(34) < 0
 
     def test_projection_accumulates(self):

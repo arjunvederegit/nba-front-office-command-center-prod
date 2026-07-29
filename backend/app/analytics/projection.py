@@ -84,18 +84,37 @@ def allocate_rotation(players: list[RotationPlayer]) -> RotationResult:
 
     weights = np.array([max(p.baseline_minutes, 2.0) for p in flexible], dtype=float)
     if flexible and weights.sum() > 0:
-        raw = weights / weights.sum() * remaining
-        # Iteratively clip at caps, redistributing overflow
-        for _ in range(6):
-            caps = np.array([p.max_minutes for p in flexible])
-            over = raw > caps
-            overflow = float(np.clip(raw - caps, 0, None).sum())
-            raw = np.where(over, caps, raw)
-            under = ~over
-            if overflow <= 1e-6 or not under.any():
+        # Water-filling (R4-4). The previous six-iteration clip-and-redistribute loop
+        # ended each pass ON the redistribution, with no re-clip, so whatever it added
+        # back could push a player above his cap and simply stay there: a seven-player
+        # trade produced 41.3 minutes against a 36-minute ceiling, and contrived rosters
+        # reached 204. For six or fewer flexible players it was a permanent 2-cycle that
+        # the iteration bound merely truncated. It was NOT unreachable code.
+        #
+        # Water-filling instead caps the players who exceed their ceiling, removes their
+        # minutes from the budget, and re-shares the remainder among those still under —
+        # so it terminates in at most one pass per player, and no allocation can exceed a
+        # cap because a capped player is never given more.
+        caps = np.array([p.max_minutes for p in flexible], dtype=float)
+        alloc = np.zeros(len(flexible), dtype=float)
+        free = np.ones(len(flexible), dtype=bool)
+        budget = remaining
+        while free.any() and budget > 1e-9:
+            share = np.zeros(len(flexible), dtype=float)
+            share[free] = weights[free] / weights[free].sum() * budget
+            newly_capped = free & (share > caps + 1e-12)
+            if not newly_capped.any():
+                alloc[free] = share[free]
+                budget = 0.0
                 break
-            raw = raw + under * (weights * under / max((weights * under).sum(), 1e-9)) * overflow
-        for p, m in zip(flexible, raw, strict=False):
+            alloc[newly_capped] = caps[newly_capped]
+            budget -= float(caps[newly_capped].sum())
+            free &= ~newly_capped
+        # If every player is capped and budget remains, the roster cannot field 240
+        # minutes. That shortfall is left unallocated on purpose: it flows into the
+        # `unfilled` term below and is charged to a replacement-level player, which is
+        # the R3-3 behaviour and the honest answer for a gutted roster.
+        for p, m in zip(flexible, alloc, strict=False):
             minutes[p.player_id] = float(m)
 
     # R3-3: normalise by the 240 minutes a team must actually field, NOT by the minutes

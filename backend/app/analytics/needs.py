@@ -95,16 +95,34 @@ def _percentile(series: pd.Series, value: float) -> float:
     series = pd.to_numeric(series, errors="coerce").dropna()
     if series.empty:
         return 50.0
+    # `series` must EXCLUDE the team being scored — see `compute_team_needs`. Including
+    # it puts a row in the denominator that can never satisfy `< value`, deflating every
+    # percentile by a factor of (n-1)/n.
     return float((series < value).mean() * 100)
 
 
 def compute_team_needs(
-    team_stats: dict[str, dict], league_stats: pd.DataFrame, roster_profile: dict | None = None
+    team_stats: dict[str, dict],
+    league_stats: pd.DataFrame,
+    roster_profile: dict | None = None,
+    team_id: str | None = None,
 ) -> list[NeedResult]:
     """team_stats: {"base": {...}, "advanced": {...}} for the team.
     league_stats: DataFrame with one row per team and columns like base_FG3A / advanced_DEF_RATING.
     roster_profile: optional {"avg_height": float, "n_creators": int, "avg_age": float}.
+    team_id: the team being scored, excluded from its own peer group (R4-4).
+
+    **A team is not one of its own peers.** With itself in the frame the denominator
+    counts a row that can never satisfy `< value`, so every percentile was multiplied by
+    exactly 29/30: the league leader in any category scored 96.7 rather than 100, the
+    mean absolute shift was 1.638 percentile points and the worst 3.333, and three of 270
+    team-need cells recorded severity 0 while the team actually sat above its peers'
+    median.
     """
+    peers = league_stats
+    if team_id is not None and "team_id" in league_stats.columns:
+        peers = league_stats[league_stats["team_id"] != team_id]
+
     results: list[NeedResult] = []
     for need_key, source, column, lower_is_need, template, proxy_note in STAT_RULES:
         stats = team_stats.get(source) or {}
@@ -112,7 +130,7 @@ def compute_team_needs(
         league_col = f"{source}_{column}"
         if value is None or league_col not in league_stats.columns:
             continue
-        pct = _percentile(league_stats[league_col], float(value))
+        pct = _percentile(peers[league_col], float(value))
         # Need severity grows as the team falls below (or above, for inverted stats)
         # the league median.
         severity = max(0.0, (50.0 - pct) / 50.0) if lower_is_need else max(0.0, (pct - 50.0) / 50.0)
