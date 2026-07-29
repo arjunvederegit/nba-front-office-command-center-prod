@@ -109,14 +109,14 @@ export default function MethodologyPage() {
               explained <strong>R² = 0.004</strong> of net rating against the index&apos;s{" "}
               <strong>0.751</strong>. It is retired.
             </p>
+            <p>Uncertainty bands are per player, not constant:</p>
+            <Formula>σ² = 0.0326 + 240.9 / total minutes</Formula>
             <p>
-              Uncertainty bands are per player, not constant:{" "}
-              <Formula>σ² = 0.0326 + 240.9 / total minutes</Formula> estimated from 921 same-player
-              consecutive-season pairs. σ runs 0.72 at 500 minutes to 0.36 at 2,500, replacing a
-              single 2.462 taken from the retired model&apos;s residual spread. Most bands get
-              narrower — which reads as overconfidence and is the opposite — while the
-              thinnest-evidence players&apos; bands get wider. Scores ×2.5 to index points; elite ≈
-              +5. Model card: docs/model-card-player-impact.md.
+              estimated from 921 same-player consecutive-season pairs. σ runs 0.72 at 500 minutes
+              to 0.36 at 2,500, replacing a single 2.462 taken from the retired model&apos;s
+              residual spread. Most bands get narrower — which reads as overconfidence and is the
+              opposite — while the thinnest-evidence players&apos; bands get wider. Scores ×2.5 to
+              index points; elite ≈ +5. Model card: docs/model-card-player-impact.md.
             </p>
           </Tech>
         </div>
