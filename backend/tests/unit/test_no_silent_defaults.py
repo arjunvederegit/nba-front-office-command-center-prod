@@ -40,6 +40,10 @@ def _league_frame() -> pd.DataFrame:
             "fg3a_rate": [0.1 + i * 0.02 for i in range(20)],
             "TS_PCT": [0.48 + i * 0.005 for i in range(20)],
             "AST_PCT": [0.05 + i * 0.01 for i in range(20)],
+            # Ascending, like every other column here, so a skill built on it is easy to
+            # reason about — but this one is INVERTED into `turnover_avoidance`, so the
+            # highest value must produce the *lowest* skill percentile.
+            "TM_TOV_PCT": [6.0 + i * 0.4 for i in range(20)],
             "stl_per_min": [0.01 + i * 0.002 for i in range(20)],
             "blk_per_min": [0.005 + i * 0.003 for i in range(20)],
             "DREB_PCT": [0.08 + i * 0.01 for i in range(20)],
@@ -90,11 +94,21 @@ def test_a_blend_renormalizes_over_the_components_that_exist() -> None:
 
 def test_no_skill_is_constant_across_the_population() -> None:
     """Invariant from the regression charter: a constant skill is the signature of a
-    silent default, and it is invisible in every other test."""
+    silent default, and it is invisible in every other test.
+
+    A skill that resolves for *nobody* is the same defect one step further along — a
+    skill declared in `SKILL_KEYS` whose source column never reaches the frame. It used
+    to raise `IndexError` from indexing an empty list, which is a failure but not a
+    legible one, so it is asserted first and by name.
+    """
     league = _league_frame()
     vectors = [player_skill_vector(league.iloc[i], league) for i in range(len(league))]
     for key in SKILL_KEYS:
         values = [v[key] for v in vectors if key in v]
+        assert values, (
+            f"{key} is declared in SKILL_KEYS but resolved for none of the "
+            f"{len(vectors)} players — its source column never reaches the frame"
+        )
         assert len(set(values)) > 1, f"{key} is constant at {values[0]}"
         assert pd.Series(values).std() > 0.05, f"{key} has near-zero spread"
 

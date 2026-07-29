@@ -115,6 +115,7 @@ def fit_archetypes(weighted: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 SKILL_KEYS = [
     "shooting",
     "creation",
+    "turnover_avoidance",
     "perimeter_defense",
     "rim_protection",
     "rebounding",
@@ -147,6 +148,32 @@ def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float
             return None
         return float((series < value).mean())
 
+    def pct_inv(col: str) -> float | None:
+        """Percentile for a column where a LOW value is the good outcome.
+
+        Every other skill reads "higher is better", and a skill vector is consumed as
+        such: `fit_score` rewards a positive delta and `needs.NEED_TO_SKILL` assumes a
+        need is addressed by more of the skill. Turnover rate runs the other way, and
+        there was **no inversion mechanism in the skill path to copy** — the two
+        inversions that exist are `needs.STAT_RULES`' `lower_is_need` flag, which acts on
+        the team side, and a negative weight in `impact.INDEX_WEIGHTS`, which acts on a
+        z-score rather than a percentile. Neither is reusable here, so the inversion is
+        named rather than written as a bare `1 - pct(...)` at the call site, where a later
+        edit could drop it silently.
+
+        The mirror of `pct`'s `(series < value)`: the share of the league this player
+        keeps the ball better than.
+        """
+        if col not in league.columns:
+            return None
+        value = pd.to_numeric(row.get(col), errors="coerce")
+        if pd.isna(value):
+            return None
+        series = pd.to_numeric(league[col], errors="coerce").dropna()
+        if series.empty:
+            return None
+        return float((series > value).mean())
+
     def blend(*parts: tuple[str, float]) -> float | None:
         """Weighted blend over the components that exist, renormalized to the survivors."""
         known = [(v, w) for col, w in parts if (v := pct(col)) is not None]
@@ -158,6 +185,9 @@ def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float
     candidates: dict[str, float | None] = {
         "shooting": blend(("fg3a_rate", 0.5), ("TS_PCT", 0.5)),
         "creation": pct("AST_PCT"),
+        # Ball security is its own skill, not a synonym for creation (R4-1b). See
+        # `needs.NEED_TO_SKILL` for the mapping this replaces and why it was backwards.
+        "turnover_avoidance": pct_inv("TM_TOV_PCT"),
         "perimeter_defense": pct("stl_per_min"),
         "rim_protection": pct("blk_per_min"),
         "rebounding": blend(("DREB_PCT", 0.7), ("OREB_PCT", 0.3)),

@@ -152,6 +152,14 @@ def compute_team_needs(
 
 # Mapping from need keys to the player skill dimensions that address them (see
 # archetypes.SKILL_KEYS). Used by roster-fit.
+#
+# `ball_security` mapped to `creation` — that is, to `pct(AST_PCT)` — until R4-1b, so a
+# team with a turnover problem was told to acquire high-assist ball handlers, the
+# population that turns the ball over most. Measured on the ingested history
+# (player-seasons with >= 1000 minutes): corr(pct(AST_PCT), pct_inv(TM_TOV_PCT)) = -0.255,
+# 10 of the top 12 by assist rate sit below the median in turnover avoidance, and those
+# twelve average 0.285 against a 0.5 median. The mapping did not merely fail to help — it
+# pointed at the worst available answer.
 NEED_TO_SKILL = {
     "three_point_volume": "shooting",
     "shooting_efficiency": "shooting",
@@ -162,6 +170,6 @@ NEED_TO_SKILL = {
     "defensive_rebounding": "rebounding",
     "playmaking": "creation",
     "secondary_creation": "creation",
-    "ball_security": "creation",
+    "ball_security": "turnover_avoidance",
     "lineup_size": "size",
 }
