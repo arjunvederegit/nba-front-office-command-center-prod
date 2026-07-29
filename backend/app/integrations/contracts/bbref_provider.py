@@ -26,7 +26,7 @@ from bs4 import BeautifulSoup, Comment, Tag
 
 from app.core.logging import get_logger
 
-from . import ContractRecord
+from .base import ContractRecord
 
 logger = get_logger(__name__)
 
