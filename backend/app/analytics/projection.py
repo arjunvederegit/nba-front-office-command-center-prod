@@ -14,7 +14,38 @@ import pandas as pd
 TEAM_MINUTES = 240.0
 DEFAULT_MAX_MINUTES = 36.0
 GAMES = 82.0
-PLAYERS_ON_COURT = 5.0
+
+# R3-3. Replacement level, derived rather than assumed. The old hardcoded -2.0 sat at the
+# **14.1st percentile** of player-season TEI on the ingested history — a rotation player,
+# not a replacement one. Measured alternatives on the same data:
+#
+#     mean TEI outside each team's top 10 by minutes   -1.214   (n = 814)
+#     mean TEI outside each team's top 11 by minutes   -1.305   (n = 724)
+#     mean TEI, players under 500 total minutes        -1.422   (n = 600)
+#
+# "Outside the top ten by minutes" is the transparent rule: it is what a team actually
+# reaches for when a rotation player is unavailable, and it does not depend on a minutes
+# cutoff chosen after the fact.
+REPLACEMENT_TEI = -1.214
+REPLACEMENT_RULE = "mean TEI of player-seasons outside their team's top 10 by minutes"
+
+# R3-2. Change in minutes-weighted team TEI -> change in net rating, fitted
+# change-on-change on 60 team transitions (30 teams x 2 transitions):
+#
+#     d_net = 14.977 * d_teamTEI     R2 0.6236   SE 1.528   t 9.80
+#     per-fold slopes 14.716 / 15.276 (within +/-2% of pooled)
+#     LOTO OOS RMSE 3.773 vs 5.805 predict-zero (65%)
+#
+# It is emphatically NOT 1.0, and it is not 5. If TEI were already in additive per-player
+# net-rating units the fit would return about 5; it returns 15, which is the quantitative
+# statement of how far off the raw index scale is. The fitted value is only valid for the
+# exact regressor construction recorded alongside it — see `TEI_REGRESSOR_CONSTRUCTION`.
+TEI_TO_NET_RATING = 14.977
+TEI_REGRESSOR_CONSTRUCTION = (
+    "minutes-weighted mean of the transparent index TEI over a team's player-seasons, "
+    "z-scored within season against minutes-weighted moments; served rows are z-scored "
+    "against the reference season's moments so train and serve share one scale (C5)"
+)
 
 
 @dataclass
@@ -67,16 +98,19 @@ def allocate_rotation(players: list[RotationPlayer]) -> RotationResult:
         for p, m in zip(flexible, raw, strict=False):
             minutes[p.player_id] = float(m)
 
-    total = sum(minutes.values()) or 1.0
-    # Weighted per-minute team impact, availability-discounted with replacement-level
-    # (TEI = -2.0) fill-in for missed games.
-    REPLACEMENT_TEI = -2.0
+    # R3-3: normalise by the 240 minutes a team must actually field, NOT by the minutes
+    # this roster happened to fill. Dividing by allocated minutes made a gutted roster
+    # look fine — the same average taken over fewer minutes — which is the real mechanism
+    # behind the roster-gut defect (the `or 1.0` guard the audit named is dead code in
+    # the empty-roster path). Minutes a team cannot fill are played by someone, and that
+    # someone is a replacement-level player.
+    allocated = sum(minutes.values())
     weighted = 0.0
     detail = []
     for p in players:
         m = minutes.get(p.player_id, 0.0)
         effective_tei = p.availability * p.tei + (1 - p.availability) * REPLACEMENT_TEI
-        weighted += m / total * effective_tei
+        weighted += m / TEAM_MINUTES * effective_tei
         detail.append(
             {
                 "player_id": p.player_id,
@@ -86,13 +120,21 @@ def allocate_rotation(players: list[RotationPlayer]) -> RotationResult:
                 "availability": round(p.availability, 3),
             }
         )
+    unfilled = max(TEAM_MINUTES - allocated, 0.0)
+    weighted += unfilled / TEAM_MINUTES * REPLACEMENT_TEI
     return RotationResult(minutes=minutes, team_tei_per_minute=weighted, detail=detail)
 
 
 def team_tei_to_net_rating_delta(before: RotationResult, after: RotationResult) -> float:
-    """TEI is on a per-100 individual scale; five players share the floor, so a team's
-    net-rating shift is approximately the change in minutes-weighted average TEI."""
-    return after.team_tei_per_minute - before.team_tei_per_minute
+    """Change in minutes-weighted team TEI, converted to net-rating points (R3-2).
+
+    The conversion used to be the identity, on the reasoning that "TEI is on a per-100
+    individual scale". It is not: the index is a weighted z-score on an arbitrary scale,
+    and the fitted coefficient is 14.977, not 1.0. Every caller must apply this function
+    rather than differencing `team_tei_per_minute` directly, or the point estimate and
+    the Monte Carlo disagree by an order of magnitude.
+    """
+    return TEI_TO_NET_RATING * (after.team_tei_per_minute - before.team_tei_per_minute)
 
 
 def calibrate_wins_per_net_rating(team_seasons: pd.DataFrame) -> dict:
@@ -106,15 +148,88 @@ def calibrate_wins_per_net_rating(team_seasons: pd.DataFrame) -> dict:
     y = df["wins"].to_numpy(dtype=float)
     slope, intercept = np.polyfit(x, y, 1)
     predictions = slope * x + intercept
-    ss_res = float(((y - predictions) ** 2).sum())
+    residuals = y - predictions
+    ss_res = float((residuals**2).sum())
     ss_tot = float(((y - y.mean()) ** 2).sum())
+    # The SLOPE's standard error, which is what an interval over the conversion needs.
+    # `residual_std` is the spread of team wins about the line — a different quantity,
+    # ~55x larger, and using it as the slope's sigma made every band that much too wide.
+    slope_se = float(
+        np.sqrt(ss_res / max(len(x) - 2, 1) / max(((x - x.mean()) ** 2).sum(), 1e-12))
+    )
+    # Leave-one-out R2, reported instead of in-sample: the label was the defect here, not
+    # the model. Measured 0.9505 LOO against 0.9527 in-sample — the best-calibrated thing
+    # in the pipeline, and it should be described accurately.
+    loo_residuals = residuals / (
+        1 - (1 / len(x) + (x - x.mean()) ** 2 / max(((x - x.mean()) ** 2).sum(), 1e-12))
+    )
+    loo_r2 = 1 - float((loo_residuals**2).sum()) / ss_tot if ss_tot else None
     return {
         "slope": float(slope),
+        "slope_se": slope_se,
+        "slope_t": float(slope / slope_se) if slope_se else None,
         "intercept": float(intercept),
-        "r2": 1 - ss_res / ss_tot if ss_tot else None,
-        "residual_std": float(np.std(y - predictions)),
+        "r2_in_sample": 1 - ss_res / ss_tot if ss_tot else None,
+        "r2_loo": loo_r2,
+        "residual_std": float(np.std(residuals)),
         "n": len(df),
         "calibrated": True,
+    }
+
+
+def calibrate_tei_to_net_rating(transitions: pd.DataFrame) -> dict:
+    """Fit `d_net = b * d_teamTEI` change-on-change, with the diagnostics R3 gates on.
+
+    `transitions` needs `team_id`, `transition`, `d_tei`, `d_net`. Change-on-change
+    rather than levels because a team's level carries everything the roster does not —
+    coaching, health, schedule — and differencing removes the team fixed effect.
+    """
+    if transitions.empty or not {"d_tei", "d_net"} <= set(transitions.columns):
+        return {"coefficient": TEI_TO_NET_RATING, "calibrated": False, "n": 0}
+    df = transitions.dropna(subset=["d_tei", "d_net"])
+    if len(df) < 20:
+        return {"coefficient": TEI_TO_NET_RATING, "calibrated": False, "n": len(df)}
+
+    x = df["d_tei"].to_numpy(dtype=float)
+    y = df["d_net"].to_numpy(dtype=float)
+    slope, intercept = np.polyfit(x, y, 1)
+    residuals = y - (slope * x + intercept)
+    ss_res = float((residuals**2).sum())
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    se = float(np.sqrt(ss_res / max(len(x) - 2, 1) / max(((x - x.mean()) ** 2).sum(), 1e-12)))
+
+    per_fold: dict[str, float] = {}
+    loto: dict[str, dict] = {}
+    for name in sorted(df["transition"].unique()):
+        fold, held = df[df["transition"] != name], df[df["transition"] == name]
+        if len(fold) < 10 or held.empty:
+            continue
+        fold_slope = float(np.polyfit(fold["d_tei"], fold["d_net"], 1)[0])
+        per_fold[name] = fold_slope
+        rmse = float(np.sqrt(((held["d_net"] - fold_slope * held["d_tei"]) ** 2).mean()))
+        zero = float(np.sqrt((held["d_net"] ** 2).mean()))
+        loto[name] = {
+            "oos_rmse": rmse,
+            "predict_zero_rmse": zero,
+            "share_of_predict_zero": rmse / zero if zero else None,
+        }
+
+    return {
+        "coefficient": float(slope),
+        "slope_se": se,
+        "slope_t": float(slope / se) if se else None,
+        "intercept": float(intercept),
+        "r2": 1 - ss_res / ss_tot if ss_tot else None,
+        "n": len(x),
+        "per_fold_slopes": per_fold,
+        "leave_one_transition_out": loto,
+        "regressor_construction": TEI_REGRESSOR_CONSTRUCTION,
+        "calibrated": True,
+        "falsification_note": (
+            "If TEI were already in additive per-player net-rating units this fit would "
+            "return about 5. It returns ~15, which is the quantitative statement of how "
+            "far the raw index scale is from net-rating points."
+        ),
     }
 
 

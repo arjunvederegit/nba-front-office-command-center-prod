@@ -93,17 +93,53 @@ def test_verified_illegal_trade_has_no_decision_score(db: Session, seeded_league
     assert any("12" in r["message"] for r in failing), "the 12-man minimum must be named"
 
 
-@pytest.mark.xfail(strict=True, reason="QA-1: _performance treats vacated minutes as league average")
 def test_gutting_a_roster_does_not_look_like_an_upgrade(db: Session, seeded_league: dict) -> None:
+    """QA-1, fixed in R3-3.
+
+    The defect: `_performance` divided minutes-weighted team TEI by the minutes the
+    roster *happened to fill*, so giving players away took the same average over fewer
+    minutes and barely moved the score. It now divides by the 240 a team must actually
+    field and charges the shortfall to replacement level.
+
+    Giving away the whole roster is no longer a usable probe — R1-3 correctly refuses it
+    as illegal (below the 12-man minimum) before any component is scored — so this trades
+    away the three best players and keeps a legal twelve. Measured: 0.0, from 56.4 before
+    the fix.
+    """
+    service = EvaluationService(db)
+    tei_by_id = {c.player_id: (c.tei if c.tei is not None else -99) for c in service._roster_cards(seeded_league["team_a"].id)}
+    best_three = sorted(seeded_league["roster_a"], key=lambda p: -tei_by_id[p.id])[:3]
+
     result = _evaluate(
         db,
         seeded_league,
         seeded_league["team_a"],
-        _moves(seeded_league["roster_a"], seeded_league["team_a"], seeded_league["team_b"]),
+        _moves(best_three, seeded_league["team_a"], seeded_league["team_b"]),
     )
+    assert result["decision_status"] == "scored", "a 15 -> 12 roster is legal"
     performance = result["components"]["performance"]
     assert performance is not None
-    assert performance < 25.0, f"performance was {performance} for a roster given away"
+    assert performance < 25.0, f"performance was {performance} for a roster stripped of its best three"
+
+
+def test_minutes_a_roster_cannot_fill_are_charged_to_replacement(db: Session) -> None:
+    """The mechanism behind QA-1, isolated from the legality gate.
+
+    Reachable in production whenever most of a roster is unmodelled: those players are
+    excluded from the rotation but still occupy roster spots, so the allocator cannot
+    fill 240 minutes. Before R3-3 the shortfall was silently redistributed to whoever
+    remained, which *raised* the team's average.
+    """
+    from app.analytics.projection import REPLACEMENT_TEI, RotationPlayer, allocate_rotation
+
+    full = [RotationPlayer(f"p{i}", f"P{i}", tei=1.0, baseline_minutes=24.0) for i in range(10)]
+    thin = full[:3]
+
+    assert allocate_rotation(full).team_tei_per_minute == pytest.approx(1.0, abs=1e-9)
+    # 3 players capped at 36 minutes fill 108 of 240; the other 132 are replacement level.
+    expected = (108 / 240) * 1.0 + (132 / 240) * REPLACEMENT_TEI
+    assert allocate_rotation(thin).team_tei_per_minute == pytest.approx(expected, abs=1e-9)
+    assert allocate_rotation(thin).team_tei_per_minute < allocate_rotation(full).team_tei_per_minute
 
 
 # --------------------------------------------------------------------- QA-5 / R1-3
@@ -225,23 +261,44 @@ def test_drivers_reconcile_with_the_composite(db: Session, seeded_league: dict) 
 # ------------------------------------------------------------------ C2 / R3-5 units
 
 
-@pytest.mark.xfail(strict=True, reason="C2/R3-5: the point estimate and the Monte Carlo differ")
-def test_monte_carlo_median_reproduces_the_point_estimate(
-    db: Session, seeded_league: dict
-) -> None:
-    """`_performance` normalises over the whole 240-minute reallocation; the Monte Carlo
-    sums raw minute shares over traded players only. The gap widens with trade size, so
-    a 5-for-5 makes it unmissable."""
+def test_monte_carlo_reproduces_the_point_estimate(db: Session, seeded_league: dict) -> None:
+    """C2 / R3-5, fixed.
+
+    `_performance` normalised over the whole 240-minute reallocation while the simulation
+    summed raw minute shares over the traded players only — two different quantities
+    printed side by side, diverging with trade size. Both now read the same allocation.
+
+    The assertion is on the **mean**, which is the quantity that must agree: availability
+    enters both paths linearly, so E[simulated delta] is exactly the deterministic delta.
+    The median sits a little off it because the availability beta is skewed, which is a
+    real feature of the distribution rather than a disagreement. The tolerance is the
+    simulation's own standard error, so the test tightens automatically if the draw count
+    ever rises.
+    """
+    import numpy as np
+
+    # AAA sends two and takes one back. BBB may not send two: its fixture payroll is
+    # $492M, so R2c's lower-bound refutation correctly rules any aggregation by BBB
+    # illegal, and an illegal trade is suppressed before a component is scored.
     result = _evaluate(
         db,
         seeded_league,
         seeded_league["team_a"],
-        _moves(seeded_league["roster_a"][:5], seeded_league["team_a"], seeded_league["team_b"])
-        + _moves(seeded_league["roster_b"][:5], seeded_league["team_b"], seeded_league["team_a"]),
+        _moves(seeded_league["roster_a"][:2], seeded_league["team_a"], seeded_league["team_b"])
+        + _moves(seeded_league["roster_b"][:1], seeded_league["team_b"], seeded_league["team_a"]),
     )
+    assert result["decision_status"] == "scored"
     point = result["detail"]["performance"]["delta_wins"]
-    median = result["uncertainty"]["median"]
-    assert median == pytest.approx(point, abs=0.05)
+    sim = result["uncertainty"]
+    spread = (sim["p90"] - sim["p10"]) / 2.5631  # sigma implied by the 10/90 band
+    standard_error = spread / np.sqrt(sim["n_draws"])
+
+    assert sim["mean"] == pytest.approx(point, abs=max(4 * standard_error, 0.02)), (
+        f"point {point} vs simulated mean {sim['mean']} "
+        f"(4 SE = {4 * standard_error:.4f}) — the two paths compute different quantities"
+    )
+    # The median tracks it too, just not to the same precision.
+    assert sim["median"] == pytest.approx(point, abs=max(8 * standard_error, 0.05))
 
 
 # ------------------------------------------------------------- C13 sensitivity honesty

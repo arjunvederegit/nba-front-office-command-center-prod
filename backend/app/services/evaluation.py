@@ -23,6 +23,7 @@ from app.analytics.projection import (
     RotationPlayer,
     allocate_rotation,
     net_rating_delta_to_wins,
+    team_tei_to_net_rating_delta,
 )
 from app.analytics.sensitivity import (
     component_contributions,
@@ -30,7 +31,11 @@ from app.analytics.sensitivity import (
     normalize_weights,
     tornado,
 )
-from app.analytics.uncertainty import PlayerDraw, simulate_delta_wins
+from app.analytics.uncertainty import (
+    RotationDraw,
+    rotation_draw_from,
+    simulate_delta_wins,
+)
 from app.cba import resolver
 from app.cba.builder import build_trade_context, load_cap_params, player_salaries
 from app.cba.engine import TradeLegalityEngine
@@ -332,7 +337,10 @@ class EvaluationService:
 
         before_rotation = to_rotation(roster)
         after_rotation = to_rotation(after_cards)
-        if not before_rotation or not after_rotation:
+        # An EMPTY post-trade rotation is not an unmodellable roster — it is a roster of
+        # 240 replacement-level minutes, which is exactly what `allocate_rotation` now
+        # models (R3-3). Only a team with nothing to compare against is unprojectable.
+        if not before_rotation:
             return None, {
                 "unavailable": "no player on this roster has an impact estimate, so the "
                 "rotation cannot be projected",
@@ -341,7 +349,10 @@ class EvaluationService:
 
         before = allocate_rotation(before_rotation)
         after = allocate_rotation(after_rotation)
-        delta_net = after.team_tei_per_minute - before.team_tei_per_minute
+        # R3-5: one definition of delta_net. The point estimate and the Monte Carlo must
+        # compute the same quantity through the same conversion, or they disagree by the
+        # size of the coefficient.
+        delta_net = team_tei_to_net_rating_delta(before, after)
         delta_wins = net_rating_delta_to_wins(delta_net, self.wins_mapping())
         # ±10 projected wins spans the full 0..100 scale (documented normalization)
         score = max(0.0, min(100.0, 50.0 + delta_wins * 5.0))
@@ -356,6 +367,8 @@ class EvaluationService:
             "unmodeled_players": unmodeled,
             "modeled_players_after": len(after_rotation),
             "roster_players_after": len(after_cards),
+            # The one allocation both the point estimate and the simulation read (R3-5).
+            "_rotations": (before, after),
         }
 
     def _fit(
@@ -684,33 +697,28 @@ class EvaluationService:
             picks_in, picks_out, payroll_delta, len(incoming) - len(outgoing)
         )
 
-        total_minutes = 240.0
-
-        def to_draws(cards: list[PlayerCard]) -> list[PlayerDraw]:
-            draws: list[PlayerDraw] = []
-            for c in cards:
-                if c.tei is None or c.minutes is None:
-                    continue
-                draws.append(
-                    PlayerDraw(
-                        tei=c.tei,
-                        # An unmodelled player used to receive TEI_SIGMA_DEFAULT = 1.5,
-                        # expressing the same confidence about a player with no data as
-                        # about a 36-minute star. Unmodelled players are excluded here
-                        # and named in the response instead.
-                        tei_sigma=c.tei_sigma if c.tei_sigma is not None else TEI_SIGMA_DEFAULT,
-                        availability=1.0 if c.availability is None else c.availability,
-                        minutes_share=c.minutes / total_minutes,
-                        key=c.player_id,
-                    )
-                )
-            return draws
-
-        uncertainty = simulate_delta_wins(
-            incoming=to_draws(incoming),
-            outgoing=to_draws(outgoing),
-            wins_mapping=self.wins_mapping(),
-        )
+        # R3-5: the simulation draws over the SAME rotation the point estimate allocated.
+        # An unmodelled player used to receive TEI_SIGMA_DEFAULT = 1.5, expressing the
+        # same confidence about a player with no data as about a 36-minute star; they are
+        # excluded from the rotation entirely and named in the response instead.
+        sigma_by_player = {
+            c.player_id: c.tei_sigma
+            for c in roster + incoming + outgoing
+            if c.tei_sigma is not None
+        }
+        rotations = perf_detail.pop("_rotations", None)
+        if rotations is None:
+            uncertainty = simulate_delta_wins(
+                RotationDraw(), RotationDraw(), wins_mapping=self.wins_mapping()
+            )
+        else:
+            before_rot, after_rot = rotations
+            uncertainty = simulate_delta_wins(
+                before=rotation_draw_from(before_rot.detail, sigma_by_player),
+                after=rotation_draw_from(after_rot.detail, sigma_by_player),
+                wins_mapping=self.wins_mapping(),
+                moved_keys={c.player_id for c in incoming + outgoing},
+            )
         unmodeled_in_deal = sorted({c.name for c in incoming + outgoing if c.tei is None})
         if unmodeled_in_deal:
             uncertainty["unmodeled_players_excluded"] = unmodeled_in_deal

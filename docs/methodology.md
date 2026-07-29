@@ -76,22 +76,73 @@ Cross-season comparability comes from minutes-weighted z-scores within each seas
 | Candidate | Description |
 | --- | --- |
 | Persistence baseline | this season's target repeats next season |
-| Transparent index | documented weighted z-score blend (weights in `impact.py::INDEX_WEIGHTS`) |
-| **Ridge (chosen)** | α=10, predicts next-season `0.6·z(PIE) + 0.4·z(NET_RATING)` |
+| **Transparent index (production)** | documented weighted z-score blend (weights in `impact.py::INDEX_WEIGHTS`) |
+| ~~Ridge~~ | α=10 on next-season `0.6·z(PIE) + 0.4·z(NET_RATING)` — **retired in R3-1** |
 
-Validation is **time-aware**: train on the 2023-24→2024-25 transition (n=447),
-validate on 2024-25→2025-26 (n=464). Individual rows are never randomly split across
-seasons (leakage).
+Validation is **time-aware**: validate on the 2024-25→2025-26 transition (n=464).
+Individual rows are never randomly split across seasons (leakage).
 
-| Model | Held-out MAE |
-| --- | --- |
-| Ridge | **0.637** |
-| Transparent index | 0.645 |
-| Persistence | 0.717 |
+| Model | Held-out player MAE | Team-level R² (net rating) | Change-on-change R² |
+| --- | --- | --- | --- |
+| Transparent index | 0.645 | **0.7505** | **0.6236** |
+| Persistence | 0.717 | — | — |
+| ~~Ridge~~ (retired) | 0.637 | **0.0039** | 0.0030 |
 
-Scores are scaled ×2.5 to index points (elite ≈ +5). Uncertainty bands
-(`tei_low/high` = 10th/90th pct) come from the validation residual σ (0.985 z-units)
-under a normal-residual assumption — a documented approximation.
+The ridge won the player-level comparison and lost the one that matters. Held-out MAE
+scores a *next-season player proxy*; the product uses TEI to project *team* impact, and
+measured there the ridge explained essentially nothing. It is also a volume metric
+(corr 0.716 with usage, 0.100 with net rating) and is not computable per season from
+stored artifacts, so the R3-2 conversion could only ever have been fitted on n = 30 of
+a metric carrying no signal.
+
+### Serving scale (C5)
+
+Served rows are z-scored against the **reference season's** minutes-weighted moments,
+not against the recency-weighted window's own distribution. Before this fix the two
+constructions correlated only **r = 0.387** at team level, and the two rescalings that
+implied disagreed by 2.6× — which is the proof that no single transfer factor existed
+and that train and serve had to share one reference instead. After it, team-level
+served TEI regresses on season TEI with slope **1.015** (r = 0.911).
+
+### Uncertainty bands (R3-4)
+
+Per player, from that player's own playing time:
+
+    σ² = 0.0326 + 240.9 / total_minutes
+
+estimated from **921** same-player consecutive-season pairs. σ runs 0.72 at 500 minutes
+to 0.36 at 2,500, replacing a single **2.462** inherited from the retired ridge's
+residual spread — a band that was identical for a 2,800-minute starter and a 300-minute
+rookie. Most bands are now narrower, which reads as overconfidence and is the opposite;
+the thinnest-evidence players' bands are now **wider**. σ here is season-to-season
+variability, which is the right input for a forward-looking interval and the wrong thing
+to call "measurement error".
+
+Scores are scaled ×2.5 to index points (elite ≈ +5).
+
+### Index → net rating (R3-2)
+
+A team's minutes-weighted index does **not** arrive in net-rating points. The conversion
+is fitted change-on-change over 60 team transitions:
+
+    Δnet = 14.977 · Δ(team TEI)      R² 0.624 · SE 1.528 · t 9.80 · n 60
+    per-fold slopes 14.716 / 15.276  (within ±2% of pooled)
+    leave-one-transition-out RMSE 2.944 / 3.773 vs 5.201 / 5.805 predicting zero
+
+Change-on-change rather than levels because a team's *level* carries everything the
+roster does not — coaching, health, schedule — and differencing removes the team fixed
+effect. **Falsification note:** if TEI were already in additive per-player net-rating
+units this fit would return ≈ 5. It returns ≈ 15, which is the quantitative statement of
+how far the raw index scale is from net-rating points. The coefficient is valid only for
+the regressor construction recorded alongside it in `model_versions`.
+
+### Team minutes and replacement level (R3-3)
+
+Team impact is normalised by the **240 minutes a team must field**, not by the minutes a
+roster happens to fill; minutes it cannot fill are charged to a replacement-level player.
+Replacement level is derived, not assumed: the old hardcoded −2.0 sat at the **14.1st
+percentile** of player-season TEI. The rule is the mean TEI of player-seasons outside
+their team's top 10 by minutes — **−1.214**.
 
 ## 3. Archetypes
 

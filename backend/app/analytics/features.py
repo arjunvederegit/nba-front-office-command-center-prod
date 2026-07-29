@@ -158,6 +158,47 @@ def zscore_by_season(df: pd.DataFrame, col: str, out_col: str | None = None) -> 
     return df
 
 
+def season_moments(df: pd.DataFrame, season: str, cols: list[str]) -> dict[str, tuple[float, float]]:
+    """Minutes-weighted (mean, std) per column for one season — the reference a served
+    row must be z-scored against.
+
+    `zscore_by_season` computes these per season at training time. At serve time the
+    recency-weighted window frame is a *different population*, so z-scoring it against
+    itself produces numbers on a different scale from the ones the model was fitted on
+    (C5). Measured before the fix: team-level production TEI correlated only r = 0.387
+    with the same teams' season-z TEI, and the two candidate rescalings implied by that
+    disagreed by 2.6x — which is the proof that no single transfer factor exists and the
+    reference has to be shared instead.
+    """
+    rows = df[df["season"] == season]
+    moments: dict[str, tuple[float, float]] = {}
+    for col in cols:
+        if col not in rows.columns:
+            continue
+        values = pd.to_numeric(rows[col], errors="coerce")
+        weights = rows["total_minutes"].astype(float)
+        mask = values.notna() & (weights > 0)
+        if mask.sum() < 10:
+            continue
+        mean = float(np.average(values[mask], weights=weights[mask]))
+        var = float(np.average((values[mask] - mean) ** 2, weights=weights[mask]))
+        moments[col] = (mean, float(np.sqrt(var)) if var > 0 else 1.0)
+    return moments
+
+
+def zscore_against(
+    df: pd.DataFrame, moments: dict[str, tuple[float, float]]
+) -> pd.DataFrame:
+    """Apply a reference season's moments to another frame, so served rows land on the
+    same scale the model was fitted on. Columns with no reference are left at 0.0 rather
+    than z-scored against the wrong population."""
+    for col, (mean, std) in moments.items():
+        if col in df.columns:
+            values = pd.to_numeric(df[col], errors="coerce")
+            df[f"z_{col}"] = ((values - mean) / (std or 1.0)).fillna(0.0)
+    return df
+
+
 def recency_weighted_features(
     df: pd.DataFrame, seasons: list[str], decay: float = 0.7, min_total_minutes: float = 200.0
 ) -> pd.DataFrame:

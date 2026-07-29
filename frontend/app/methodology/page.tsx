@@ -89,8 +89,10 @@ export default function MethodologyPage() {
         <div id="tei" className="scroll-mt-24">
           <p className="text-sm leading-relaxed text-muted">
             Every rostered player carries an <strong className="text-foreground">estimated
-            impact</strong> number — roughly, points of team scoring margin per 100 possessions
-            attributable to the player. It&apos;s RosterLab&apos;s own estimate (full name:
+            impact</strong> number on RosterLab&apos;s own index scale. It is deliberately{" "}
+            <em>not</em> labelled &ldquo;points per 100 possessions&rdquo;: the index is a weighted
+            z-score, and the fitted conversion from a team&apos;s minutes-weighted index to
+            net-rating points is <strong className="text-foreground">≈15</strong>, not 1. Full name:
             TradeLab/RosterLab Estimated Impact, TEI), built from three seasons of real box-score
             data, and it is <em>not</em> RAPTOR, EPM, LEBRON or BPM. Because it only sees box
             scores, defense is under-measured — treat small differences as noise; the uncertainty
@@ -100,11 +102,21 @@ export default function MethodologyPage() {
             <p>Recency-weighted features (λ=0.7, minutes-weighted, seasons 2023-24 → 2025-26):</p>
             <Formula>X̄ᵢ = Σₛ λ^(s−1)·mᵢ,ₛ·Xᵢ,ₛ / Σₛ λ^(s−1)·mᵢ,ₛ</Formula>
             <p>
-              Ridge regression (α=10) predicting next-season 0.6·z(PIE)+0.4·z(NET_RATING), chosen by
-              strictly time-aware validation: held-out MAE <strong>0.637</strong> vs 0.717
-              persistence baseline and 0.645 transparent-index baseline (n=464 transitions).
-              Uncertainty bands from validation residual σ (0.985 z-units). Scores ×2.5 to index
-              points; elite ≈ +5. Model card: docs/model-card-player-impact.md.
+              A transparent weighted z-score index with documented fixed weights. A ridge
+              challenger was served until R3-1 on a held-out player-level MAE of 0.637 against the
+              index&apos;s 0.645 — a comparison on a next-season proxy, which is not the question
+              the product asks. Measured at team level, where it was actually used, the ridge
+              explained <strong>R² = 0.004</strong> of net rating against the index&apos;s{" "}
+              <strong>0.751</strong>. It is retired.
+            </p>
+            <p>
+              Uncertainty bands are per player, not constant:{" "}
+              <Formula>σ² = 0.0326 + 240.9 / total minutes</Formula> estimated from 921 same-player
+              consecutive-season pairs. σ runs 0.72 at 500 minutes to 0.36 at 2,500, replacing a
+              single 2.462 taken from the retired model&apos;s residual spread. Most bands get
+              narrower — which reads as overconfidence and is the opposite — while the
+              thinnest-evidence players&apos; bands get wider. Scores ×2.5 to index points; elite ≈
+              +5. Model card: docs/model-card-player-impact.md.
             </p>
           </Tech>
         </div>
@@ -114,9 +126,12 @@ export default function MethodologyPage() {
         <p className="text-sm leading-relaxed text-muted">
           A trade changes who plays, not just who&apos;s on the roster. RosterLab reallocates the 240
           minutes in an NBA game across the post-trade roster (proportional to established roles,
-          capped per player), discounts by each player&apos;s historical availability, and converts
-          the resulting team-quality change into wins using a conversion fit on real team-seasons —
-          then runs 2,000 simulations to produce the wins range you see.
+          capped per player), discounts by each player&apos;s historical availability, and charges
+          any minutes the roster cannot fill to a replacement-level player. The team-quality change
+          converts to net-rating points through a coefficient fitted change-on-change on 60 team
+          transitions (≈15, t = 9.8), then to wins through a conversion fit on real team-seasons.
+          The same 2,000-draw simulation runs over that same reallocation, so the range you see and
+          the number above it are one quantity rather than two.
         </p>
         <Tech>
           <Formula>

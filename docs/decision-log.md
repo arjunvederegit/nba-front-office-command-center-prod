@@ -102,8 +102,14 @@ contribution can't be attributed per player from box data alone.
 z within season) — a box-derived impact proxy that exists for every player-season,
 validated strictly forward in time; keep the transparent index as fallback and
 report both against a persistence baseline.
-**Consequences:** honest scope (a proxy, stated as such) with measurable skill:
-ridge beat persistence 0.637 vs 0.717 MAE on the held-out transition.
+**Consequences:** honest scope (a proxy, stated as such) with measurable skill: the
+index beat persistence 0.645 vs 0.717 MAE on the held-out transition.
+
+**Superseded in part by ADR-15 (R3-1).** The ridge candidate won this player-level
+comparison at 0.637 and was served on the strength of it. That was the wrong test: the
+product uses TEI at *team* level, where the ridge explained R² = 0.0039 of net rating
+against the index's 0.7505. The proxy target remains a defensible way to check the index
+forward in time; selecting a model on it was not.
 
 ## ADR-11 · Split the two accent colors by job, not by hierarchy
 
@@ -166,3 +172,77 @@ URL — including the ones from the first rename. Next forwards query strings, s
 Trade Evaluator links (`?state=…`) survive.
 **Consequences:** the URL bar and the interface agree; no published link breaks. The
 redirect table is the permanent cost, and it is documented in `next.config.ts`.
+
+## ADR-15 · Retire the ridge; the transparent index is the metric (R3-1)
+
+**Context:** the ridge was selected on held-out MAE against a next-season player proxy —
+0.637 vs the index's 0.645. That comparison answers "which better predicts a player's own
+next-season box profile". The product asks a different question: how does a roster change
+move *team* net rating. Measured at that level on 90 team-seasons, the ridge explains
+**R² = 0.0039** against the index's **0.7505** (change-on-change over 60 transitions:
+0.0030 vs 0.6236). It is additionally a volume metric (corr 0.716 with usage, 0.100 with
+net rating) and is not computable per season from stored artifacts, so the R3-2
+conversion could only have been fitted on n = 30 of a metric with no signal.
+
+**Decision:** retire it. Not demote — nothing in the serving path can select it, there is
+no estimator import and no pickle to load. The index's fixed weights are the model, and
+they are recorded in `model_versions`. Validation still runs time-aware against a
+persistence baseline, because "better than assuming last season repeats" is still worth
+checking.
+
+**Consequences:** seven documents and the in-product methodology page carried "held-out
+MAE 0.637" as the headline validation number; all now report the index's numbers and
+state why the ridge lost. The interval band, which was derived from the retired model's
+residual spread, had to be replaced in the same release (R3-4) rather than left pointing
+at a model that no longer exists.
+
+## ADR-16 · Fit the index→net-rating conversion; do not assume it (R3-2/R3-3)
+
+**Context:** `team_tei_to_net_rating_delta` returned the difference in minutes-weighted
+team TEI unchanged, on the reasoning that "TEI is on a per-100 individual scale". It is
+not: the index is a weighted z-score on an arbitrary scale. A ×5 "players on court"
+factor was also proposed and is equally unfounded.
+
+**Decision:** fit `Δnet = b · Δ(team TEI)` change-on-change over 60 team transitions —
+levels would carry everything the roster does not (coaching, health, schedule), and
+differencing removes the team fixed effect. Measured **b = 14.977**, SE 1.528, t = 9.80,
+R² 0.624; per-fold slopes 14.716 / 15.276; leave-one-transition-out RMSE 2.944 / 3.773
+against 5.201 / 5.805 for predicting zero. Registered as its own `model_versions` row
+with the regressor-construction string, because the coefficient is meaningless without it.
+
+Two changes had to ship in the same release or the coefficient would have been silently
+wrong:
+
+- **Train/serve scale (C5).** Served rows were z-scored against the recency-weighted
+  window's own distribution. Team-level correlation between the two constructions was
+  r = 0.387, and the two rescalings that implied disagreed by **2.6×** — proof that no
+  transfer factor existed. Serving against the reference season's moments removes the
+  mismatch rather than correcting for it; slope is now 1.015 (r = 0.911).
+- **Denominator and replacement level (R3-3).** Team impact was divided by the minutes a
+  roster happened to fill, so giving players away took the same average over fewer
+  minutes. It now divides by the 240 a team must field and charges the shortfall to a
+  replacement-level player, derived (**−1.214**, mean TEI outside a team's top 10 by
+  minutes) rather than hardcoded at −2.0, which sat at the 14.1st percentile.
+
+**Consequences:** the performance component moved from sd 1.27 to **18.2** across a
+150-trade sample, and stripping a roster of its three best players now scores at most
+**14.7** across all 30 teams, from 56.4. The clamp binds on 2.7 % of that sample. The
+falsification note is recorded with the fit: if TEI were already in additive
+net-rating units the coefficient would be ≈5; it is ≈15.
+
+## ADR-17 · One `delta_net`, computed once (R3-5)
+
+**Context:** the point estimate reallocated all 240 minutes across the whole roster; the
+Monte Carlo summed raw minute shares over the traded players only. Two different
+quantities printed beside each other as if they were the same one, diverging with trade
+size.
+
+**Decision:** the simulation draws over the rotation the allocator produced — same
+players, same minutes, same replacement fill, same coefficient. Incumbents appear on both
+sides and, keyed on player identity, their draws cancel exactly.
+
+**Consequences:** the simulated **mean** now equals the point estimate to within Monte
+Carlo error (the regression test's tolerance is the simulation's own standard error, so
+it tightens automatically if the draw count rises). The median sits slightly off it
+because the availability beta is skewed, which is a real property of the distribution
+rather than a disagreement; `mean` is therefore reported alongside the quantiles.

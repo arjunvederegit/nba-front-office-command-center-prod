@@ -60,7 +60,7 @@ prediction · replacing professional cap tools.
 | Trades with fully available legality data | tracked; 0% without a contract provider — by design, surfaced honestly |
 | Data freshness | roster/standings < 24 h when scheduler runs; badge past TTL |
 | Provider sync success rate | visible per-run on /data-health |
-| Impact-model validation | beat persistence baseline on held-out transition (0.637 vs 0.717 MAE ✓) |
+| Impact-model validation | index beats persistence on the held-out transition (0.645 vs 0.717 MAE ✓) **and** has team-level validity (R² 0.751 vs the retired ridge's 0.004 ✓) |
 | Recommendation robustness | first-place share reported for every comparison |
 | User can identify top tradeoffs | every evaluation lists ranked drivers |
 

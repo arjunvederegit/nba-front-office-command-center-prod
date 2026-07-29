@@ -45,7 +45,7 @@ circuit breaker (found empirically during this build).
   objectives are incommensurable; weights make the subjectivity explicit and
   sensitivity-testable.
 - **Why is TEI credible?** Not because it's fancy — because its validation is
-  honest: time-aware split, persistence baseline, held-out MAE (0.637 vs 0.717),
+  honest: time-aware split, persistence baseline, held-out MAE (0.645 vs 0.717),
   residual-based bands, and a model card stating what it can't see (tracking,
   matchup, defense).
 - **Why calibrate wins/net-rating?** A hard-coded 2.7 is folklore; fitting on the

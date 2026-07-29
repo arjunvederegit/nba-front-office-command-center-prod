@@ -170,20 +170,22 @@ def test_the_simulation_does_not_depend_on_player_order(reverse: bool) -> None:
     numbers depending on the order players happened to arrive in — which was database
     order until `_roster_cards` gained an `ORDER BY`.
     """
-    from app.analytics.uncertainty import PlayerDraw, simulate_delta_wins
+    from app.analytics.uncertainty import PlayerDraw, RotationDraw, simulate_delta_wins
 
-    incoming = [
+    after_players = [
         PlayerDraw(2.1, 1.2, 0.9, 0.1, key="p1"),
         PlayerDraw(-0.4, 1.5, 0.7, 0.06, key="p2"),
         PlayerDraw(1.0, 0.9, 0.85, 0.08, key="p3"),
     ]
-    outgoing = [PlayerDraw(0.5, 1.1, 0.8, 0.09, key="p4")]
+    before_players = [PlayerDraw(0.5, 1.1, 0.8, 0.09, key="p4")]
     mapping = {"slope": 2.235}
 
-    baseline = simulate_delta_wins(incoming, outgoing, mapping)
+    baseline = simulate_delta_wins(RotationDraw(before_players), RotationDraw(after_players), mapping)
     shuffled = simulate_delta_wins(
-        list(reversed(incoming)) if reverse else incoming[1:] + incoming[:1],
-        outgoing,
+        RotationDraw(before_players),
+        RotationDraw(
+            list(reversed(after_players)) if reverse else after_players[1:] + after_players[:1]
+        ),
         mapping,
     )
     for field in ("median", "p10", "p90", "prob_positive"):

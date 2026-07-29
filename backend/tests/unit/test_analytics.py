@@ -23,7 +23,7 @@ from app.analytics.sensitivity import (
     rank_stability,
     tornado,
 )
-from app.analytics.uncertainty import PlayerDraw, simulate_delta_wins
+from app.analytics.uncertainty import PlayerDraw, RotationDraw, simulate_delta_wins
 
 
 class TestWeights:
@@ -136,7 +136,22 @@ class TestWinsCalibration:
         mapping = calibrate_wins_per_net_rating(pd.DataFrame({"net_rating": net, "wins": wins}))
         assert mapping["calibrated"] is True
         assert 2.3 < mapping["slope"] < 2.7
-        assert mapping["r2"] > 0.9
+        # R3-2: `r2` was renamed to say which one it is. LOO is the honest figure to
+        # report for a fit this small, and reporting the in-sample number as if it were
+        # out-of-sample was the actual defect here — the model itself is fine.
+        assert mapping["r2_in_sample"] > 0.9
+        assert mapping["r2_loo"] > 0.9
+        assert mapping["r2_loo"] <= mapping["r2_in_sample"]
+
+    def test_the_slope_carries_its_own_standard_error(self):
+        """The interval over the conversion needs the SLOPE's SE, not the spread of wins
+        about the line. The latter is ~55x larger and made every band that much too wide."""
+        rng = np.random.default_rng(11)
+        net = rng.normal(0, 5, 60)
+        wins = 41 + 2.5 * net + rng.normal(0, 1, 60)
+        mapping = calibrate_wins_per_net_rating(pd.DataFrame({"net_rating": net, "wins": wins}))
+        assert mapping["slope_se"] < mapping["residual_std"]
+        assert mapping["slope_t"] > 5
 
     def test_delta_scaling_by_games_remaining(self):
         mapping = {"slope": 2.0}
@@ -200,22 +215,60 @@ class TestFit:
 
 
 class TestUncertainty:
+    """The simulation compares two whole rotations, not two lists of moved players
+    (R3-5) — that is what lets its median reproduce the point estimate."""
+
+    @staticmethod
+    def _bench(n: int = 8, share: float = 0.09) -> list[PlayerDraw]:
+        return [
+            PlayerDraw(tei=0.2 * i, tei_sigma=0.5, availability=0.9, minutes_share=share, key=f"b{i}")
+            for i in range(n)
+        ]
+
     def test_deterministic_with_seed(self):
-        incoming = [PlayerDraw(tei=2.0, tei_sigma=1.0, availability=0.8, minutes_share=0.12)]
-        outgoing = [PlayerDraw(tei=0.0, tei_sigma=1.0, availability=0.9, minutes_share=0.12)]
-        a = simulate_delta_wins(incoming, outgoing, {"slope": 2.2})
-        b = simulate_delta_wins(incoming, outgoing, {"slope": 2.2})
-        assert a == b
+        bench = self._bench()
+        before = RotationDraw(bench + [PlayerDraw(0.0, 1.0, 0.9, 0.12, key="x")])
+        after = RotationDraw(bench + [PlayerDraw(2.0, 1.0, 0.8, 0.12, key="y")])
+        assert simulate_delta_wins(before, after, {"slope": 2.2}) == simulate_delta_wins(
+            before, after, {"slope": 2.2}
+        )
 
     def test_better_player_in_gives_positive_median(self):
+        bench = self._bench()
         result = simulate_delta_wins(
-            [PlayerDraw(4.0, 0.5, 0.95, 0.15)],
-            [PlayerDraw(-1.0, 0.5, 0.95, 0.15)],
+            RotationDraw(bench + [PlayerDraw(-1.0, 0.5, 0.95, 0.15, key="out")]),
+            RotationDraw(bench + [PlayerDraw(4.0, 0.5, 0.95, 0.15, key="in")]),
             {"slope": 2.2},
         )
         assert result["median"] > 0
         assert result["prob_positive"] > 0.9
         assert result["p10"] < result["median"] < result["p90"]
+
+    def test_an_identical_rotation_reports_no_distribution(self):
+        rotation = RotationDraw(self._bench())
+        result = simulate_delta_wins(rotation, rotation, {"slope": 2.2})
+        assert result["prob_positive"] is None
+        assert result["n_draws"] == 0
+
+    def test_incumbents_cancel_exactly(self):
+        """An incumbent on both sides draws from one stream, so their noise cancels
+        rather than widening the interval. Without it the band grows with roster size."""
+        swap = [PlayerDraw(-1.0, 0.5, 0.95, 0.15, key="out")], [
+            PlayerDraw(4.0, 0.5, 0.95, 0.15, key="in")
+        ]
+        narrow = simulate_delta_wins(
+            RotationDraw(self._bench(2) + swap[0]),
+            RotationDraw(self._bench(2) + swap[1]),
+            {"slope": 2.2},
+        )
+        wide = simulate_delta_wins(
+            RotationDraw(self._bench(8) + swap[0]),
+            RotationDraw(self._bench(8) + swap[1]),
+            {"slope": 2.2},
+        )
+        assert (wide["p90"] - wide["p10"]) == pytest.approx(
+            narrow["p90"] - narrow["p10"], rel=1e-9
+        )
 
 
 class TestImpactPrimitives:

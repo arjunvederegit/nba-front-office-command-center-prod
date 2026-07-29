@@ -18,8 +18,9 @@ placeholders remain until measured — do not fill them with estimates.
 ## Quant / analytics
 
 - Developed **TEI**, an original player-impact model: recency-weighted three-season
-  features with strictly time-aware validation; the ridge candidate beat a
-  persistence baseline **0.637 vs 0.717 held-out MAE**, with residual-based
+  features with strictly time-aware validation; the transparent index beat a
+  persistence baseline **0.645 vs 0.717 held-out MAE** and a ridge challenger on
+  team-level validity (**R² 0.751 vs 0.004**), with per-player
   uncertainty bands surfaced in every evaluation.
 - Calibrated a net-rating→wins conversion on **90 ingested team-seasons (2.24
   wins/point, R² = 0.95)** instead of hard-coding a constant, and propagated its

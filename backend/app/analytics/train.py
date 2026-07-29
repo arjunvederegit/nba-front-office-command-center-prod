@@ -10,7 +10,7 @@ import subprocess
 from datetime import UTC, datetime
 from typing import Any
 
-import joblib
+import numpy as np
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from app.db.models import (
     ModelVersion,
     PlayerArchetype,
     PlayerImpactEstimate,
+    PlayerSeasonStats,
     RosterEntry,
     Standing,
     TeamSeasonStats,
@@ -30,7 +31,7 @@ from .archetypes import fit_archetypes
 from .availability import availability_from_history
 from .features import build_player_season_features, recency_weighted_features
 from .impact import TEI_SCALE, score_players, train_impact_models
-from .projection import calibrate_wins_per_net_rating
+from .projection import calibrate_tei_to_net_rating, calibrate_wins_per_net_rating
 
 logger = get_logger(__name__)
 ARTIFACT_DIR = BACKEND_DIR.parent / "models" / "artifacts"
@@ -167,6 +168,72 @@ def _gc_superseded_estimates(db: Session) -> int:
     return len(stale)
 
 
+def _team_tei_transitions(
+    db: Session,
+    season_df: pd.DataFrame,
+    seasons: list[str],
+    net_by_team_season: dict[tuple[str, str], float],
+) -> pd.DataFrame:
+    """Team-season changes in minutes-weighted TEI, paired with changes in net rating.
+
+    Scored per season with the same season-z construction the index is defined on, so the
+    fitted coefficient is in the units production serves (C5). Team membership comes from
+    `player_season_stats.team_id`, which is the only per-season roster record held.
+    """
+    from .impact import add_zscores, baseline_index
+
+    scored = add_zscores(season_df.copy())
+    scored["season_tei"] = baseline_index(scored)
+
+    # The feature frame carries no team, so per-season membership comes from
+    # `player_season_stats` — the only record of which roster a player was on in a
+    # season that is not the *current* one.
+    membership = pd.DataFrame(
+        db.execute(
+            select(
+                PlayerSeasonStats.player_id, PlayerSeasonStats.season, PlayerSeasonStats.team_id
+            ).where(PlayerSeasonStats.stat_type == "base")
+        ).all(),
+        columns=["player_id", "season", "team_id"],
+    )
+    if membership.empty:
+        return pd.DataFrame()
+    scored = scored.merge(membership, on=["player_id", "season"], how="inner")
+    if scored.empty or scored["team_id"].isna().all():
+        return pd.DataFrame()
+
+    scored["player_minutes"] = (
+        pd.to_numeric(scored.get("total_minutes"), errors="coerce").fillna(0.0).clip(lower=1e-9)
+    )
+    grouped = (
+        scored.dropna(subset=["team_id"])
+        .groupby(["team_id", "season"])
+        .apply(
+            lambda t: np.average(t["season_tei"], weights=t["player_minutes"]),
+            include_groups=False,
+        )
+        .rename("team_tei")
+        .reset_index()
+    )
+    rows = []
+    for team_id, grp in grouped.groupby("team_id"):
+        grp = grp[grp["season"].isin(seasons)].sort_values("season")
+        for (_, a), (_, b) in zip(grp.iloc[:-1].iterrows(), grp.iloc[1:].iterrows(), strict=False):
+            net_a = net_by_team_season.get((team_id, a["season"]))
+            net_b = net_by_team_season.get((team_id, b["season"]))
+            if net_a is None or net_b is None:
+                continue
+            rows.append(
+                {
+                    "team_id": team_id,
+                    "transition": f"{a['season']}->{b['season']}",
+                    "d_tei": b["team_tei"] - a["team_tei"],
+                    "d_net": net_b - net_a,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def train_all(db: Session) -> dict[str, Any]:
     settings = get_settings()
     seasons = settings.history_season_list
@@ -179,12 +246,9 @@ def train_all(db: Session) -> dict[str, Any]:
 
     result = train_impact_models(season_df, seasons)
 
+    # No artifact: the index is fixed documented weights, so the model IS its
+    # coefficients and they are recorded below. The retired ridge needed a pickle.
     artifact_path = None
-    if result.ridge is not None:
-        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-        artifact_file = ARTIFACT_DIR / f"impact_ridge_{version}.joblib"
-        joblib.dump({"model": result.ridge, "features": result.feature_names}, artifact_file)
-        artifact_path = str(artifact_file.relative_to(BACKEND_DIR.parent))
 
     impact_model = _register_model(
         db,
@@ -295,6 +359,7 @@ def train_all(db: Session) -> dict[str, Any]:
 
     # Wins-per-net-rating calibration from ingested team seasons
     team_rows = []
+    net_by_team_season: dict[tuple[str, str], float] = {}
     for stats in db.scalars(
         select(TeamSeasonStats).where(TeamSeasonStats.stat_type == "advanced")
     ).all():
@@ -304,9 +369,29 @@ def train_all(db: Session) -> dict[str, Any]:
             )
         )
         net = (stats.stats or {}).get("NET_RATING")
+        if net is not None:
+            net_by_team_season[(stats.team_id, stats.season)] = float(net)
         if standing is not None and net is not None:
             team_rows.append({"net_rating": float(net), "wins": standing.wins})
     mapping = calibrate_wins_per_net_rating(pd.DataFrame(team_rows))
+
+    # R3-2: the TEI -> net-rating conversion, fitted change-on-change on team
+    # transitions. Registered with its own diagnostics because the coefficient is only
+    # valid for the regressor construction recorded beside it.
+    conversion = calibrate_tei_to_net_rating(
+        _team_tei_transitions(db, season_df, seasons, net_by_team_season)
+    )
+    _register_model(
+        db,
+        name="tei_to_net_rating",
+        version=version,
+        algorithm="OLS on team-season changes (d_net ~ d_teamTEI)",
+        training_period=training_period,
+        features=["team minutes-weighted TEI"],
+        target="change in team net rating",
+        metrics=conversion,
+        artifact_path=None,
+    )
     _register_model(
         db,
         name="team_projection",
