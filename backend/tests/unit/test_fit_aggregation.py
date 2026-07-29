@@ -19,8 +19,8 @@ from app.analytics.fit import GAMMA, fit_score
 def _score(needs, need_to_skill, *, delta=0.4, strengths=None):
     """One incoming and one outgoing player differing by `delta` in every named skill."""
     skills = sorted(set(need_to_skill.values()))
-    incoming = {k: 0.5 + delta / 2 for k in skills}
-    outgoing = {k: 0.5 - delta / 2 for k in skills}
+    incoming = dict.fromkeys(skills, 0.5 + delta / 2)
+    outgoing = dict.fromkeys(skills, 0.5 - delta / 2)
     return fit_score(
         needs=needs,
         incoming=[(incoming, 30.0)],
