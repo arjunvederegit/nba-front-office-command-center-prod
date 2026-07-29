@@ -396,9 +396,14 @@ class PlayerArchetype(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     player_id: Mapped[str] = mapped_column(ForeignKey("players.id"), index=True)
     season: Mapped[str] = mapped_column(String(10))
-    cluster_id: Mapped[int] = mapped_column(Integer)
+    # `role_id` comes from `archetypes.ROLE_ID`, a frozen append-only map, so the number
+    # is stable across retrains. It replaced a k-means `cluster_id`, which was an
+    # arbitrary index that could change meaning on every run (R4-3).
+    role_id: Mapped[int] = mapped_column(Integer)
     label: Mapped[str] = mapped_column(String(50))
-    distances: Mapped[dict] = mapped_column(JSON, default=dict)
+    # The values that determined the branch — "why this role" — replacing a centroid
+    # distance that a rule chain does not have.
+    role_inputs: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class TeamNeed(Base, TimestampMixin):

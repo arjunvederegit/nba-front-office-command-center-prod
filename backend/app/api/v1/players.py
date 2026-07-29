@@ -120,7 +120,7 @@ def get_player(player_id: str, db: Session = Depends(get_db)) -> dict:
         peers = db.scalars(
             select(PlayerArchetype).where(
                 PlayerArchetype.season == settings.current_season,
-                PlayerArchetype.cluster_id == archetype.cluster_id,
+                PlayerArchetype.role_id == archetype.role_id,
                 PlayerArchetype.player_id != player.id,
             )
         ).all()
@@ -167,7 +167,7 @@ def get_player(player_id: str, db: Session = Depends(get_db)) -> dict:
         }
         if impact
         else {"note": "No impact estimate — player below minutes threshold or model not trained."},
-        "archetype": {"label": archetype.label, "cluster_id": archetype.cluster_id}
+        "archetype": {"label": archetype.label, "role_id": archetype.role_id}
         if archetype
         else None,
         "comparables": comparables,

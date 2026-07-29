@@ -1,8 +1,37 @@
-"""Player archetypes from real statistical profiles.
+"""Player roles from a deterministic, size-first rule chain.
 
-K-means over standardized role features; cluster labels are assigned from cluster
-centers by deterministic rules (never arbitrarily). Silhouette score is recorded with
-the model version so clustering quality is inspectable."""
+**K-means is retired (R4-3).** It was not merely imprecise, it was unstable and
+degenerate, measured on the real 632-player window frame:
+
+- Only **5 of its 10 label branches were ever reached**. `defensive big`, `stretch big`,
+  `movement shooter`, `point-of-attack guard` and `role player` never fired at all.
+- **217 of 632 rows (34.3 %)** carried a numeric suffix — `primary creator (2)` — because
+  several clusters landed on the same label and were disambiguated by counter rather than
+  by meaning.
+- Silhouette **0.154**: no separated structure exists in this feature space, so no choice
+  of k finds one. The plan is right that sweeping k is pointless.
+- The decisive defect, which nothing previously measured: **dropping a random 10 % of
+  players rewrote 65.7 % of the surviving players' labels** (200 seeds, ARI 0.647). A
+  label that changes two times in three when the population moves slightly is not a
+  property of the player.
+- It silently **fabricated size for 49 players (7.75 %)** whose `height_inches` is NULL,
+  by filling the league median before clustering.
+
+The replacement is a total, deterministic function of one player's row plus league
+percentile cut points. On the identical resampling protocol it moves **1.78 %** of labels
+(ARI 0.968), every one of its 14 roles fires, the largest holds 12.2 % and the smallest
+3.5 %, the Herfindahl index is 0.080 against k-means' 0.238, and repeated runs are
+byte-identical across process invocations and BLAS thread counts.
+
+**Size gates first, deliberately.** A creation-first chain — the intuitive ordering, and
+effectively what k-means used — was measured to label Wembanyama a secondary creator.
+Height constrains which roles are available before any skill does.
+
+Nothing here is fitted and nothing is random, so there is no silhouette to report and no
+seed to fix. Thresholds are league percentiles recomputed from the scored frame, so the
+chain stays calibrated if the distribution shifts rather than encoding today's league in
+magic numbers.
+"""
 
 import hashlib
 import inspect
@@ -10,105 +39,174 @@ from functools import lru_cache
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
-from sklearn.preprocessing import StandardScaler
 
-from .features import MODEL_FEATURES, RANDOM_SEED
+from .features import MODEL_FEATURES
 
-ARCHETYPE_FEATURES = [
+ROLE_FEATURES = [
+    "height_inches",
     "USG_PCT",
     "AST_PCT",
     "fg3a_rate",
-    "TS_PCT",
-    "OREB_PCT",
-    "DREB_PCT",
     "stl_per_min",
     "blk_per_min",
-    "pts_per75",
-    "height_inches",
+    "OREB_PCT",
 ]
+SIZE_FEATURE = "height_inches"
+DISCRIMINANTS = ["USG_PCT", "AST_PCT", "fg3a_rate", "stl_per_min", "blk_per_min", "OREB_PCT"]
+MAX_MISSING_DISCRIMINANTS = 2
+PERCENTILES = (30, 55, 60, 65, 70, 75, 80, 90)
 
-N_CLUSTERS = 8
+UNCLASSIFIED_SIZE = "unclassified (no listed height)"
+UNCLASSIFIED_STATS = "unclassified (insufficient stats)"
+
+# Frozen id map. **Never reorder or renumber**: `role_id` is persisted per player-season,
+# so renumbering would silently rewrite the meaning of every historical row. Append only.
+ROLE_ID = {
+    "lead guard": 0,
+    "scoring guard": 1,
+    "point-of-attack guard": 2,
+    "off-ball guard": 3,
+    "primary wing creator": 4,
+    "3&D wing": 5,
+    "movement shooter": 6,
+    "slashing wing": 7,
+    "connector wing": 8,
+    "stretch big": 9,
+    "rim-protecting big": 10,
+    "playmaking big": 11,
+    "glass-cleaning big": 12,
+    "finishing big": 13,
+    UNCLASSIFIED_SIZE: 90,
+    UNCLASSIFIED_STATS: 91,
+}
+ROLE_ORDER = [r for r, _ in sorted(ROLE_ID.items(), key=lambda kv: kv[1])]
+REAL_ROLES = [r for r in ROLE_ORDER if not r.startswith("unclassified")]
 
 
-def _label_from_center(center: dict[str, float], league: dict[str, float]) -> str:
-    """Deterministic labeling: compare the cluster center to league medians."""
-    high = {k: center[k] > league[k] for k in center}
-    tall = center["height_inches"] >= league["height_inches"] + 2
-    small = center["height_inches"] <= league["height_inches"] - 2
+def league_thresholds(weighted: pd.DataFrame) -> dict[str, dict[int, float]]:
+    """League percentile cut points, computed from the scored frame itself.
 
-    if high["USG_PCT"] and high["AST_PCT"]:
-        return "primary creator"
-    if high["AST_PCT"] and not high["USG_PCT"]:
-        return "secondary creator"
-    if tall and high["blk_per_min"] and not high["fg3a_rate"]:
-        return "rim-running center"
-    if tall and high["fg3a_rate"]:
-        return "stretch big"
-    if tall and high["DREB_PCT"]:
-        return "defensive big"
-    if high["fg3a_rate"] and high["TS_PCT"] and not high["USG_PCT"]:
-        return "movement shooter"
-    if high["stl_per_min"] and high["fg3a_rate"]:
-        return "two-way wing"
-    if high["USG_PCT"] and not high["AST_PCT"]:
-        return "bench scorer"
-    if small and high["stl_per_min"]:
+    Unweighted over the window frame on purpose: each row is already minutes- and
+    recency-weighted per player, so weighting again would over-represent starters and
+    make the cuts a function of playing time rather than of the league.
+
+    A column with fewer than 30 observations is omitted entirely, and every branch that
+    reads it then evaluates False — so a thin column narrows the chain visibly instead of
+    passing silently on a cut derived from a handful of players.
+    """
+    thresholds: dict[str, dict[int, float]] = {}
+    for col in ROLE_FEATURES:
+        series = pd.to_numeric(weighted.get(col), errors="coerce").dropna()
+        if len(series) < 30:
+            continue
+        arr = np.sort(series.to_numpy(dtype=float))
+        thresholds[col] = {
+            p: float(np.percentile(arr, p, method="linear")) for p in PERCENTILES
+        }
+    return thresholds
+
+
+def assign_role(row: pd.Series, thresholds: dict[str, dict[int, float]]) -> str:
+    """Size-first rule chain. Total, deterministic, no randomness, no fitting.
+
+    Within each size tier the branches run from the rarest and most lineup-constraining
+    trait to the most common, so a player who satisfies several is named by the one that
+    most constrains how a coach can use him. That ordering was committed before any
+    named-player check was run.
+    """
+
+    def value(col: str) -> float | None:
+        x = pd.to_numeric(row.get(col), errors="coerce")
+        return None if pd.isna(x) else float(x)
+
+    def ge(col: str, pct: int) -> bool:
+        # True only if the value exists AND the league cut exists AND value >= cut.
+        # Ties are inclusive, so a player sitting exactly on a cut takes the earlier
+        # branch and every player with an identical value takes an identical branch.
+        x = value(col)
+        return x is not None and col in thresholds and x >= thresholds[col][pct]
+
+    height = value(SIZE_FEATURE)
+    if height is None or SIZE_FEATURE not in thresholds:
+        # Missing size does NOT fall through into a real role. k-means filled the league
+        # median and produced a confident label for 49 players whose height nobody
+        # recorded. This gets a visible label instead, so the gap is counted and fixable
+        # rather than absorbed.
+        return UNCLASSIFIED_SIZE
+    if sum(value(c) is None for c in DISCRIMINANTS) > MAX_MISSING_DISCRIMINANTS:
+        return UNCLASSIFIED_STATS
+
+    if height >= thresholds[SIZE_FEATURE][75]:  # ---------------------------- BIG
+        if ge("fg3a_rate", 60):
+            return "stretch big"
+        if ge("blk_per_min", 90):
+            return "rim-protecting big"
+        if ge("AST_PCT", 60):
+            return "playmaking big"
+        if ge("OREB_PCT", 80):
+            return "glass-cleaning big"
+        return "finishing big"
+
+    if height >= thresholds[SIZE_FEATURE][30]:  # --------------------------- WING
+        if ge("USG_PCT", 75) and ge("AST_PCT", 60):
+            return "primary wing creator"
+        if ge("fg3a_rate", 60) and ge("stl_per_min", 65):
+            return "3&D wing"
+        if ge("fg3a_rate", 65):
+            return "movement shooter"
+        if ge("USG_PCT", 55):
+            return "slashing wing"
+        return "connector wing"
+
+    if ge("AST_PCT", 80):  # ----------------------------------------------- GUARD
+        return "lead guard"
+    if ge("USG_PCT", 65):
+        return "scoring guard"
+    if ge("stl_per_min", 70):
         return "point-of-attack guard"
-    return "role player"
+    return "off-ball guard"
 
 
 def fit_archetypes(weighted: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """Cluster recency-weighted player features. Returns (assignments, metadata)."""
-    df = weighted.copy()
-    features = [f for f in ARCHETYPE_FEATURES if f in df.columns]
-    matrix = df[features].apply(pd.to_numeric, errors="coerce")
-    mask = matrix.notna().sum(axis=1) >= len(features) - 2
-    df = df[mask]
-    matrix = matrix[mask].fillna(matrix.median(numeric_only=True))
+    """Assign a role to every scored player. Returns (assignments, metadata).
 
-    if len(df) < N_CLUSTERS * 3:
-        return pd.DataFrame(), {"note": "insufficient players for clustering"}
+    Keeps the name `fit_archetypes` because `train.py` and the API speak of archetypes,
+    but nothing is fitted any more: the same frame always produces the same labels.
+    """
+    if weighted.empty or "player_id" not in weighted.columns:
+        return pd.DataFrame(), {"note": "no scored players to label"}
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(matrix.to_numpy())
-    kmeans = KMeans(n_clusters=N_CLUSTERS, random_state=RANDOM_SEED, n_init=10)
-    clusters = kmeans.fit_predict(X)
-    silhouette = float(silhouette_score(X, clusters))
-
-    league_medians = {f: float(matrix[f].median()) for f in features}
-    centers_raw = scaler.inverse_transform(kmeans.cluster_centers_)
-    labels: dict[int, str] = {}
-    for idx, center in enumerate(centers_raw):
-        center_map = dict(zip(features, [float(v) for v in center], strict=False))
-        labels[idx] = _label_from_center(center_map, league_medians)
-
-    # Disambiguate duplicate labels deterministically
-    seen: dict[str, int] = {}
-    for idx in sorted(labels):
-        base = labels[idx]
-        seen[base] = seen.get(base, 0) + 1
-        if seen[base] > 1:
-            labels[idx] = f"{base} ({seen[base]})"
-
-    distances = kmeans.transform(X)
-    out = pd.DataFrame(
-        {
-            "player_id": df["player_id"].to_numpy(),
-            "cluster_id": clusters,
-            "label": [labels[c] for c in clusters],
-            "distance": distances[np.arange(len(clusters)), clusters],
-        }
+    thresholds = league_thresholds(weighted)
+    labels = [assign_role(row, thresholds) for _, row in weighted.iterrows()]
+    out = (
+        pd.DataFrame(
+            {
+                "player_id": weighted["player_id"].to_numpy(),
+                "role_id": [ROLE_ID[label] for label in labels],
+                "label": labels,
+            }
+        )
+        .sort_values("player_id", kind="mergesort")
+        .reset_index(drop=True)
     )
+
+    counts = out["label"].value_counts()
+    n = len(out)
     meta = {
-        "n_clusters": N_CLUSTERS,
-        "silhouette": silhouette,
-        "features": features,
-        "labels": {str(k): v for k, v in labels.items()},
-        "centers": {
-            str(i): dict(zip(features, [round(float(v), 4) for v in center], strict=False))
-            for i, center in enumerate(centers_raw)
+        "method": "size-first deterministic rule chain",
+        "chain_version": "v1",
+        "n_players": int(n),
+        "roles": ROLE_ORDER,
+        "features": ROLE_FEATURES,
+        "thresholds": {
+            c: {str(p): round(v, 6) for p, v in d.items()} for c, d in sorted(thresholds.items())
+        },
+        "distribution": {label: int(counts.get(label, 0)) for label in ROLE_ORDER},
+        "herfindahl": round(float(((counts / n) ** 2).sum()), 6) if n else None,
+        "max_share": round(float(counts.max() / n), 6) if n else None,
+        "unclassified": {
+            UNCLASSIFIED_SIZE: int(counts.get(UNCLASSIFIED_SIZE, 0)),
+            UNCLASSIFIED_STATS: int(counts.get(UNCLASSIFIED_STATS, 0)),
         },
     }
     return out, meta

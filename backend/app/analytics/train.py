@@ -21,7 +21,6 @@ from app.db.models import (
     ModelVersion,
     PlayerArchetype,
     PlayerImpactEstimate,
-    PlayerSeasonStats,
     RosterEntry,
     Standing,
     TeamSeasonStats,
@@ -185,21 +184,15 @@ def _team_tei_transitions(
     scored = add_zscores(season_df.copy())
     scored["season_tei"] = baseline_index(scored)
 
-    # The feature frame carries no team, so per-season membership comes from
-    # `player_season_stats` — the only record of which roster a player was on in a
-    # season that is not the *current* one.
-    membership = pd.DataFrame(
-        db.execute(
-            select(
-                PlayerSeasonStats.player_id, PlayerSeasonStats.season, PlayerSeasonStats.team_id
-            ).where(PlayerSeasonStats.stat_type == "base")
-        ).all(),
-        columns=["player_id", "season", "team_id"],
-    )
-    if membership.empty:
+    # Per-season membership now arrives on the feature frame itself: R4 added `team_id`
+    # to `build_player_season_features` so the defensive differential could be measured
+    # against a player's teammates. This used to re-query `player_season_stats` and merge
+    # it back, which after that change collided on the column name and produced
+    # `team_id_x`/`team_id_y` — the re-query is redundant, not merely duplicated.
+    if "team_id" not in scored.columns:
         return pd.DataFrame()
-    scored = scored.merge(membership, on=["player_id", "season"], how="inner")
-    if scored.empty or scored["team_id"].isna().all():
+    scored = scored[scored["team_id"].notna()]
+    if scored.empty:
         return pd.DataFrame()
 
     scored["player_minutes"] = (
@@ -326,13 +319,20 @@ def train_all(db: Session) -> dict[str, Any]:
             db,
             name="player_archetype",
             version=version,
-            algorithm=f"k-means (k={archetype_meta['n_clusters']})",
+            algorithm=archetype_meta["method"],
             training_period=training_period,
             features=archetype_meta["features"],
             target=None,
+            # No silhouette: nothing is fitted, so there is no clustering quality to
+            # report. What replaces it is the non-degeneracy evidence — how the labels
+            # are actually distributed, and the league cut points that produced them.
             metrics={
-                "silhouette": archetype_meta["silhouette"],
-                "labels": archetype_meta["labels"],
+                "chain_version": archetype_meta["chain_version"],
+                "distribution": archetype_meta["distribution"],
+                "herfindahl": archetype_meta["herfindahl"],
+                "max_share": archetype_meta["max_share"],
+                "unclassified": archetype_meta["unclassified"],
+                "thresholds": archetype_meta["thresholds"],
             },
             artifact_path=None,
         )
@@ -346,9 +346,9 @@ def train_all(db: Session) -> dict[str, Any]:
             values = {
                 "player_id": row["player_id"],
                 "season": settings.current_season,
-                "cluster_id": int(row["cluster_id"]),
+                "role_id": int(row["role_id"]),
                 "label": str(row["label"]),
-                "distances": {"own_cluster": round(float(row["distance"]), 3)},
+                "role_inputs": {},
             }
             if existing_archetype is None:
                 db.add(PlayerArchetype(**values))
@@ -415,7 +415,8 @@ def train_all(db: Session) -> dict[str, Any]:
         },
         "archetypes": {
             "players_labeled": archetype_written,
-            "silhouette": archetype_meta.get("silhouette"),
+            "max_label_share": archetype_meta.get("max_share"),
+            "unclassified": archetype_meta.get("unclassified"),
         },
         "wins_mapping": mapping,
     }
