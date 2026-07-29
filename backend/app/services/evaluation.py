@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.analytics.age_curve import timeline_alignment
 from app.analytics.archetypes import (
     SKILL_KEYS,
+    UNADDRESSABLE_NEEDS,
     player_skill_vector,
     skill_schema_fingerprint,
 )
@@ -425,7 +426,18 @@ class EvaluationService:
             roster_strengths=roster_strengths,
             need_to_skill=NEED_TO_SKILL,
         )
-        return max(0.0, min(100.0, 50.0 + score * 120.0)), {**detail, "needs": needs}
+        # Attach the reason a measured need has no player-side answer, so the UI can say
+        # why rather than silently omitting a weakness the same page reports (R4-2).
+        withheld = {
+            key: UNADDRESSABLE_NEEDS[key]
+            for key in detail.get("needs_without_a_skill", [])
+            if key in UNADDRESSABLE_NEEDS
+        }
+        return max(0.0, min(100.0, 50.0 + score * 120.0)), {
+            **detail,
+            "needs_not_addressable": withheld,
+            "needs": needs,
+        }
 
     def _contract_value(
         self,

@@ -122,12 +122,36 @@ SKILL_KEYS = [
     "creation",
     "turnover_avoidance",
     "team_defense",
-    "point_of_attack_defense",
     "rim_protection",
     "rebounding",
     "size",
     "scoring",
 ]
+
+# Needs the product measures on the team side but **declines to claim any player skill
+# addresses**, with the reason shown wherever the need is. This is not a TODO list; it is
+# the honest half of R4-2.
+#
+# `point_of_attack_defense` was built and then withdrawn. Its pre-registered class check —
+# high-usage, high-assist, sub-6'8" players with real minutes, the population the tool
+# used to overrate — came out at mean 0.630 with 75 % above the median, WORSE than the
+# steals proxy it was meant to replace (0.611, 70 %). A steals-led composite cannot help
+# but rate ball-dominant guards highly, because gambling for steals is what shows up in a
+# box score and staying in front of a ball handler is not.
+#
+# The anti-overfitting rule (A''') says the response to a failed check is not to tune the
+# weights until it passes. So the claim is withdrawn instead: no player skill asserts it
+# improves on-ball defence, because nothing in this repository measures on-ball defence.
+# That needs the matchup and tracking data deferred to R6. The team-side need is still
+# computed and still shown — a team that cannot contain a ball handler should be told so —
+# it simply no longer has a player-side answer attached to it.
+UNADDRESSABLE_NEEDS = {
+    "point_of_attack_defense": (
+        "no player skill claims to address this: on-ball defence cannot be measured from "
+        "box-score data, and a steals-based proxy rates ball-dominant guards above the "
+        "defenders who actually guard them"
+    ),
+}
 
 
 def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float]:
@@ -210,7 +234,6 @@ def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float
         # given the same answer, from steals alone. They are now two composites over
         # different terms — see `features.TEAM_DEFENSE_WEIGHTS` for what selected them.
         "team_defense": pct("team_defense_score"),
-        "point_of_attack_defense": pct("poa_defense_score"),
         "rim_protection": pct("blk_per_min"),
         "rebounding": blend(("DREB_PCT", 0.7), ("OREB_PCT", 0.3)),
         "size": pct("height_inches"),

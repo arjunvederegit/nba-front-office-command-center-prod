@@ -175,7 +175,9 @@ NEED_TO_SKILL = {
     "shooting_efficiency": "shooting_accuracy",
     "offense_overall": "scoring",
     "defense_overall": "team_defense",
-    "point_of_attack_defense": "point_of_attack_defense",
+    # `point_of_attack_defense` is deliberately absent — see
+    # `archetypes.UNADDRESSABLE_NEEDS`. The need is measured and displayed; no player
+    # skill claims to fix it, because none can be measured from box-score data.
     "rim_protection": "rim_protection",
     "defensive_rebounding": "rebounding",
     "playmaking": "creation",

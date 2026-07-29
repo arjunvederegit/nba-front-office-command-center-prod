@@ -64,9 +64,17 @@ def fit_score(
     # Group the needs by the skill that addresses them, so each skill delta is scored
     # exactly once (R4-1a).
     needs_by_skill: dict[str, list[tuple[str, float]]] = {}
+    unaddressable: list[str] = []
     for need_key, severity in needs.items():
         skill_key = need_to_skill.get(need_key)
-        if skill_key is None or skill_key not in delta:
+        if skill_key is None:
+            # A need the product measures but declines to claim any player skill
+            # addresses. Reported rather than silently dropped, so a real team weakness
+            # does not simply vanish from the explanation (R4-2).
+            if severity > 0:
+                unaddressable.append(need_key)
+            continue
+        if skill_key not in delta:
             continue
         needs_by_skill.setdefault(skill_key, []).append((need_key, severity))
 
@@ -112,5 +120,9 @@ def fit_score(
         # reconciled with the score rather than looking arbitrarily deflated.
         "skill_severity_applied": skill_severities,
         "needs_sharing_a_skill": shared_skills,
+        # Needs with real severity that no skill claims to address. Reported so a genuine
+        # team weakness does not simply vanish from the explanation; the caller attaches
+        # the reason (R4-2).
+        "needs_without_a_skill": sorted(unaddressable),
         "gamma": GAMMA,
     }
