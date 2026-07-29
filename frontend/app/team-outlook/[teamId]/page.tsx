@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import { NEED_LABEL, height, money, ordinal, pct, tei } from "@/lib/format";
+import { NEED_LABEL, height, money, ordinal, payrollDisclosure, pct, tei } from "@/lib/format";
 import { selectStrengths, selectWeaknesses } from "@/lib/needs";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type {
@@ -562,6 +562,8 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
                   <SourceRail source={payroll.cap_context.cap_source} retrievedAt={undefined} />
                 )}
               </div>
+            ) : payroll.payroll_known !== null && payroll.payroll_coverage.players_known > 0 ? (
+              <PartialPayroll payroll={payroll} teamId={teamId} />
             ) : (
               <UnavailableNotice
                 reason={
@@ -620,6 +622,71 @@ function TeamStat({
         accent={value === undefined || value === null ? "var(--unknown)" : accent}
       />
     </Panel>
+  );
+}
+
+const THRESHOLD_LABEL: Record<string, string> = {
+  salary_cap: "the salary cap",
+  luxury_tax: "the luxury-tax line",
+  first_apron: "the first apron",
+  second_apron: "the second apron",
+};
+
+/**
+ * Partial contract coverage (R2c). The figure shown is the sum of the contracts on file,
+ * which is a *floor* — every missing salary can only raise it. The coverage, the count of
+ * unpriced players and their names are rendered with the number, never behind a
+ * disclosure the reader has to go looking for, and no cap position is claimed.
+ */
+function PartialPayroll({ payroll, teamId }: { payroll: PayrollResponse; teamId: string }) {
+  const coverage = payroll.payroll_coverage;
+  const cleared = payroll.cap_context_partial?.thresholds_already_cleared ?? [];
+  const shown = payrollDisclosure(payroll.payroll, payroll.payroll_known, coverage);
+  return (
+    <div className="space-y-3">
+      <StatBlock
+        label={`Committed payroll · ${payroll.league_year}`}
+        value={shown.value}
+        note={shown.note}
+        accent="var(--leather)"
+      />
+      <div className="flex flex-wrap gap-1.5">
+        <Badge status="unavailable">lower bound — {coverage.players_unknown} salaries missing</Badge>
+        {cleared.length > 0 && (
+          <Badge status="warning" glyph={false}>
+            already above {THRESHOLD_LABEL[cleared[cleared.length - 1]] ?? cleared[cleared.length - 1]}
+          </Badge>
+        )}
+      </div>
+      <p className="text-[12px] leading-relaxed text-muted">{payroll.payroll_coverage_note}</p>
+      {payroll.cap_context_partial && (
+        <dl className="space-y-1.5 border-t border-hairline pt-3">
+          <MoneyRow label="Luxury-tax line" value={money(payroll.cap_context_partial.luxury_tax)} />
+          <MoneyRow label="First apron" value={money(payroll.cap_context_partial.first_apron)} />
+          <MoneyRow label="Room below tax" value="not computable" />
+        </dl>
+      )}
+      {payroll.players_missing_salary.length > 0 && (
+        <details className="text-[12px] text-muted">
+          <summary className="cursor-pointer text-signal">
+            {payroll.players_missing_salary.length} players with no salary on file
+          </summary>
+          <ul className="mt-1.5 space-y-0.5 pl-4">
+            {payroll.players_missing_salary.map((name) => (
+              <li key={name} className="list-disc">
+                {name}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <ButtonLink href={`/salary-cap-center?team=${teamId}`} size="sm" className="w-full">
+        Full picture in Salary-Cap Center
+      </ButtonLink>
+      {payroll.cap_context_partial && (
+        <SourceRail source={payroll.cap_context_partial.cap_source} retrievedAt={undefined} />
+      )}
+    </div>
   );
 }
 

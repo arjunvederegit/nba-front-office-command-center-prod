@@ -49,6 +49,12 @@ export interface RosterPlayer {
   /** Cluster label only; the full assignment lives on the player detail. */
   archetype: string | null;
   availability: number | null;
+  /** Cap-league-year salary from the contracts snapshot; null when not on file. */
+  salary: number | null;
+  /** Seasons the snapshot carries from the cap league year on; null when not on file. */
+  contract_years_remaining: number | null;
+  /** null means the provider does not report contract type — never assume "standard". */
+  contract_type: string | null;
 }
 
 export interface RosterResponse {
@@ -66,13 +72,39 @@ export interface TeamNeedItem {
   explanation: string;
 }
 
+/** How many of how many contracts a payroll figure was built from (R2c). */
+export interface PayrollCoverage {
+  known: number;
+  players_known: number;
+  players_total: number;
+  players_unknown: number;
+  share: number | null;
+  complete: boolean;
+  /** True when salaries are missing: the figure is a floor, not the payroll. */
+  is_lower_bound: boolean;
+}
+
 export interface PayrollResponse {
   team_id: string;
   league_year: string;
   roster_size: number;
   players_with_salary: number;
+  players_without_salary: number;
+  /**
+   * The verified payroll: null unless every rostered player is priced. This is the only
+   * figure that may be compared against a cap threshold.
+   */
   payroll: number | null;
   payroll_available: boolean;
+  /**
+   * The disclosed payroll: the sum of the contracts on file, which is a LOWER BOUND when
+   * coverage is partial. Never render it without `payroll_coverage_note` beside it.
+   */
+  payroll_known: number | null;
+  payroll_is_lower_bound: boolean;
+  payroll_coverage: PayrollCoverage;
+  payroll_coverage_note: string;
+  players_missing_salary: string[];
   unavailable_reason?: string;
   contract_provider_configured: boolean;
   players: {
@@ -90,6 +122,20 @@ export interface PayrollResponse {
     second_apron: number;
     room_below_tax: number;
     cap_source: string;
+  };
+  /**
+   * Present instead of `cap_context` under partial coverage. Carries no room/space
+   * figure — that needs the missing salaries — only the thresholds the contracts on file
+   * already exceed, which no completion of the data can undo.
+   */
+  cap_context_partial?: {
+    salary_cap: number;
+    luxury_tax: number;
+    first_apron: number;
+    second_apron: number;
+    cap_source: string;
+    thresholds_already_cleared: string[];
+    note: string;
   };
 }
 
@@ -115,10 +161,23 @@ export interface TeamLegality {
   status: LegalityStatus;
   outgoing_salary: number | null;
   incoming_salary: number | null;
+  /** Verified payroll — null unless every rostered player is priced. */
   payroll_before: number | null;
   payroll_after: number | null;
   apron_status_before: string | null;
   apron_status_after: string | null;
+  /** Disclosed payroll — a lower bound; always render the coverage with it (R2c). */
+  payroll_known_before: number | null;
+  payroll_known_after: number | null;
+  payroll_coverage_before: PayrollCoverage | null;
+  payroll_coverage_after: PayrollCoverage | null;
+  payroll_coverage_note: string | null;
+  /**
+   * The highest threshold the known salaries alone already clear. Null means nothing is
+   * proven — never "below the tax", which partial data cannot establish.
+   */
+  apron_status_at_least_before: string | null;
+  apron_status_at_least_after: string | null;
   roster_before: number;
   roster_after: number;
 }

@@ -4,18 +4,28 @@ The metric that matters is not the one the import naturally reports. A BBRef-sid
 rate answers "how many rows in the file did we recognise", and can read 98 % while the
 question the product needs answered — "can we compute payroll for this team" — is 60 %.
 
-`_team_payroll` is all-or-nothing by design: a partial sum understates payroll and
-silently skews apron status. That makes coverage a cliff, not a slope. Measured
-sensitivity on the live 530-row roster:
+Payroll used to be all-or-nothing, which made coverage a cliff rather than a slope.
+Measured sensitivity on the live 530-row roster:
 
     roster players missing a 2026-27 salary → teams with a payroll
      1 %  → 26/30      2 %  → 21/30      5 %  → 10/30
     10 %  →  4/30     20 %  →  0/30
 
 An offseason snapshot plausibly misses 25–40 % (expired contracts) → **zero teams with
-payroll**, while a BBRef-side match rate reports success the whole time. This module
-computes the roster-side number so an import can be judged before it is trusted, and it
-runs whether or not a provider is configured.
+payroll**, while a BBRef-side match rate reports success the whole time.
+
+R2c split that single number in two, and both are reported here because they answer
+different questions:
+
+- `teams_with_complete_payroll` — teams whose payroll may be **compared to a threshold**.
+  Still all-or-nothing, still the gate every salary rule reads. Measured 0/30 against the
+  Basketball-Reference offseason snapshot.
+- `teams_with_disclosable_payroll` — teams for which a payroll figure can be **shown**
+  with its coverage attached, as a lower bound. Measured 30/30 against the same snapshot.
+
+An operator judging an import needs both: the second says the data is worth loading, the
+first says whether legality can be verified from it. This module runs whether or not a
+provider is configured.
 """
 
 from __future__ import annotations
@@ -47,9 +57,18 @@ def contract_coverage(db: Session, season: str, league_year: str) -> dict:
     with_salary = {pid for pid, (salary, _) in resolved.items() if salary is not None}
 
     teams_complete = 0
+    teams_disclosable = 0
+    team_shares: list[float] = []
     incomplete: list[dict] = []
     for team_id, roster in sorted(by_team.items(), key=lambda kv: teams.get(kv[0], kv[0])):
         missing = [e.player_id for e in roster if e.player_id not in with_salary]
+        covered_here = len(roster) - len(missing)
+        if covered_here:
+            # R2c: at least one priced contract means a lower-bound payroll can be shown
+            # with its coverage. It does not mean the payroll can be verified.
+            teams_disclosable += 1
+        if roster:
+            team_shares.append(covered_here / len(roster))
         if not missing:
             teams_complete += 1
         else:
@@ -58,6 +77,7 @@ def contract_coverage(db: Session, season: str, league_year: str) -> dict:
                     "team": teams.get(team_id, team_id),
                     "roster_size": len(roster),
                     "missing": len(missing),
+                    "covered": covered_here,
                 }
             )
 
@@ -82,7 +102,14 @@ def contract_coverage(db: Session, season: str, league_year: str) -> dict:
         "roster_players_with_salary_for_cap_league_year": covered,
         "roster_coverage_share": round(covered / total, 4) if total else None,
         "teams_total": len(by_team),
+        # Payroll may be compared to a cap threshold — the gate every salary rule reads.
         "teams_with_complete_payroll": teams_complete,
+        # Payroll may be shown as a lower bound with its coverage attached (R2c).
+        "teams_with_disclosable_payroll": teams_disclosable,
+        "team_coverage_share_min": round(min(team_shares), 4) if team_shares else None,
+        "team_coverage_share_median": (
+            round(sorted(team_shares)[len(team_shares) // 2], 4) if team_shares else None
+        ),
         "teams_incomplete": incomplete,
         "seasons_present_in_snapshot": seasons_present,
         "cap_league_year_present_in_snapshot": league_year in seasons_present,
@@ -144,7 +171,9 @@ def summarize(coverage: dict, unmatched: Iterable[dict]) -> str:
         f"{coverage['roster_players_with_salary_for_cap_league_year']}/"
         f"{coverage['roster_players_total']} rostered players ({share:.1%}) have a "
         f"{coverage['cap_league_year']} salary; "
-        f"{coverage['teams_with_complete_payroll']}/{coverage['teams_total']} teams have "
-        f"a computable payroll. {len(list(unmatched))} rostered players are listed as "
-        "uncovered."
+        f"{coverage['teams_with_disclosable_payroll']}/{coverage['teams_total']} teams can "
+        "show a payroll with disclosed coverage, "
+        f"{coverage['teams_with_complete_payroll']}/{coverage['teams_total']} can have one "
+        f"verified against a cap threshold. {len(list(unmatched))} rostered players are "
+        "listed as uncovered."
     )

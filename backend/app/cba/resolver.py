@@ -25,13 +25,22 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Contract, ContractYear, LeagueCapParameters, Player, RosterEntry
 
+from .context import PayrollCoverage
+
 _CACHE_KEY = "rosterlab_resolver_cache"
 
 
 def _cache(db: Session) -> dict[str, Any]:
     cache = db.info.get(_CACHE_KEY)
     if cache is None:
-        cache = {"cap_params": {}, "salary": {}, "payroll": {}, "roster": {}, "player": {}}
+        cache = {
+            "cap_params": {},
+            "salary": {},
+            "payroll": {},
+            "roster": {},
+            "team_roster": {},
+            "player": {},
+        }
         db.info[_CACHE_KEY] = cache
     return cache
 
@@ -125,34 +134,63 @@ def player_salary(
 # ------------------------------------------------------------------------- payroll
 
 
-def team_payroll(
-    db: Session, team_id: str, season: str, league_year: str
-) -> tuple[int | None, int, int]:
-    """(payroll or None, players_with_known_salary, roster_size), memoized per team.
+def team_roster_ids(db: Session, team_id: str, season: str) -> list[str]:
+    """The team's current roster, fetched once per (team, season) per request."""
+    cache = _cache(db)["team_roster"]
+    key = (team_id, season)
+    if key not in cache:
+        cache[key] = [
+            entry.player_id
+            for entry in db.scalars(
+                select(RosterEntry).where(
+                    RosterEntry.team_id == team_id,
+                    RosterEntry.season == season,
+                    RosterEntry.is_current,
+                )
+            ).all()
+        ]
+    return cache[key]
 
-    Payroll is still only reported when *every* rostered player has a known salary —
-    that all-or-nothing rule is deliberate (a partial sum understates payroll and
-    silently skews apron status) and R2c replaces it with a disclosed-coverage model,
-    not with a partial sum.
+
+def team_contract_types_known(db: Session, team_id: str, season: str, league_year: str) -> bool:
+    """Whether every player on the roster has a KNOWN contract type.
+
+    The 15-standard roster limit is a property of the whole roster, so knowing the type of
+    the one player being traded establishes nothing about the other fifteen. Gating
+    `ROSTER_SIZE` on the traded players alone would have let a single curated row promote
+    a whole roster's verdict from `(warning, medium)` to `(pass, high)`.
+    """
+    player_ids = team_roster_ids(db, team_id, season)
+    if not player_ids:
+        return False
+    resolved = salaries(db, player_ids, league_year)
+    return all(
+        contract is not None and contract.contract_type is not None
+        for _, contract in resolved.values()
+    )
+
+
+def team_payroll(db: Session, team_id: str, season: str, league_year: str) -> PayrollCoverage:
+    """The team's priced salary total **and what it was built from**, memoized per team.
+
+    R2c: the sum is no longer discarded when coverage is partial. `PayrollCoverage.known`
+    is a lower bound on payroll and is safe to show with its coverage attached;
+    `PayrollCoverage.verified` is still `None` unless every rostered player is priced,
+    and that is what every rule reads. The all-or-nothing rule was right about verdicts
+    and wrong about disclosure, so only the disclosure changed.
     """
     cache = _cache(db)["payroll"]
     key = (team_id, season, league_year)
     if key not in cache:
-        entries = db.scalars(
-            select(RosterEntry).where(
-                RosterEntry.team_id == team_id,
-                RosterEntry.season == season,
-                RosterEntry.is_current,
-            )
-        ).all()
-        resolved = salaries(db, [e.player_id for e in entries], league_year)
+        player_ids = team_roster_ids(db, team_id, season)
+        resolved = salaries(db, player_ids, league_year)
         known_salaries = [
-            salary for e in entries if (salary := resolved[e.player_id][0]) is not None
+            salary for pid in player_ids if (salary := resolved[pid][0]) is not None
         ]
-        cache[key] = (
-            (sum(known_salaries), len(known_salaries), len(entries))
-            if entries and len(known_salaries) == len(entries)
-            else (None, len(known_salaries), len(entries))
+        cache[key] = PayrollCoverage(
+            known=sum(known_salaries),
+            players_known=len(known_salaries),
+            players_total=len(player_ids),
         )
     return cache[key]
 

@@ -36,6 +36,7 @@ import {
   VERDICT_LABEL,
   fanVerdict,
   money,
+  payrollDisclosure,
   tei,
 } from "@/lib/format";
 import { getFavoriteTeam } from "@/lib/teamTheme";
@@ -50,6 +51,7 @@ import type {
   Scenario,
   Team,
   TeamEvaluation,
+  TeamLegality,
   TradeDetail,
 } from "@/lib/types";
 import {
@@ -960,7 +962,14 @@ function TeamWorkspace({
   const outgoing = all.filter((p) => moves[p.player_id] && moves[p.player_id] !== teamId);
 
   const standing = detail?.standing;
-  const payrollKnown = legality?.payroll_after !== null && legality?.payroll_after !== undefined;
+  // R2c: with partial contract coverage the verified payroll is withheld but a lower
+  // bound is publishable. `≥` and the coverage count travel with the number so the
+  // reader can never mistake a floor for the payroll.
+  const payrollShown = payrollDisclosure(
+    legality?.payroll_after,
+    legality?.payroll_known_after,
+    legality?.payroll_coverage_after,
+  );
 
   return (
     <Panel
@@ -1053,9 +1062,19 @@ function TeamWorkspace({
           <StatBlock
             size="sm"
             label="Payroll"
-            value={payrollKnown ? money(legality?.payroll_after) : "—"}
-            note={payrollKnown ? `from ${money(legality?.payroll_before)}` : "not imported"}
-            title={payrollKnown ? undefined : CONTRACT_TOOLTIP}
+            value={payrollShown.value}
+            note={
+              payrollShown.kind === "verified"
+                ? `from ${money(legality?.payroll_before)}`
+                : payrollShown.note
+            }
+            title={
+              payrollShown.kind === "verified"
+                ? undefined
+                : payrollShown.kind === "floor"
+                  ? (legality?.payroll_coverage_note ?? CONTRACT_TOOLTIP)
+                  : CONTRACT_TOOLTIP
+            }
           />
         </div>
 
@@ -1375,8 +1394,19 @@ function RosterCard({
             {player.position ?? "—"} · {player.age ? `${player.age.toFixed(0)}y` : "age —"}
             {player.archetype ? ` · ${player.archetype}` : ""}
           </span>
-          <span className="mt-0.5 block text-[10px] leading-tight text-faint" title={CONTRACT_TOOLTIP}>
-            salary <span className="data">—</span> · years <span className="data">—</span>
+          {/* Real contract data. This line was two hardcoded em-dashes until R2b, so a
+              contracts import changed nothing here and the defect became invisible the
+              moment the import was marked done. */}
+          <span
+            className="mt-0.5 block text-[10px] leading-tight text-faint"
+            title={player.salary === null ? CONTRACT_TOOLTIP : undefined}
+          >
+            salary <span className="data">{player.salary === null ? "—" : money(player.salary)}</span> ·
+            years{" "}
+            <span className="data">
+              {player.contract_years_remaining === null ? "—" : player.contract_years_remaining}
+            </span>
+            {player.contract_type && ` · ${player.contract_type}`}
           </span>
         </span>
       </button>
@@ -2333,6 +2363,56 @@ function FitTab({ teamEval }: { teamEval: TeamEvaluation }) {
   );
 }
 
+/**
+ * Partial contract coverage in the cap tab (R2c). Payroll appears as a floor with the
+ * coverage attached; the apron row states only what the known salaries already prove.
+ * "Not yet proven above the tax" is not "below the tax", and this must never imply it.
+ */
+function PartialCapPosition({ legality }: { legality: TeamLegality }) {
+  const before = legality.payroll_coverage_before;
+  const after = legality.payroll_coverage_after;
+  const shownBefore = payrollDisclosure(
+    legality.payroll_before,
+    legality.payroll_known_before,
+    before,
+  );
+  const shownAfter = payrollDisclosure(legality.payroll_after, legality.payroll_known_after, after);
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatBlock size="sm" label="Payroll before" value={shownBefore.value} note={shownBefore.note} />
+        <StatBlock
+          size="sm"
+          label="Payroll after"
+          value={shownAfter.value}
+          note={after ? shownAfter.note : "a traded salary is unknown"}
+        />
+        <StatBlock
+          size="sm"
+          label="Apron before"
+          value={legality.apron_status_at_least_before ?? "not proven"}
+          note={legality.apron_status_at_least_before ? "at least" : "known salaries clear no line"}
+        />
+        <StatBlock
+          size="sm"
+          label="Apron after"
+          value={legality.apron_status_at_least_after ?? "not proven"}
+          note={legality.apron_status_at_least_after ? "at least" : "known salaries clear no line"}
+        />
+      </div>
+      <UnavailableNotice
+        reason={
+          <>
+            {legality.payroll_coverage_note}{" "}
+            Payroll is shown as a floor, so cap and apron position stay unverified — the missing
+            salaries could cross any threshold.
+          </>
+        }
+      />
+    </div>
+  );
+}
+
 function CapTab({ teamEval }: { teamEval: TeamEvaluation }) {
   const contract = sectionOf<{ unavailable?: string; net_surplus_cap_share?: number; method?: string }>(
     teamEval.detail,
@@ -2355,6 +2435,8 @@ function CapTab({ teamEval }: { teamEval: TeamEvaluation }) {
           />
           <StatBlock size="sm" label="Apron after" value={legality.apron_status_after ?? "—"} />
         </div>
+      ) : legality.payroll_known_before !== null ? (
+        <PartialCapPosition legality={legality} />
       ) : (
         <UnavailableNotice
           reason={

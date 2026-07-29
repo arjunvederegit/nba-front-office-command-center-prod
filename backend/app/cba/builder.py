@@ -11,7 +11,14 @@ from app.db.models import (
 from app.integrations.contracts import get_contract_provider
 
 from . import resolver
-from .context import CapParams, PickAsset, PlayerAsset, TeamContext, TradeContext
+from .context import (
+    CapParams,
+    PayrollCoverage,
+    PickAsset,
+    PlayerAsset,
+    TeamContext,
+    TradeContext,
+)
 
 
 def load_cap_params(db: Session, league_year: str) -> CapParams:
@@ -47,13 +54,12 @@ def player_salaries(
     return resolver.salaries(db, player_ids, league_year)
 
 
-def _team_payroll(
-    db: Session, team_id: str, season: str, league_year: str
-) -> tuple[int | None, int, int]:
-    """(payroll or None, players_with_known_salary, roster_size). Payroll is only
-    reported when every rostered player has a known salary — partial sums would
-    understate payroll and silently skew apron status. Batched and memoized per team
-    for the request; the rule itself is unchanged."""
+def _team_payroll(db: Session, team_id: str, season: str, league_year: str) -> PayrollCoverage:
+    """The team's priced salary total with the coverage it was computed from (R2c).
+
+    `coverage.known` is a lower bound safe to disclose; `coverage.verified` is `None`
+    until every rostered player is priced and is what the rules read. Batched and
+    memoized per team for the request."""
     return resolver.team_payroll(db, team_id, season, league_year)
 
 
@@ -133,16 +139,16 @@ def build_trade_context(
         team = db.get(Team, team_id)
         if team is None:
             raise NotFoundError(f"Unknown team id {team_id}")
-        payroll, known, total = _team_payroll(db, team_id, season, league_year)
-        roster_count = total
+        coverage = _team_payroll(db, team_id, season, league_year)
         contexts[team_id] = TeamContext(
             team_id=team_id,
             abbreviation=team.abbreviation,
             name=team.full_name,
-            roster_count_before=roster_count,
-            payroll_before=payroll,
-            payroll_players_known=known,
-            payroll_players_total=total,
+            roster_count_before=coverage.players_total,
+            coverage_before=coverage,
+            roster_contract_types_known=resolver.team_contract_types_known(
+                db, team_id, season, league_year
+            ),
         )
 
     moved = resolver.players(db, [m["player_id"] for m in player_moves])

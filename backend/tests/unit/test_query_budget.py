@@ -151,10 +151,15 @@ def test_payroll_is_memoized_per_team(db: Session, seeded_league: dict) -> None:
         again = _team_payroll(db, seeded_league["team_a"].id, "2025-26", "2026-27")
     assert payroll == again
     assert first["n"] > 0 and second["n"] == 0
-    # AAA[13] has no contract, so payroll is unavailable — the all-or-nothing rule is
-    # deliberate and unchanged by the batching.
-    assert payroll[0] is None
-    assert payroll[2] == 15
+    # AAA[13] has no contract. The *verified* payroll is therefore still unavailable —
+    # that rule is deliberate and survived both the batching and R2c — while the known
+    # sum and its coverage are now carried instead of discarded.
+    assert payroll.verified is None
+    assert payroll.complete is False
+    assert payroll.players_total == 15
+    assert payroll.players_known == 14
+    assert payroll.players_unknown == 1
+    assert payroll.known > 0
 
 
 @pytest.mark.parametrize("reverse", [False, True])

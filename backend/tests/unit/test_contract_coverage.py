@@ -4,9 +4,14 @@ The metric the import naturally reports is the wrong one. A provider-side match 
 answers "how many rows in the file did we recognise" and can read 98 % while the question
 the product needs answered — can we compute this team's payroll — is 60 %.
 
-`_team_payroll` is all-or-nothing by design, so coverage is a cliff, not a slope. The
-plan's measured sensitivity on the live 530-row roster: 1 % missing → 26/30 teams with a
-payroll; 5 % → 10/30; 20 % → **0/30**.
+A *verified* payroll is all-or-nothing by design, so that metric is a cliff, not a slope.
+The plan's measured sensitivity on the live 530-row roster: 1 % missing → 26/30 teams
+with a payroll; 5 % → 10/30; 20 % → **0/30**.
+
+R2c added the second metric this module now reports beside it: how many teams can
+*disclose* a payroll as a lower bound with its coverage attached. The two must never be
+conflated, so the tests below assert them separately on the same fixture — 0 verified and
+2 disclosable, from the same 28-of-30 coverage.
 """
 
 import pytest
@@ -47,10 +52,35 @@ def test_one_missing_player_removes_that_team_from_the_count(
     assert coverage["roster_players_total"] == 30
     assert coverage["roster_players_with_salary_for_cap_league_year"] == 28
     assert coverage["roster_coverage_share"] == pytest.approx(28 / 30, abs=1e-4)
-    # 93 % of players covered, and *zero* teams have a payroll.
+    # 93 % of players covered, and *zero* teams have a verified payroll.
     assert coverage["teams_with_complete_payroll"] == 0
     assert {t["team"] for t in coverage["teams_incomplete"]} == {"AAA", "BBB"}
     assert all(t["missing"] == 1 for t in coverage["teams_incomplete"])
+    assert all(t["covered"] == 14 for t in coverage["teams_incomplete"])
+
+
+def test_disclosable_and_verified_payroll_are_counted_separately(
+    db: Session, seeded_league: dict
+) -> None:
+    """The R2c distinction, on the same fixture that shows the cliff. Both teams can show
+    a payroll with coverage attached; neither can have one verified against a threshold."""
+    coverage = contract_coverage(db, "2025-26", "2026-27")
+    assert coverage["teams_with_disclosable_payroll"] == 2
+    assert coverage["teams_with_complete_payroll"] == 0
+    assert coverage["team_coverage_share_min"] == pytest.approx(14 / 15, abs=1e-4)
+
+    message = summarize(coverage, [])
+    assert "2/2 teams can show a payroll with disclosed coverage" in message
+    assert "0/2 can have one verified" in message
+
+
+def test_a_team_with_no_priced_contract_at_all_is_not_disclosable(
+    db: Session, seeded_league: dict
+) -> None:
+    """Disclosure needs something to disclose: zero priced contracts is still nothing."""
+    coverage = contract_coverage(db, "2025-26", "2029-30")  # no contract year exists
+    assert coverage["teams_with_disclosable_payroll"] == 0
+    assert coverage["teams_with_complete_payroll"] == 0
 
 
 def test_a_fully_covered_team_is_counted(db: Session, seeded_league: dict) -> None:

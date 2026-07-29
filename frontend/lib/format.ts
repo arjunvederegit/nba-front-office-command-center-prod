@@ -3,6 +3,40 @@ export function money(value: number | null | undefined): string {
   return `$${(value / 1_000_000).toFixed(1)}M`;
 }
 
+/**
+ * How a payroll figure is allowed to be rendered under partial contract coverage (R2c).
+ *
+ * One function so every surface says the same thing. Three states, and the middle one is
+ * the whole release:
+ *
+ * - **verified** — every rostered player is priced. A plain number.
+ * - **floor** — some are not. The number is the sum of the contracts on file, which can
+ *   only be *below* the real payroll, so it is prefixed `≥` and carries its coverage.
+ *   It is never presented as the payroll and never has a missing salary imputed into it.
+ * - **unavailable** — nothing on file. A dash.
+ *
+ * `note` is not optional decoration: a floor rendered without it is a wrong number.
+ */
+export function payrollDisclosure(
+  verified: number | null | undefined,
+  known: number | null | undefined,
+  coverage: { players_known: number; players_total: number } | null | undefined,
+): { kind: "verified" | "floor" | "unavailable"; value: string; note: string } {
+  if (verified !== null && verified !== undefined) {
+    return { kind: "verified", value: money(verified), note: "all contracts on file" };
+  }
+  if (known !== null && known !== undefined && coverage && coverage.players_known > 0) {
+    return {
+      kind: "floor",
+      value: `≥ ${money(known)}`,
+      note: `${coverage.players_known} of ${coverage.players_total} contracts · ${
+        coverage.players_total - coverage.players_known
+      } unknown`,
+    };
+  }
+  return { kind: "unavailable", value: "—", note: "not imported" };
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "unknown";
   const d = new Date(iso);

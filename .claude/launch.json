@@ -11,6 +11,15 @@
       "port": 8000
     },
     {
+      "name": "backend-partial-contracts",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && DATABASE_URL=\"sqlite:///$PWD/rosterlab-qa.db\" CONTRACT_DATA_PROVIDER=bbref_snapshot exec .venv/bin/uvicorn app.main:app --port 8000"
+      ],
+      "port": 8000
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "bash",
       "runtimeArgs": ["-c", "cd frontend && exec npm run dev"],
