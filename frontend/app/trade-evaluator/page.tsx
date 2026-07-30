@@ -33,6 +33,7 @@ import {
   LEGALITY_LABEL,
   LEGALITY_SHORT,
   NEED_LABEL,
+  SKILL_LABEL,
   VERDICT_LABEL,
   fanVerdict,
   money,
@@ -140,6 +141,8 @@ interface FitDetail {
   needs_addressed?: Record<string, number>;
   redundancies?: Record<string, number>;
   skill_delta?: Record<string, number>;
+  /** Needs the model measures but declines to claim any player skill addresses (R4-2). */
+  needs_not_addressable?: Record<string, string>;
 }
 
 interface TimelineDetail {
@@ -2279,6 +2282,7 @@ function FitTab({ teamEval }: { teamEval: TeamEvaluation }) {
   const addressed = fit.needs_addressed ?? {};
   const skills = fit.skill_delta ?? {};
   const redundancies = fit.redundancies ?? {};
+  const notAddressable = fit.needs_not_addressable ?? {};
   const rankedNeeds = Object.entries(needs)
     .filter(([, severity]) => severity > 0)
     .sort((a, b) => b[1] - a[1]);
@@ -2325,6 +2329,16 @@ function FitTab({ teamEval }: { teamEval: TeamEvaluation }) {
             })}
           </ul>
         )}
+        {Object.keys(notAddressable).length > 0 && (
+          <div className="mt-3 border-t border-hairline pt-2.5">
+            {Object.entries(notAddressable).map(([key, reason]) => (
+              <p key={key} className="text-[11px] leading-snug text-faint">
+                <span className="text-muted">{NEED_LABEL[key] ?? key}</span> is measured for
+                this roster but not scored here — {reason}.
+              </p>
+            ))}
+          </div>
+        )}
       </div>
       <div className="min-w-0">
         <h4 className="title-md text-foreground">Skill balance change</h4>
@@ -2336,7 +2350,7 @@ function FitTab({ teamEval }: { teamEval: TeamEvaluation }) {
             .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
             .map(([key, value]) => (
               <li key={key} className="flex items-center justify-between gap-3 text-[13px]">
-                <span className="min-w-0 truncate capitalize">{key.replaceAll("_", " ")}</span>
+                <span className="min-w-0 truncate">{SKILL_LABEL[key] ?? key.replaceAll("_", " ")}</span>
                 <span
                   className={`data shrink-0 text-[12px] ${
                     value > 0 ? "text-legal" : value < 0 ? "text-illegal" : "text-faint"
@@ -2353,7 +2367,7 @@ function FitTab({ teamEval }: { teamEval: TeamEvaluation }) {
             Redundancy penalty applied to:{" "}
             {Object.entries(redundancies)
               .filter(([, v]) => v > 0)
-              .map(([k, v]) => `${k.replaceAll("_", " ")} (${v.toFixed(2)})`)
+              .map(([k, v]) => `${SKILL_LABEL[k] ?? k.replaceAll("_", " ")} (${v.toFixed(2)})`)
               .join(", ") || "none"}
             .
           </p>
@@ -2684,7 +2698,13 @@ function PlayerDrawer({
                 </div>
                 {data.archetype && (
                   <div className="mt-1.5">
-                    <Badge status="info">{data.archetype.label}</Badge>
+                    {/* Role labels reach 31 characters ("unclassified (no listed
+                        height)") where the retired k-means labels topped out at 18, and
+                        this Badge sits in a max-w-sm drawer, so it must be allowed to
+                        wrap rather than overflow. */}
+                    <Badge status="info" className="max-w-full whitespace-normal text-left">
+                      {data.archetype.label}
+                    </Badge>
                   </div>
                 )}
               </div>

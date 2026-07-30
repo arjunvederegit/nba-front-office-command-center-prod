@@ -254,10 +254,43 @@ DEF_SHRINKAGE_MINUTES = 5300.0
 # steals. That correlation is not distinguishable from zero at this sample size, and is
 # reported as such — it is a reason to keep a minority term, not a claim of validation.
 #
+# WHAT SELECTED THESE TERMS, and what did not.
+#
+# **The weights are chosen by construct, not by the numbers above.** Adversarial checking
+# established that the criteria cannot tell a defensive statistic from an offensive one:
+# holding this vector fixed and swapping only the 0.22 term for `TS_PCT` — true-shooting
+# percentage, which has no defensive content whatsoever — BEATS `DREB_PCT` on every
+# non-circular criterion:
+#
+#     criterion                     DREB_PCT      TS_PCT
+#     A' (team aggregate)             -0.499      -0.542
+#     A'' (decile gap)                  4.50        5.23
+#     lagged team fit, rho            -0.309      -0.377
+#     ...partial t                     -1.84       -2.58
+#     ...leave-one-team-out gain      +0.013      +0.054
+#
+# A criterion that prefers an offensive statistic in a defensive slot is measuring "good
+# player on a good team", not defence. So the numbers reported above are evidence that
+# this composite is not WORSE than the steals proxy on the things anyone has been able to
+# measure; they are not evidence that the weights are right.
+#
+# Every term here is included because it is a defensive act: a block, a steal, ending the
+# opponent's possession with a rebound, the cost of fouling, and the points the opponent
+# scored while the player was on the floor. `TS_PCT` is excluded despite scoring better,
+# which is what construct validity is for.
+#
 # What is NOT claimed: none of this validates the composite as a measure of defensive
 # ability. Every target available in this repository is derived from on-court DEF_RATING,
 # so every test is circular to some degree. Honest validation needs the matchup and
 # tracking data that R6 defers, and `docs/limitations.md` says so.
+#
+# Known and disclosed rather than fixed: blocks and defensive rebounding carry 0.58 of the
+# weight, so the composite is big-biased; and its `DREB_PCT` term correlates 0.907 with
+# the input of the separate `rebounding` skill, giving a 0.579 overlap between the two
+# skills. Dropping `DREB_PCT` would cut that overlap to 0.280 — but the only evidence that
+# dropping it costs anything comes from the criteria just shown to be unable to
+# discriminate, so there is no measured basis for either choice. It stays because ending a
+# defensive possession is a defensive act, and the overlap is stated instead.
 TEAM_DEFENSE_WEIGHTS = {
     "def_impact": 0.10,
     "blk_per_min": 0.36,
@@ -266,16 +299,10 @@ TEAM_DEFENSE_WEIGHTS = {
     "pf_per_min": -0.05,
 }
 
-# Point-of-attack defence is on-ball perimeter pressure, so it is deliberately NOT the
-# same blend: rim protection and defensive rebounding are what a *big* contributes, and
-# including them is what let a shot-blocking centre read as an elite on-ball defender.
-# Ball pressure achieved without fouling is the construct, which is why the foul term is
-# three times heavier here than in the overall composite.
-POA_DEFENSE_WEIGHTS = {
-    "def_impact": 0.15,
-    "stl_per_min": 0.60,
-    "pf_per_min": -0.25,
-}
+# There is deliberately no point-of-attack composite here. One was built, scored WORSE
+# than the steals proxy it replaced on its pre-registered class check, and was withdrawn
+# rather than reweighted — see `archetypes.UNADDRESSABLE_NEEDS`. A computed-but-unread
+# defensive score is an invitation to wire it up later without re-running that check.
 
 
 def minutes_weighted_league_mean(df: pd.DataFrame, col: str) -> float:
@@ -455,11 +482,9 @@ def _derive_post_collapse(window: pd.DataFrame) -> pd.DataFrame:
     # what the no-silent-defaults invariant exists to catch.
     window["fg3_pct_shrunk"] = shrunk.where(attempts.notna() & (attempts > 0))
 
-    for name, weights in (
-        ("team_defense_score", TEAM_DEFENSE_WEIGHTS),
-        ("poa_defense_score", POA_DEFENSE_WEIGHTS),
-    ):
-        window[name] = _weighted_z_composite(window, weights, minutes)
+    window["team_defense_score"] = _weighted_z_composite(
+        window, TEAM_DEFENSE_WEIGHTS, minutes
+    )
     return window
 
 

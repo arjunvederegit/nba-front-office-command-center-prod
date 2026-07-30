@@ -60,7 +60,6 @@ POST_COLLAPSE_COLUMNS = {
     "fg3a_window",
     "fg3m_window",
     "team_defense_score",
-    "poa_defense_score",
 }
 
 

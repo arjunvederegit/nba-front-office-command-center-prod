@@ -163,6 +163,26 @@ export const NEED_LABEL: Record<string, string> = {
   secondary_creation: "Secondary creation",
 };
 
+/**
+ * Player skill dimensions, as returned in a fit explanation's `skill_delta`.
+ *
+ * These were rendered by string-munging the key — `key.replaceAll("_", " ")` plus a CSS
+ * `capitalize` — which produced "Turnover Avoidance" and "Team Defense" with no editorial
+ * control and no way to attach the caveat a proxy deserves. R4 split four skills out of
+ * two, so the vocabulary is now large enough to name properly.
+ */
+export const SKILL_LABEL: Record<string, string> = {
+  shooting_volume: "3PT volume",
+  shooting_accuracy: "Shooting accuracy",
+  creation: "Creation",
+  turnover_avoidance: "Ball security",
+  team_defense: "Overall defense",
+  rim_protection: "Rim protection",
+  rebounding: "Rebounding",
+  size: "Size",
+  scoring: "Scoring",
+};
+
 export const COMPONENT_LABEL: Record<string, string> = {
   performance: "On-court impact",
   fit: "Roster fit",

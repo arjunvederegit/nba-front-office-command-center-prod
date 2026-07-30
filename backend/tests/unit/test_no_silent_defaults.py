@@ -57,7 +57,6 @@ def _league_frame() -> pd.DataFrame:
             "fg3a_per_min": [0.02 + i * 0.014 for i in range(20)],
             "fg3_pct_shrunk": [0.31 + i * 0.004 for i in range(20)],
             "team_defense_score": [-1.2 + i * 0.13 for i in range(20)],
-            "poa_defense_score": [-1.0 + i * 0.11 for i in range(20)],
         }
     )
 
@@ -74,13 +73,10 @@ def test_skill_vector_is_complete_when_every_input_is_present() -> None:
 
 def test_a_missing_column_omits_the_skill_instead_of_returning_half() -> None:
     """The C7 trap, asserted directly."""
-    league = _league_frame().drop(
-        columns=["blk_per_min", "team_defense_score", "poa_defense_score"]
-    )
+    league = _league_frame().drop(columns=["blk_per_min", "team_defense_score"])
     vector = player_skill_vector(league.iloc[10], league)
     assert "rim_protection" not in vector
     assert "team_defense" not in vector
-    assert "point_of_attack_defense" not in vector
     # the rest still resolve, from their own columns
     assert {
         "shooting_volume",

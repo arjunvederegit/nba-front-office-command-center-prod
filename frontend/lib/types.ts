@@ -17,14 +17,18 @@ export interface Team {
 }
 
 /**
- * The archetype cluster a player was assigned.
+ * The role a player was assigned.
  *
  * Three incompatible local shapes existed for this: `string`, `{label, cluster_id}`, and
  * an inline object on the comparables list. One name per shape, defined once.
+ *
+ * `role_id` replaced `cluster_id` in R4-3. The old field was an arbitrary k-means index
+ * that could change meaning on every retrain; this one comes from a frozen append-only
+ * map, so it is stable across retrains and comparable across seasons.
  */
 export interface ArchetypeAssignment {
   label: string;
-  cluster_id: number;
+  role_id: number;
 }
 
 /** A comparable player, as returned alongside a player detail. */
@@ -32,7 +36,7 @@ export interface ComparablePlayer {
   player_id: string;
   name: string;
   tei: number | null;
-  /** The cluster *label* only — comparables share the subject's cluster by construction. */
+  /** The role *label* only — comparables share the subject's role by construction. */
   archetype: string | null;
 }
 
