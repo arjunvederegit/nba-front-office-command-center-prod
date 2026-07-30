@@ -25,6 +25,7 @@ from app.analytics.features import build_player_season_features, recency_weighte
 from app.analytics.fit import fit_score
 from app.analytics.needs import NEED_TO_SKILL
 from app.analytics.projection import (
+    ROTATION_DEPTH,
     RotationPlayer,
     allocate_rotation,
     net_rating_delta_to_wins,
@@ -118,6 +119,8 @@ TEI_SIGMA_DEFAULT = 1.5  # index points; refined by per-player bands when availa
 COMPONENT_KEYS = ("performance", "fit", "contract", "timeline", "assets", "risk")
 
 
+# How many rotation rows the CHART shows. A display choice, deliberately independent of
+# `projection.ROTATION_DEPTH`, which is a basketball claim about who matters.
 ROTATION_VIEW_SIZE = 12
 
 
@@ -409,7 +412,12 @@ class EvaluationService:
             }
 
         with_minutes = [c for c in roster if c.minutes is not None]
-        top_rotation = sorted(with_minutes, key=lambda c: c.minutes or 0.0, reverse=True)[:9]
+        # ROTATION_DEPTH, not a local 9: the depth at which a roster counts as strong in
+        # a skill must match the depth at which `REPLACEMENT_TEI` says a player becomes
+        # replaceable (R4-4).
+        top_rotation = sorted(with_minutes, key=lambda c: c.minutes or 0.0, reverse=True)[
+            :ROTATION_DEPTH
+        ]
         roster_strengths: dict[str, float | None] = {}
         for key in SKILL_KEYS:
             values = sorted(

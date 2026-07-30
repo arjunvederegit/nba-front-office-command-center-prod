@@ -29,6 +29,19 @@ GAMES = 82.0
 REPLACEMENT_TEI = -1.214
 REPLACEMENT_RULE = "mean TEI of player-seasons outside their team's top 10 by minutes"
 
+# **The one definition of "the rotation"** (R4-4). Three cutoffs existed for what is
+# nominally the same idea: `REPLACEMENT_TEI` above was fitted on "outside the top 10",
+# `evaluation._fit` took the top **9** to decide what a roster is already strong at, and
+# `ROTATION_VIEW_SIZE` charts **12** rows. The third is a display choice and stays separate
+# and named as such; the first two are the same basketball claim and must agree, or the
+# depth at which a roster is judged strong differs from the depth at which it is judged
+# replaceable.
+#
+# Ten, because that is where `REPLACEMENT_TEI` is already fitted — moving that constant
+# would require refitting a calibrated quantity to remove an inconsistency in an
+# uncalibrated one.
+ROTATION_DEPTH = 10
+
 # R3-2. Change in minutes-weighted team TEI -> change in net rating, fitted
 # change-on-change on 60 team transitions (30 teams x 2 transitions):
 #
