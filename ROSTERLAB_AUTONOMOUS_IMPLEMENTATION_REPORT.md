@@ -565,21 +565,14 @@ Resolved since the last report: the impact metric's team-level validity (R3-1),
 
 ## 12. Exact recommended next action
 
-**Run the two commands R4 could not.** They are the only outstanding item from the R4
-release boundary, and the environment prevented them rather than the code failing them:
+**R5 — decision engine.** The R4 release boundary is complete: full CI-equivalent suite,
+migrations from a clean database, Playwright (5 passed) and visual QA (98 clean shots) all
+green, and the R3 gate re-measured on the post-R4 database with all 10 criteria met.
 
-```bash
-make e2e         # expects 5 passed, including the full decision flow
-make visual-qa   # writes screenshots to docs/qa/<release>/
-```
+Nothing in R5 needs data this repository lacks; only the lineup-aware fit does, and that is
+R6. Two things R4 changed about R5's brief:
 
-The skill split, the role labels on the player page and evaluator drawer, the wrapped role
-Badge and the `needs_not_addressable` copy have not been seen rendered.
-
-**Then R5 — decision engine.** Nothing in R5 needs data this repository lacks; only the
-lineup-aware fit does, and that is R6. Two things R4 changed about R5's brief:
-
-- `fit` is the component the plan expects to clip (×120), and **R4 changed the fit
+- `fit` is the component the plan expects to clip (x120), and **R4 changed the fit
   distribution** — re-measure the clip rate before touching the constant.
 - `recency_weighted_features` is the real cold-cache hotspot at **0.796 s**, and R4 added
   two derivations inside it — re-measure before optimising.
@@ -596,12 +589,17 @@ And two things R4 established that R5 must not undo:
 
 Recorded rather than worked around, per the run's safety requirements.
 
-1. **Node stopped being able to bind a port, partway through the R4 session.** `next dev`,
-   `next build` and therefore `make e2e` all start, sit at 0 % CPU and never listen; the
-   `preview_start` tool fails with "Operation not permitted". Nothing in the repository
-   caused it — `make e2e` passed 5/5 earlier in the same session. **Consequence: Playwright
-   and visual QA were not re-run after R4-1c.** Stated at the top of
-   `ROSTERLAB_AUTONOMOUS_STATE.md` and in §11 of the R4 report.
+1. **A self-inflicted "the sandbox is blocking ports" misdiagnosis, resolved.** Mid-session
+   `next dev` began printing its banner and nothing else at 0 % CPU, never binding, and
+   `make e2e` timed out on `config.webServer`. That looked like an environment restriction
+   and was written up as one. It was not. Two real causes: a **corrupt `.next` cache** left
+   by a `next build` killed mid-compile — `.next/diagnostics/build-diagnostics.json` frozen
+   at `"buildStage": "compile"`, fixed by `rm -rf frontend/.next` — and **servers started as
+   `(cmd &)` inside a foreground shell call being killed when that call returned or timed
+   out**, so nothing was listening when the port was probed. After clearing the cache and
+   launching the servers as properly detached tasks, Playwright ran **5 passed** and visual
+   QA captured **98 clean screenshots**. Recorded because the wrong conclusion was committed
+   before being corrected, and because the failure mode is easy to hit again.
 2. **`git status` began taking minutes and timing out**, while `git rev-parse`,
    `git diff` and `git commit` remained instant under `GIT_OPTIONAL_LOCKS=0`. The slowness
    is in git's index-refresh path over this cloud-synced tree. A timed-out `git commit`

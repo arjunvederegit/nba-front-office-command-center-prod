@@ -47,35 +47,36 @@
 see "R4-2 gate, reassessed".
 **Next:** R5 (decision engine). Nothing in R5 is blocked by missing data except the
 lineup-aware fit, which is R6.
-**Status:** working tree clean. Backend **484 passed / 1 skipped / 1 xfailed**, coverage
-**78.15 %** (floor 68). Frontend 43 passed, `tsc` and eslint clean. Migrations apply and
-reverse on a fresh database. R3 gate re-run on the post-R4 database: **all 10 criteria
-met**.
+**Status:** working tree clean, pushed. Backend **484 passed / 1 skipped / 1 xfailed**,
+coverage **78.17 %** (floor 68). Frontend 43 passed, `tsc` and eslint clean. Migrations
+apply and reverse on a fresh database. R3 gate re-run on the post-R4 database: **all 10
+criteria met**. Playwright **5 passed**; visual QA **98 shots clean** in `docs/qa/r4/`.
 
-⚠️ **Playwright and visual QA could not be re-run at the end of the R4 session, and this
-is a real gap in the evidence — not a formality.**
+**Browser QA is complete and clean.**
 
-Partway through the session the sandbox stopped allowing Node to bind a port. `next dev`
-and `next build` both start, sit at 0 % CPU, and never produce output or listen; `make e2e`
-then times out waiting for `config.webServer`. It is the same restriction that makes
-`preview_start` fail with "Operation not permitted". Nothing was changed to cause it —
-`make e2e` **passed 5/5, including the full team-outlook → strategy → evaluator → rules →
-evaluate → save → compare flow**, earlier in this same session, on a demo database rebuilt
-through migrate + train + score, after R4-1a and R4-1b.
+| Check | Result |
+| --- | --- |
+| Playwright e2e, post-R4 code, demo DB rebuilt via migrate + train + score | **5 passed**, including the full team-outlook → strategy → evaluator → rules → evaluate → save → compare flow |
+| Visual QA, 14 routes x 7 viewports | **98 screenshots, CLEAN** — no horizontal overflow, no console errors, no empty pages · `docs/qa/r4/` |
+| Rendered spot-checks | Player page panel is now **"Role"** with the rule-chain copy and label `off-ball guard`; team-outlook roster shows the new roles throughout (`3&D wing`, `connector wing`, `movement shooter`, `stretch big`, `playmaking big`) |
 
-**What that leaves unverified in a browser:** R4-1c/1d/2 (the skill split), R4-3 (role
-labels on the player page and in the evaluator drawer), R4-4, and every UI change in
-`969d2c2`. Those are covered by 484 backend tests, 43 frontend unit tests, `tsc --noEmit`
-and eslint — all clean — and the migration was verified to apply and reverse on a fresh
-database. They are **not** covered by a rendered page, and the role-label Badge wrap and
-the `needs_not_addressable` copy in particular are changes only a screenshot can confirm.
+**A misdiagnosis worth recording, because it cost most of an hour.** Mid-session `next dev`
+began printing its banner and nothing else, at 0 % CPU, never binding; `make e2e` then timed
+out on `config.webServer`. I concluded the sandbox had stopped allowing Node to bind a port.
+That was **wrong**, and there were two real causes:
 
-**First two commands in the next session, before any new work:**
+1. **A corrupt `.next` cache**, left when a `next build` was killed mid-compile
+   (`.next/diagnostics/build-diagnostics.json` frozen at `"buildStage": "compile"`). The fix
+   is `rm -rf frontend/.next` — a gitignored build cache — after which Next 16.2.10 reports
+   "Ready in 12.8s" and binds normally.
+2. **Servers started as `(cmd &)` inside a foreground Bash call get killed when that call
+   returns or times out.** So nothing was listening when the port was probed, which looked
+   like a binding failure. Start them as properly detached background tasks instead; `nc -z
+   127.0.0.1 3000` then succeeds, and `npx playwright test` manages both servers itself.
 
-```bash
-make e2e         # expects 5 passed
-make visual-qa   # writes to docs/qa/<release>/
-```
+Neither was a sandbox restriction and neither was caused by the release. If this recurs,
+clear the cache and check how the server was launched before concluding anything about the
+environment.
 
 ## Completed work
 

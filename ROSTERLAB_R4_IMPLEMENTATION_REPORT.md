@@ -477,20 +477,23 @@ something for the first time.
 | Migrations from a clean database | `alembic upgrade head` through `d3e5a71b9c02`, and `downgrade -1` + re-upgrade, both clean |
 | Full pipeline on a copy of the real database | `migrate` → `train` → `score` clean; 632 players labelled, 279 need rows |
 | R3 release gate on the post-R4 database | **all 10 criteria met** |
-| Playwright e2e | **5/5 passed** mid-session (after R4-1a/1b) — **not re-run after R4-1c onward** |
-| Visual QA | **not run** |
+| Playwright e2e, post-R4 code | **5 passed**, including the full decision flow |
+| Visual QA, 14 routes x 7 viewports | **98 screenshots, CLEAN** — no overflow, no console errors, no empty pages · `docs/qa/r4/` |
 
-**The browser gap is real and is not being glossed.** Partway through the session the
-sandbox stopped allowing Node to bind a port: `next dev` and `next build` both start, sit
-at 0 % CPU and never listen, so `make e2e` times out waiting for `config.webServer`. It is
-the same restriction that makes `preview_start` fail with "Operation not permitted", and
-nothing in this release caused it — e2e passed 5/5 including the full decision flow earlier
-in the same session, on a demo database rebuilt through migrate + train + score.
+Rendered spot-checks of what R4 actually changed: the player page panel is now **"Role"**
+with the rule-chain copy and the label `off-ball guard`; the team-outlook roster shows the
+new roles throughout — `3&D wing`, `connector wing`, `movement shooter`, `stretch big`,
+`playmaking big`. The role Badge wrap was the change only a screenshot could confirm, and
+visual QA reports no horizontal overflow at any of the seven viewports.
 
-So the skill split, the role labels, the wrapped Badge and the `needs_not_addressable` copy
-are backed by unit tests, types and lint, but **no rendered page**. `make e2e` and
-`make visual-qa` are the first two commands for the next session, and
-`ROSTERLAB_AUTONOMOUS_STATE.md` says so at the top.
+**One misdiagnosis, recorded because it is the kind that wastes a session.** Mid-run
+`next dev` started printing its banner and nothing else at 0 % CPU, never binding, and
+`make e2e` timed out on `config.webServer`. I concluded the sandbox had stopped allowing
+Node to bind a port. That was wrong. Two real causes: a **corrupt `.next` cache** left by a
+`next build` killed mid-compile (fix: `rm -rf frontend/.next`, a gitignored cache), and
+**servers launched as `(cmd &)` inside a foreground shell call being killed when that call
+ended** — so nothing was listening when the port was probed. Neither was a sandbox
+restriction; both were self-inflicted.
 
 ## 12. Deferred, with the reason
 
