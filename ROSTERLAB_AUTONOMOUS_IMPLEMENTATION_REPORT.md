@@ -1,10 +1,11 @@
 # RosterLab — Autonomous Implementation Report
 
 **Branch:** `feat/rosterlab-autonomous-roadmap` → pushed to `origin`
-**Base:** `f16dedc` (main) · **Head:** `8f943cf` + this report · 124 files changed
-**Scope executed:** R0 → R1 → R2a → **R2c → R2b → R3**.
-R2b shipped in its feasible scope after its original gate was measured to be
-**unreachable with any dataset in this repository** and was replaced (§6).
+**Base:** `f16dedc` (main) · **Head:** `4bcce66` + this report
+**Scope executed:** R0 → R1 → R2a → **R2c → R2b → R3 → R4**.
+Two release gates were measured to be invalid and replaced: **R2b's** original criterion was
+unreachable with any dataset in this repository (§6), and **three of R4-2's four defensive
+criteria** are won outright by a placebo carrying zero player information (§6b).
 
 ---
 
@@ -17,11 +18,12 @@ R2b shipped in its feasible scope after its original gate was measured to be
 | **R2a** — performance and instrumentation | ✅ complete, acceptance met | `8b0fe82` `dc645d5` |
 | **R2c** — disclosed-coverage payroll | ✅ complete, acceptance met · **brought forward ahead of R2b** | `3d85c59` |
 | **R2b** — contract activation | ✅ complete in its feasible scope; **original gate replaced with nine measured criteria** (§6) | `3cc0fbc` `627f151` |
-| **R3** — impact units and calibration | ✅ complete, **all 12 gate criteria met** (§9) | `c103812` `8f943cf` |
-| R4–R7 | not started | — |
+| **R3** — impact units and calibration | ✅ complete, **all 12 gate criteria met** (§9); **re-measured after R4, all 10 criteria met again** | `c103812` `8f943cf` |
+| **R4** — basketball methodology | ✅ complete; **three of four R4-2 criteria replaced** (§6b); one claim **withdrawn** rather than restated | `27729db` `77cb7fb` `ed068f8` `20986d7` `2bda9f8` `f495271` `4e88bdf` `969d2c2` `a89d655` |
+| R5–R7 | not started | — |
 
 Reports: `ROSTERLAB_R0_IMPLEMENTATION_REPORT.md`, `ROSTERLAB_R1_IMPLEMENTATION_REPORT.md`,
-`ROSTERLAB_R2A_IMPLEMENTATION_REPORT.md`. Resumable state: `ROSTERLAB_AUTONOMOUS_STATE.md`,
+`ROSTERLAB_R2A_IMPLEMENTATION_REPORT.md`, `ROSTERLAB_R4_IMPLEMENTATION_REPORT.md`. Resumable state: `ROSTERLAB_AUTONOMOUS_STATE.md`,
 which carries the full R2b gate reassessment and the R3 gate table.
 
 **One release order was inverted on evidence.** The plan gates R2c on "only after R2b
@@ -210,6 +212,60 @@ audit's headline for this release — "trades move from Incomplete check to real
 is reachable only by asserting fields no provider supplies, and a release that claimed it
 would be worse than one that did not ship.
 
+### R4-2's criteria are won by a placebo — three of four replaced
+
+R4-2 shipped a defensive metric. Its acceptance criteria could not judge one.
+
+Each was re-run against three published nulls: a **placebo** scoring every player by his
+own team's defensive rating (zero player information), a **circular** metric
+(−player `DEF_RATING`), and deterministic **noise**.
+
+| Criterion | Gate | Placebo scores | Verdict |
+| --- | --- | --- | --- |
+| A′ team-aggregate ρ | beat steals' −0.374 | **−1.000** | INVALID |
+| A″ decile gap | ≥ 3.0 | **10.97**, 99 % of it team quality | INVALID |
+| change-on-change (the supporting design) | — | **R² 0.904** | INVALID |
+| A‴ commit order | procedural | cannot be gamed by data | **VALID, kept verbatim** |
+| B — a named player below 0.50 | — | — | INVALID as a gate |
+
+A′ is degenerate by construction for the metric the plan prescribed. Possessions are
+charged to five on-court players, so the possession-weighted roster mean of on-court
+`DEF_RATING` **is** the team rating, and aggregating a team-demeaned quantity destroys
+94.7 % of its dispersion. Its sign flips (+0.342 → −0.292) on whether the baseline includes
+the player, for a quantity identical to r = 0.998.
+
+**B contradicts A‴.** B publishes a threshold on a named player, so its weight implication
+is knowable before any weight is chosen — which makes satisfying B an act of selecting
+weights from a named player, which A‴ forbids. B is also unstable: the same player's
+within-season percentile on the prescribed metric spans 0.243 → 0.908 across three seasons,
+so the gate flips on window choice with no code change.
+
+Replaced by five criteria, four of which the shipped metric meets: stability (0.838 vs the
+steals proxy's 0.669), incremental validity beyond its own persistence (0.126 vs 0.106,
+null floor ~0.090), A″'s **team component** not exceeding the proxy's (0.99 vs 1.51), and
+an admissibility clause requiring every criterion to be run against the three nulls.
+
+**The fifth failed, and the response was to withdraw the claim.** A
+`point_of_attack_defense` composite scored **0.630 mean / 75 % above median** on its
+pre-registered class against the steals proxy's 0.611 / 70 % — worse than what it replaced.
+A‴ says the response to a failed check is not to tune until it passes, so the skill was
+deleted from `SKILL_KEYS` and `NEED_TO_SKILL`. The tool no longer claims that acquiring
+anyone improves on-ball defence, which was the audit's headline finding.
+
+**And the criteria cannot select weights either.** Swapping only the composite's 0.22 term
+for `TS_PCT` — an offensive statistic with no defensive content — beats `DREB_PCT` on every
+non-circular criterion (A′ −0.542 vs −0.499; partial t −2.58 vs −1.84). The weights are
+therefore justified by **construct**: every term is a defensive act, and `TS_PCT` is
+excluded despite scoring better.
+
+### What R4 does not establish
+
+No defensive metric here is validated. Every target available in this repository derives
+from on-court `DEF_RATING`, so every test is circular to some degree, and on the one
+genuinely non-circular question — do the 100 players who changed team improve their new
+team's defensive rating — every candidate's confidence interval crosses zero. That needs the
+matchup and tracking data R6 defers, and `docs/limitations.md` says so.
+
 ### What the artifact genuinely cannot do
 
 Of 401 imported contracts: `contract_type` NULL ×401, `signed_date` NULL ×401,
@@ -379,6 +435,36 @@ beside in-sample 0.9527, and carries the slope's own SE (**0.053**) rather than 
 residual spread, which is ~55× too wide for an interval over the conversion. The model
 itself is the best-calibrated thing in the pipeline and was left alone.
 
+### R4 forced the R3 calibration to be re-measured, and it survived
+
+R4 changed the skill and feature path, so the conversion coefficient could not be assumed
+to hold. `make train` was re-run on the finished R4 code path against the ingested history:
+
+| Diagnostic | Recorded at R3 | Re-measured after R4 |
+| --- | --- | --- |
+| Coefficient | 14.977 | **14.976967** |
+| Slope SE · t | 1.528 · 9.80 | **1.5279 · 9.802** |
+| R² · n | 0.6236 · 60 | **0.6236 · 60** |
+| Per-fold slopes | 14.716 / 15.276 | **identical** |
+| LOTO OOS RMSE (share of predicting zero) | 2.944 / 3.773 (56.6 % / 65.0 %) | **identical** |
+
+**It is preserved because the new measurement independently supports it, not because it
+passed before.** It holds for a structural reason now asserted in
+`test_r3_gate_after_r4.py`: R4 added columns to `MODEL_FEATURES` and derived new
+post-collapse quantities, but touched neither `INDEX_WEIGHTS` nor `Z_SOURCE_COLS`.
+
+That was a decision, and it was measured. Feeding the new defensive term into TEI was
+tested and **rejected** — team-level R² 0.7505 (current) against 0.5655 (replacing the
+event terms), 0.7263 (adding at 0.10), 0.6753 (at 0.20). The same conclusion the skill-side
+A′ measurement reached, from an independent direction.
+
+The whole R3 gate was then re-run on the post-R4 database: **all 10 criteria met**.
+
+**A gap in that gate was closed.** Its central assertion —
+`test_the_served_coefficient_matches_the_registered_fit` — **skips** when the database has
+no registered fit, which is every CI run, so the most important check in the R3 gate had
+never executed in CI. `test_r3_gate_after_r4.py` adds 15 tests that do not skip.
+
 ## 10. Deviations from the plan
 
 Full detail sits in each release report. The ones that changed what shipped:
@@ -479,43 +565,57 @@ Resolved since the last report: the impact metric's team-level validity (R3-1),
 
 ## 12. Exact recommended next action
 
-**R4 — basketball methodology.** It depends on R1 and R3, both complete, and R4-1 needs no
-data this repository lacks. It is also where the largest remaining credibility gap sits:
-the defensive proxy still ranks Luka Dončić at the 84.5th percentile for point-of-attack
-defense.
+**Run the two commands R4 could not.** They are the only outstanding item from the R4
+release boundary, and the environment prevented them rather than the code failing them:
 
 ```bash
-git checkout feat/rosterlab-autonomous-roadmap
-cd "nba front office command center prod"
-make test        # 276 passed / 1 skipped / 1 xfailed · 43 frontend at 8f943cf
+make e2e         # expects 5 passed, including the full decision flow
+make visual-qa   # writes screenshots to docs/qa/<release>/
 ```
 
-In the plan's order, and the order matters:
+The skill split, the role labels on the player page and evaluator drawer, the wrapped role
+Badge and the `needs_not_addressable` copy have not been seen rendered.
 
-1. **`fit.py` per-skill aggregation first.** Accumulate per *skill* before applying
-   severity. Fixing the proxies without this leaves `perimeter_defense` double-counted for
-   9 of 21 teams, so most of the measurement error survives the data improvement while
-   credit is claimed for having fixed it.
-2. **`ball_security → turnover_avoidance = pct_inv(TM_TOV_PCT)`.** There is no inversion
-   mechanism in the skill path to copy — the two that exist are team-side severity and a
-   negative index weight, neither reusable. Add a named `pct_inv` helper, not a bare
-   literal.
-3. **R4-2's defensive input must be team-demeaned**, or it reproduces the reflection
-   problem that made ridge TEI worthless, newly labelled "measured defense" (C12).
+**Then R5 — decision engine.** Nothing in R5 needs data this repository lacks; only the
+lineup-aware fit does, and that is R6. Two things R4 changed about R5's brief:
 
-Two constraints R3 imposes on R4: the conversion coefficient is valid only for the
-regressor construction recorded in `model_versions`, and any change to how team TEI is
-built invalidates it — refit and re-run the R3 gate rather than assuming it carries. The
-guard test fails loudly if the served constant and the registered fit diverge, but it
-cannot see a construction change, so that one is on the author.
+- `fit` is the component the plan expects to clip (×120), and **R4 changed the fit
+  distribution** — re-measure the clip rate before touching the constant.
+- `recency_weighted_features` is the real cold-cache hotspot at **0.796 s**, and R4 added
+  two derivations inside it — re-measure before optimising.
 
-If contract work is preferred instead, the only thing that moves the legality verdict is a
-hand-curated `data/contracts/contracts.csv` with `CONTRACT_DATA_PROVIDER=file`. No further
-work on the Basketball-Reference parser will, and §6 says why in measured terms.
+And two things R4 established that R5 must not undo:
 
----
+- The R3 coefficient holds only for the current regressor construction.
+  `test_r3_gate_after_r4.py` fails the suite if an R4 column reaches `INDEX_WEIGHTS`
+  without a refit.
+- `point_of_attack_defense` is **withheld deliberately**, not pending. Re-adding it
+  requires passing the class check recorded in `archetypes.UNADDRESSABLE_NEEDS`.
 
-## 13. What this run did not do
+## 13. Environment anomalies encountered
+
+Recorded rather than worked around, per the run's safety requirements.
+
+1. **Node stopped being able to bind a port, partway through the R4 session.** `next dev`,
+   `next build` and therefore `make e2e` all start, sit at 0 % CPU and never listen; the
+   `preview_start` tool fails with "Operation not permitted". Nothing in the repository
+   caused it — `make e2e` passed 5/5 earlier in the same session. **Consequence: Playwright
+   and visual QA were not re-run after R4-1c.** Stated at the top of
+   `ROSTERLAB_AUTONOMOUS_STATE.md` and in §11 of the R4 report.
+2. **`git status` began taking minutes and timing out**, while `git rev-parse`,
+   `git diff` and `git commit` remained instant under `GIT_OPTIONAL_LOCKS=0`. The slowness
+   is in git's index-refresh path over this cloud-synced tree. A timed-out `git commit`
+   left a **zero-byte `.git/index.lock`** with no git process running; it was removed after
+   confirming that, which touches no commit and no file. No reset, no clean, no stash, no
+   force-push at any point.
+3. **The R4 investigation workflow hit a session limit** with 29 of 44 agents complete: 14
+   verifier agents and the synthesis agent did not run. All seven investigations completed,
+   and 13 verification verdicts landed — including the two that changed the design (that A′
+   and A″ are placebo-passable, and that `TS_PCT` beats `DREB_PCT` on every non-circular
+   criterion). The synthesis was done by hand instead, against independently re-run
+   measurements.
+
+## 14. What this run did not do
 
 Stated plainly, because the absences are choices:
 
