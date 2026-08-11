@@ -47,6 +47,15 @@ Recency-weighted (λ=0.7, minutes-weighted) z-scores of: pts/75, TS%, USG%, AST%
 TOV%, OREB%, DREB%, steals/min, blocks/min, 3PA rate, FTA rate, minutes, PIE,
 on-court net rating; plus age.
 
+**Unchanged by R4, and that was a measured decision rather than an omission.** R4 added
+columns to the feature path (fouls per minute, 3PA per minute, a team-relative defensive
+differential, shrunk 3P%) for the *skill* vectors, but none of them entered `INDEX_WEIGHTS`,
+so TEI is the same quantity it was at R3 and the fitted net-rating conversion (14.977)
+remains valid for it. Feeding the new defensive term into the index was tested and
+**rejected**: team-level R² fell from **0.7505** to 0.5655 (replacing the event terms),
+0.7263 (adding it at 0.10) or 0.6753 (at 0.20). `test_r3_gate_after_r4.py` fails the suite
+if a future change moves an R4 column into the index without refitting the conversion.
+
 ## Validation (actual, from this snapshot)
 
 - Split: validate on the 2024-25→2025-26 transition (n=464). No random row splits

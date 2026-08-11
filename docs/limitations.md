@@ -39,8 +39,33 @@ itself, not fine print.
 - **Rotation reallocation is a model of coach behavior**, proportional to
   established minutes with caps — real rotations will differ; users can override
   minutes.
-- **Archetype clustering is descriptive** (silhouette 0.156); labels are
-  conveniences, not positions.
+- **Roles are descriptive labels, not positions.** They come from a deterministic
+  size-first rule chain over league percentiles (R4-3), not from clustering, so the same
+  profile always yields the same label. Gating on size first means a tall high-assist
+  player is named a big: Kevin Durant is a "playmaking big". **49 of 632 scored players
+  (7.75 %) have no listed height** and are labelled `unclassified (no listed height)`
+  rather than given a role from an imputed number.
+- **No player skill claims to measure point-of-attack defence, on purpose.** A composite
+  was built in R4-2 and withdrawn: on its pre-registered class — high-usage, high-assist,
+  sub-6'8" players with real minutes — it scored **0.630 mean with 75 % above the median**
+  against the steals proxy's 0.611 / 70 %, i.e. **worse than the thing it replaced**. A
+  steals-led measure necessarily rates ball-dominant guards highly, because gambling into a
+  passing lane appears in a box score and staying in front of a ball handler does not. The
+  team-side need is still measured and shown, with the reason nothing is claimed about it.
+  Measuring it needs matchup and tracking data this repository does not have.
+- **`team_defense` is not a validated measure of defensive ability.** It is a construct:
+  every term is a defensive act (blocks, steals, defensive rebounds, fouls as a cost, and
+  points allowed on court). It is more stable than the steals proxy it replaced
+  (year-over-year 0.838 vs 0.669) and imports less team quality (0.99 vs 1.51 of the decile
+  gap), but every validation target available here derives from on-court `DEF_RATING`, so
+  every available test is circular to some degree. Two specific consequences worth knowing:
+  the composite is **big-biased** — blocks and defensive rebounding carry 0.58 of the weight
+  — and its defensive-rebound term **overlaps the separate `rebounding` skill** at r = 0.58.
+- **Three-point accuracy is shrunk, so extremes are pulled toward the league mean.** 37 % of
+  player-seasons have under 50 attempts, so an unshrunk percentage ranks small-sample
+  non-shooters at both extremes. The shrunk figure is deliberately conservative for
+  low-volume shooters, and is **withheld entirely** for the 22 window players with no
+  attempt record rather than defaulted to the league average.
 - **Contract value (when enabled) is a documented heuristic**, not a fitted market
   model, until historical salary data exists.
 - **The candidate generator is hidden and experimental** (R1-8). It has no UI entry

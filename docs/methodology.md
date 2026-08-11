@@ -144,21 +144,40 @@ Replacement level is derived, not assumed: the old hardcoded −2.0 sat at the *
 percentile** of player-season TEI. The rule is the mean TEI of player-seasons outside
 their team's top 10 by minutes — **−1.214**.
 
-## 3. Archetypes
+## 3. Roles
 
-K-means (k=8, fixed seed) over standardized role features (usage, assist rate, 3PA
-rate, TS%, rebounding, stocks per minute, pts/75, height). Silhouette on the current
-snapshot: **0.156** — modest and honestly reported; NBA roles overlap heavily, so
-archetypes are used as descriptive labels and comparable-player groupings, not hard
-class boundaries. Labels are assigned deterministically from cluster centers vs
-league medians (rules in `archetypes.py::_label_from_center`).
+A **deterministic size-first rule chain** over league percentile cut points — 14 roles,
+three height tiers, then four or five branches within each tier
+(`archetypes.py::assign_role`). It is a total function of one player's row plus the cut
+points, so nothing is fitted, nothing is random, and the same profile always produces the
+same label. There is no silhouette to report because there is no clustering.
+
+K-means (k=8) did this until R4-3 and was retired for being unstable rather than merely
+imprecise. Measured on the 632-player frame: only **5 of its 10** label branches were ever
+reached, **217 of 632 rows (34.3 %)** carried a disambiguating numeric suffix, the
+silhouette was **0.154** — no separated structure exists in this space, so no k finds one —
+and, decisively, **dropping a random 10 % of players rewrote 65.7 % of the surviving
+players' labels**. It also filled the league-median height for the 49 players (7.75 %)
+whose height is not recorded, and gave them a confident role.
+
+The rule chain moves **1.77 %** of labels under the same resampling, fires all 14 roles
+(largest 12.2 %, smallest 3.5 %), carries no numeric suffixes, and is byte-identical
+across processes and BLAS thread counts. Players with no listed height are labelled
+`unclassified (no listed height)` rather than assigned a role from a fabricated number.
+
+Roles remain descriptive labels and comparable-player groupings, not hard class
+boundaries. Gating on size first is deliberate: a creation-first chain was measured to
+label a 7'4" centre a "secondary creator".
 
 ## 4. Team needs
 
 Transparent percentile rules over real team statistics — no LLM anywhere in the
 calculation. Example: bottom-half FG3A → `three_point_volume` need with severity
-`(50−pct)/50`. Proxies are labeled as proxies (blocks ≈ rim protection, steals ≈
-point-of-attack pressure). Roster-composition rules add `lineup_size` (avg height <
+`(50−pct)/50`. Proxies are labeled as proxies (blocks ≈ rim protection).
+Point-of-attack defence is measured as a team **need** but has **no player skill** — see
+`docs/limitations.md`; nothing in this repository measures on-ball defence, and the
+steals-based proxy that used to stand in for it rated ball-dominant guards above the
+defenders who guard them. Roster-composition rules add `lineup_size` (avg height <
 77.5") and `secondary_creation` (< 2 players with AST% ≥ 25). Each need stores its
 percentile and a plain-English explanation shown in the UI.
 
