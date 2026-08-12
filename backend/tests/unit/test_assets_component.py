@@ -17,12 +17,12 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.analytics.picks import REFERENCE_SLOT, relative_pick_value
+from app.db.models import DraftPick, Standing
 from app.services.evaluation import (
     PICK_POINTS_PER_REFERENCE,
     REFERENCE_PICK_VALUE,
     EvaluationService,
 )
-from app.db.models import DraftPick, Standing
 
 
 def _pick(from_team: str, to_team: str, year: int, round_number: int = 1, **kw) -> dict:
@@ -58,7 +58,7 @@ class TestTheAnchorIsUnchanged:
         asset — a mid-first-rounder — and prices everything else relative to it. No scale
         constant moves; only the relative pricing appears."""
         assert PICK_POINTS_PER_REFERENCE == 8.0
-        assert REFERENCE_PICK_VALUE == pytest.approx(relative_pick_value(REFERENCE_SLOT))
+        assert pytest.approx(relative_pick_value(REFERENCE_SLOT)) == REFERENCE_PICK_VALUE
 
     def test_a_top_pick_is_worth_more_than_a_late_second(self):
         assert relative_pick_value(1) / REFERENCE_PICK_VALUE > 2.0

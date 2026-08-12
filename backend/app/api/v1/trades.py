@@ -84,11 +84,15 @@ def evaluate_trade(payload: EvaluateRequest, db: Session = Depends(get_db)) -> d
     "/generate",
     summary="[experimental] Generate candidate trades",
     description=(
-        "**Experimental — no UI entry point (R1-8).** The search reaches only about "
-        "14 % of counterparties: it exhausts a 400-evaluation budget after roughly six "
-        "teams, walks them in unordered insertion order, and applies no salary matching. "
-        "Responses carry a `coverage` block stating exactly what was and was not "
-        "searched. R5 rebuilds it."
+        "**Experimental — no UI entry point (R1-8).** Rebuilt in R5-3. The search covers "
+        "**every** counterparty: the evaluation budget is divided across the league "
+        "rather than consumed by the first few teams alphabetically, which is how it "
+        "previously reached 13.8 % of counterparties. Salary matching uses the CBA's "
+        "expanded-TPE bands where both packages are priced. A candidate is surfaced only "
+        "if **both** teams score above 50 — the composite's own definition of 'changes "
+        "nothing' — and neither projects worse than −2 wins, and the packages differ by "
+        "no more than 2 wins of modelled value. Responses carry a `coverage` block "
+        "stating what was enumerated, evaluated and rejected, per counterparty."
     ),
 )
 def generate_trades(payload: GenerateRequest, db: Session = Depends(get_db)) -> dict:
