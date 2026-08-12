@@ -25,6 +25,12 @@ from app.analytics.components import affine_score, bounded_score
 from app.analytics.features import build_player_season_features, recency_weighted_features
 from app.analytics.fit import fit_score
 from app.analytics.needs import NEED_TO_SKILL
+from app.analytics.picks import (
+    REFERENCE_SLOT,
+    PickTerms,
+    pick_value,
+    relative_pick_value,
+)
 from app.analytics.projection import (
     ROTATION_DEPTH,
     RotationPlayer,
@@ -53,6 +59,7 @@ from app.db.models import (
     Player,
     PlayerImpactEstimate,
     RosterEntry,
+    Standing,
     TeamNeed,
 )
 
@@ -118,6 +125,13 @@ DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
 TEI_SIGMA_DEFAULT = 1.5  # index points; refined by per-player bands when available
 
 COMPONENT_KEYS = ("performance", "fit", "contract", "timeline", "assets", "risk")
+
+# The reference asset the assets component is anchored on, unchanged from the flat
+# 8-points-per-pick R4 shipped: a mid-first-rounder is worth 8 composite points. What
+# changed is that every other pick is now priced RELATIVE to it by the fitted curve,
+# instead of every pick being worth the same 8 points.
+PICK_POINTS_PER_REFERENCE = 8.0
+REFERENCE_PICK_VALUE = relative_pick_value(REFERENCE_SLOT)
 
 
 # How many rotation rows the CHART shows. A display choice, deliberately independent of
@@ -193,6 +207,8 @@ class EvaluationService:
         # re-queried hundreds of times for identical answers.
         self._roster_cache: dict[str, list[PlayerCard]] = {}
         self._needs_cache: dict[str, dict[str, float]] = {}
+        self._win_pct_cache: dict[str, float] | None = None
+        self._pick_curve_cache: dict[str, float] | None = None
 
     # ------------------------------------------------------------- data loading
 
@@ -535,24 +551,196 @@ class EvaluationService:
             )
         return bounded_score(50.0 + (align_in - align_out) * 100.0), detail
 
+    def _pick_terms(self, team_id: str, move: dict) -> tuple[PickTerms, str]:
+        """Turn a pick move into valuation terms, using ownership rows where they exist.
+
+        The move names the team *trading* the pick, which is not necessarily the team
+        whose record sets the slot. A reconciled ownership row supplies the original team
+        and the verification; without one the pick is unverified and says so.
+        """
+        rows = resolver.draft_pick_rows(self.db)
+        holder = move.get("from_team_id")
+        match = next(
+            (
+                r
+                for r in rows
+                if r.draft_year == move["draft_year"]
+                and r.round_number == move["round_number"]
+                and r.owning_team_id == holder
+            ),
+            None,
+        )
+        original_team_id = match.original_team_id if match else holder
+        verified = bool(match.is_verified) if match else False
+        if match is None and not move.get("is_hypothetical", True):
+            verified = False
+        label = f"{move['draft_year']} round {move['round_number']}"
+        return (
+            PickTerms(
+                draft_year=int(move["draft_year"]),
+                round_number=int(move["round_number"]),
+                original_team_win_pct=self._team_win_pct(original_team_id),
+                protections=move.get("protections") or (match.protections if match else None),
+                is_conditional=bool(match and match.conveyance in ("swap", "conditional")),
+                ownership_verified=verified,
+                unresolved_reasons=(
+                    (f"source records this pick's conveyance as {match.conveyance!r}",)
+                    if match and not match.is_verified
+                    else ()
+                ),
+            ),
+            label,
+        )
+
+    def _pick_curve(self) -> dict[str, float] | None:
+        """The registered pick-value curve, or `None` to use the committed constants.
+
+        Served from `model_versions` for the same reason the R3 conversion is: a curve
+        fitted on this database's draft classes is the one that describes this database,
+        and a committed constant that silently outlives its refit is how train and serve
+        drift apart (C5).
+        """
+        if self._pick_curve_cache is None:
+            model = self.db.scalar(
+                select(ModelVersion).where(
+                    ModelVersion.model_name == "pick_value_curve", ModelVersion.is_active
+                )
+            )
+            metrics = (model.validation_metrics if model else None) or {}
+            curve = metrics.get("curve") if metrics.get("calibrated") else None
+            self._pick_curve_cache = curve or {}
+        return self._pick_curve_cache or None
+
+    def _team_win_pct(self, team_id: str | None) -> float | None:
+        """Most recent measured win percentage, memoized per service."""
+        if team_id is None:
+            return None
+        if self._win_pct_cache is None:
+            self._win_pct_cache = {}
+            for row in self.db.scalars(select(Standing).order_by(Standing.season)).all():
+                self._win_pct_cache[row.team_id] = row.win_pct
+        return self._win_pct_cache.get(team_id)
+
     def _assets(
         self,
-        picks_in: int,
-        picks_out: int,
+        team_id: str,
+        pick_moves: list[dict],
         payroll_delta: int | None,
+        payroll_exact: bool,
         roster_spots_delta: int,
-    ) -> tuple[float, dict]:
-        score = 50.0 + 8.0 * (picks_in - picks_out) - 2.0 * roster_spots_delta
+    ) -> tuple[float | None, dict]:
+        """**Draft capital.** Withheld when no pick in the deal can be priced.
+
+        The measured defect this replaces: `assets` counted picks (8 points each,
+        regardless of which pick) and read payroll from `team_legality.payroll_before`,
+        which is `None` unless *every* rostered player is priced — 0 of 30 teams under the
+        available contract data. Over 482 scored evaluations it therefore took only three
+        values, {48, 50, 52}, from the roster-spot term alone, and contributed **−0.006**
+        of composite variance while holding 15 % of the weight. A component that cannot
+        move is not a conservative component; it is a placebo diluting the ones that can.
+
+        Picks are now valued by the empirical curve (`analytics.picks`) rather than
+        counted, so a 2027 unprotected first is no longer interchangeable with a 2031
+        second, and a pick the curve refuses to price — protected, swapped, or of
+        unverified ownership — is **not** midpointed into the score. It is listed with the
+        range it would have spanned, because averaging over conditions nothing here can
+        price is exactly how a conditional pick acquires a false decimal.
+
+        **Payroll change is reported and not scored, and that was a measurement, not a
+        preference.** A first pass computed the delta from the moved players' own salaries
+        — which is exact whenever those players are priced, a far weaker requirement than
+        pricing two rosters — and scored it here. Measured over the resulting 168
+        fully-scored evaluations, `assets` then correlated **0.837** with `contract`
+        (0.779 Spearman), because with no pick moving both components reduce to the same
+        salary delta. Removing one double count and introducing another is not progress.
+        `contract` divides salary by impact, which is the question it asks; this component
+        is draft capital, which is a different asset class. The delta stays in the detail
+        because it is genuinely useful; it is simply not scored twice.
+
+        The consequence, stated plainly: **on a player-only trade this component is
+        withheld**, and the composite renormalises without it. That is the honest answer.
+        Without pick data there is no measurable asset content in a player-only deal that
+        `contract` does not already price.
+        """
         detail: dict[str, Any] = {
-            "picks_in": picks_in,
-            "picks_out": picks_out,
+            "picks_in": len([m for m in pick_moves if m["to_team_id"] == team_id]),
+            "picks_out": len([m for m in pick_moves if m["from_team_id"] == team_id]),
             "roster_spots_delta": roster_spots_delta,
         }
+        current_year = date.today().year
+
+        valued_units = 0.0
+        priced: list[dict] = []
+        unpriced: list[dict] = []
+        for move in pick_moves:
+            if team_id not in (move["from_team_id"], move["to_team_id"]):
+                continue
+            terms, label = self._pick_terms(team_id, move)
+            value = pick_value(terms, current_year, self._pick_curve())
+            sign = 1.0 if move["to_team_id"] == team_id else -1.0
+            row = {
+                "pick": label,
+                "direction": "in" if sign > 0 else "out",
+                **value.as_dict(),
+            }
+            if value.precision == "interval" and value.point is not None:
+                valued_units += sign * value.point / REFERENCE_PICK_VALUE
+                priced.append(row)
+            else:
+                unpriced.append(row)
+
+        detail["picks_priced"] = priced
+        detail["picks_not_priced"] = unpriced
+        detail["pick_units_net"] = round(valued_units, 4)
+        detail["pick_reference"] = (
+            f"1.0 unit = the empirical value of slot {REFERENCE_SLOT}, worth "
+            f"{PICK_POINTS_PER_REFERENCE} composite points — the value a pick has always "
+            "carried here, now applied per pick rather than per count"
+        )
+
+        # Payroll change is REPORTED here and SCORED by `contract`, which is the component
+        # that owns salary. Scoring it in both was measured and rejected: with the payroll
+        # term in, `assets` correlated **0.837** with `contract` (0.779 Spearman) over 168
+        # fully-scored evaluations, because with no pick moving both components reduce to
+        # the same salary delta. Removing one double count and introducing another is not
+        # progress. `contract` divides salary by impact, which is the question it asks;
+        # `assets` is draft capital, which is a different asset class.
         if payroll_delta is not None:
-            score += -payroll_delta / 5_000_000  # $5M added payroll ≈ -1 point flexibility
             detail["payroll_delta"] = payroll_delta
+            detail["payroll_basis"] = (
+                "sum of the moved players' salaries for the cap league year"
+                if payroll_exact
+                else "partial — some moved players have no salary on file"
+            )
         else:
-            detail["payroll_note"] = "payroll delta unknown (no contract data)"
+            detail["payroll_note"] = (
+                "payroll delta unknown: at least one player in this deal has no salary "
+                "for the cap league year, so the change cannot be computed"
+            )
+        detail["payroll_scored"] = False
+        detail["payroll_scored_note"] = (
+            "reported, not scored — the contract component prices salary against impact, "
+            "and scoring the raw delta here as well made the two components 0.837 "
+            "correlated over 168 evaluations"
+        )
+
+        if not priced:
+            detail["unavailable"] = (
+                "no draft pick in this deal could be priced, so there is no draft capital "
+                "to score. What remains is the roster-spot term, which spans four points "
+                "and cannot express asset value — scoring it alone would put a constant "
+                "in the composite, which is exactly what this component was before R5."
+            )
+            return None, detail
+
+        score = 50.0 + PICK_POINTS_PER_REFERENCE * valued_units - 2.0 * roster_spots_delta
+        if unpriced:
+            detail["precision_note"] = (
+                f"{len(unpriced)} pick(s) in this deal are protected, swapped or of "
+                "unverified ownership. They are excluded from the score and listed with "
+                "the range they would have spanned; the component understates a package "
+                "that includes them."
+            )
         return bounded_score(score), detail
 
     @staticmethod
@@ -813,17 +1001,25 @@ class EvaluationService:
         )
         timeline, timeline_detail = self._timeline(strategy, incoming, outgoing)
 
-        picks_in = len([m for m in pick_moves if m["to_team_id"] == team_id])
-        picks_out = len([m for m in pick_moves if m["from_team_id"] == team_id])
-        payroll_before = team_legality.get("payroll_before")
-        payroll_after = team_legality.get("payroll_after")
-        payroll_delta = (
-            payroll_after - payroll_before
-            if payroll_after is not None and payroll_before is not None
-            else None
-        )
+        # The payroll change is the moved players' own salaries — exact whenever those
+        # players are priced. It used to come from `payroll_after - payroll_before`, both
+        # of which are `None` unless EVERY rostered player is priced, which is 0 of 30
+        # teams under the available contract data. The delta needs the handful of players
+        # in the deal, not two whole rosters, and asking for the stronger condition made
+        # the term permanently unavailable.
+        moved_salaries = [salaries.get(c.player_id) for c in incoming + outgoing]
+        payroll_exact = bool(moved_salaries) and all(s is not None for s in moved_salaries)
+        payroll_delta: int | None = None
+        if payroll_exact:
+            payroll_delta = sum(salaries[c.player_id] or 0 for c in incoming) - sum(
+                salaries[c.player_id] or 0 for c in outgoing
+            )
         assets, assets_detail = self._assets(
-            picks_in, picks_out, payroll_delta, len(incoming) - len(outgoing)
+            team_id,
+            pick_moves,
+            payroll_delta,
+            payroll_exact,
+            len(incoming) - len(outgoing),
         )
 
         # R3-5: the simulation draws over the SAME rotation the point estimate allocated.

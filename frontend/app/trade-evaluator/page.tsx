@@ -152,11 +152,34 @@ interface TimelineDetail {
   outgoing_alignment?: number;
 }
 
+interface PickValuation {
+  pick: string;
+  direction: "in" | "out";
+  low: number;
+  point: number | null;
+  high: number;
+  /** interval = priced; range = protected/swapped; unknown = ownership unverified. */
+  precision: "interval" | "range" | "unknown";
+  caveats: string[];
+  slot_support: { min_slot: number; max_slot: number; central_slot: number | null };
+}
+
 interface AssetsDetail {
   picks_in?: number;
   picks_out?: number;
   roster_spots_delta?: number;
+  picks_priced?: PickValuation[];
+  picks_not_priced?: PickValuation[];
+  pick_units_net?: number;
+  pick_reference?: string;
+  payroll_delta?: number;
+  payroll_basis?: string;
   payroll_note?: string;
+  /** Reported here, scored by the contract component — see `payroll_scored_note`. */
+  payroll_scored?: boolean;
+  payroll_scored_note?: string;
+  precision_note?: string;
+  unavailable?: string;
 }
 
 interface RiskDetail {
@@ -2492,10 +2515,10 @@ function CapTab({ teamEval }: { teamEval: TeamEvaluation }) {
       )}
 
       <div className="rounded-lg border border-hairline bg-panel2/40 p-3.5">
-        <div className="eyebrow">Flexibility &amp; future value</div>
+        <div className="eyebrow">Draft capital &amp; flexibility</div>
         <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <StatBlock size="sm" label="Picks in" value={assets.picks_in ?? 0} note="hypothetical" />
-          <StatBlock size="sm" label="Picks out" value={assets.picks_out ?? 0} note="hypothetical" />
+          <StatBlock size="sm" label="Picks in" value={assets.picks_in ?? 0} note="in this deal" />
+          <StatBlock size="sm" label="Picks out" value={assets.picks_out ?? 0} note="in this deal" />
           <StatBlock
             size="sm"
             label="Roster spots"
@@ -2507,8 +2530,47 @@ function CapTab({ teamEval }: { teamEval: TeamEvaluation }) {
             note="net change"
           />
         </div>
+
+        {(assets.picks_priced?.length ?? 0) + (assets.picks_not_priced?.length ?? 0) > 0 && (
+          <ul className="mt-3 space-y-1.5 text-[12px]">
+            {[...(assets.picks_priced ?? []), ...(assets.picks_not_priced ?? [])].map((p, i) => (
+              <li key={`${p.pick}-${p.direction}-${i}`} className="flex flex-wrap items-baseline gap-x-2">
+                <span className="text-muted">
+                  {p.direction === "in" ? "→" : "←"} {p.pick}
+                </span>
+                <span className="data text-foreground">
+                  {p.point !== null
+                    ? `${p.point.toFixed(2)} (${p.low.toFixed(2)}–${p.high.toFixed(2)})`
+                    : `${p.low.toFixed(2)}–${p.high.toFixed(2)}`}
+                </span>
+                <span className="text-faint">
+                  slots {p.slot_support.min_slot}–{p.slot_support.max_slot}
+                  {p.precision !== "interval" && ` · no point estimate (${p.precision})`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {assets.unavailable ? (
+          <p className="mt-2.5 text-[11px] leading-snug text-faint">{assets.unavailable}</p>
+        ) : (
+          assets.precision_note && (
+            <p className="mt-2.5 text-[11px] leading-snug text-faint">{assets.precision_note}</p>
+          )
+        )}
+        {assets.payroll_delta !== undefined && (
+          <p className="mt-1 text-[11px] leading-snug text-faint">
+            Payroll change{" "}
+            <span className="data text-muted">
+              {assets.payroll_delta >= 0 ? "+" : "−"}
+              {money(Math.abs(assets.payroll_delta))}
+            </span>
+            . {assets.payroll_scored_note}.
+          </p>
+        )}
         {assets.payroll_note && (
-          <p className="mt-2.5 text-[11px] leading-snug text-faint">{assets.payroll_note}.</p>
+          <p className="mt-1 text-[11px] leading-snug text-faint">{assets.payroll_note}.</p>
         )}
       </div>
     </div>
