@@ -345,14 +345,15 @@ def generate_candidates(
                 filtered["illegal"] += 1
                 continue
             focal_eval = service.evaluate_for_team(
-                focal_team_id, team_ids, moves, [], strategy, weights, legality
+                focal_team_id, team_ids, moves, [], strategy, weights, legality,
+                simulate=False,
             )
             focal_utility = focal_eval["composite_utility"]
             if focal_utility is None or focal_utility <= MIN_UTILITY:
                 filtered["focal_utility"] += 1
                 continue
             other_eval = service.evaluate_for_team(
-                other.id, team_ids, moves, [], "custom", None, legality
+                other.id, team_ids, moves, [], "custom", None, legality, simulate=False,
             )
             other_utility = other_eval["composite_utility"]
             if other_utility is None or other_utility <= MIN_UTILITY:

@@ -956,7 +956,19 @@ class EvaluationService:
         strategy: str = "custom",
         weights: dict[str, float] | None = None,
         legality: dict | None = None,
+        simulate: bool = True,
     ) -> dict:
+        """`simulate=False` skips the 2,000-draw Monte Carlo and says so in the response.
+
+        Nothing scored reads the simulation. It produced `prob_positive`, which was the
+        risk component until R5-1b removed it as a restatement of `performance`, and the
+        interval the UI displays. The candidate generator reads neither: it needs the
+        composite and `delta_wins`, both of which are point estimates. Profiled over one
+        `generate` request, the simulation was **1.10 s of 1.83 s** — 60 % of the request
+        spent computing a distribution nobody read. The `uncertainty` block is marked
+        `skipped` rather than filled with zeros, because an all-zero draw array reports
+        `prob_positive = 0.0`, which reads as "certain to hurt" (QA-5).
+        """
         weights = normalize_weights(
             weights or DEFAULT_WEIGHTS.get(strategy, DEFAULT_WEIGHTS["custom"])
         )
@@ -1032,7 +1044,23 @@ class EvaluationService:
             if c.tei_sigma is not None
         }
         rotations = perf_detail.pop("_rotations", None)
-        if rotations is None:
+        uncertainty: dict[str, Any]
+        if not simulate:
+            uncertainty = {
+                "n_draws": 0,
+                "median": None,
+                "p10": None,
+                "p90": None,
+                "prob_positive": None,
+                "skipped": True,
+                "unavailable": (
+                    "the outcome distribution was not simulated for this evaluation; "
+                    "no scored component reads it, and the caller asked for the point "
+                    "estimate only"
+                ),
+                "top_uncertainty_drivers": [],
+            }
+        elif rotations is None:
             uncertainty = simulate_delta_wins(
                 RotationDraw(), RotationDraw(), wins_mapping=self.wins_mapping()
             )

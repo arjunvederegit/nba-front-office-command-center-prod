@@ -403,57 +403,78 @@ def recency_weighted_features(
     df["season_w"] = df["season"].map(weight_by_season).astype(float)
     df["recency_w"] = df["season_w"] * df["total_minutes"].astype(float)
 
-    numeric_cols = [c for c in MODEL_FEATURES if c in df.columns]
-    records: list[dict[str, Any]] = []
-    for player_id, group in df.groupby("player_id"):
-        weights = group["recency_w"].astype(float)
-        if weights.sum() <= 0 or group["total_minutes"].sum() < min_total_minutes:
-            continue
-        latest = group.sort_values("season").iloc[-1]
-        record: dict[str, Any] = {
-            "player_id": player_id,
-            "full_name": latest["full_name"],
-            "nba_player_id": latest["nba_player_id"],
-            "height_inches": latest["height_inches"],
-            "position": latest["position"],
-            "is_active": latest["is_active"],
-            "latest_season": latest["season"],
-            "seasons_observed": len(group),
-            "total_minutes_window": float(group["total_minutes"].sum()),
-            # Recency-weighted SUMS, not means — these are evidence counts feeding a
-            # shrinkage denominator, so averaging them would be a units error.
-            "fg3a_window": _recency_sum(group, "FG3A"),
-            "fg3m_window": _recency_sum(group, "FG3M"),
-        }
-        for col in numeric_cols:
-            values = pd.to_numeric(group[col], errors="coerce")
-            mask = values.notna()
-            if mask.any():
-                record[col] = float(np.average(values[mask], weights=weights[mask]))
-            else:
-                record[col] = None
-        records.append(record)
+    # R5-4. Grouped arithmetic rather than a Python loop over players.
+    #
+    # The loop ran `pd.to_numeric` and `np.average` once per (player, column) — 632 x 19
+    # calls, each rebuilding a Series and a boolean mask — and it was the measured
+    # cold-cache hotspot of the whole request path at **1.045 s**. Every operation below
+    # is the same arithmetic done column-wise: `sum(w*x over the rows where x is present)
+    # / sum(w over those same rows)` is exactly what `np.average(x[mask], weights=w[mask])`
+    # computes, so this is a rewrite, not an approximation, and
+    # `test_feature_collapse_equivalence.py` asserts equality on the real frame.
+    keep = df.groupby("player_id").agg(
+        total_minutes_window=("total_minutes", "sum"),
+        weight_total=("recency_w", "sum"),
+        seasons_observed=("season", "size"),
+    )
+    keep = keep[(keep["weight_total"] > 0) & (keep["total_minutes_window"] >= min_total_minutes)]
+    if keep.empty:
+        return pd.DataFrame()
 
-    window = pd.DataFrame(records)
-    if window.empty:
-        return window
+    df = df[df["player_id"].isin(keep.index)]
+    grouper = df["player_id"]
+    weights = df["recency_w"].astype(float)
+
+    # The most recent season's row supplies the identity columns.
+    latest = (
+        df.sort_values(["player_id", "season"])
+        .groupby("player_id")
+        .last()[["full_name", "nba_player_id", "height_inches", "position", "is_active"]]
+    )
+    latest_season = df.groupby("player_id")["season"].max().rename("latest_season")
+
+    window = pd.concat(
+        [
+            keep[["total_minutes_window", "seasons_observed"]],
+            latest,
+            latest_season,
+            _recency_sums(df, grouper),
+        ],
+        axis=1,
+    )
+    for col in (c for c in MODEL_FEATURES if c in df.columns):
+        values = pd.to_numeric(df[col], errors="coerce")
+        present = values.notna()
+        weighted = (values * weights).where(present, 0.0).groupby(grouper).sum()
+        denominator = weights.where(present, 0.0).groupby(grouper).sum()
+        window[col] = (weighted / denominator.replace(0.0, np.nan)).reindex(window.index)
+
+    window = window.reset_index().rename(columns={"index": "player_id"})
+    window["total_minutes_window"] = window["total_minutes_window"].astype(float)
+    window["seasons_observed"] = window["seasons_observed"].astype(int)
     return _derive_post_collapse(window)
 
 
-def _recency_sum(group: pd.DataFrame, per_game_col: str) -> float:
-    """Recency-weighted season total of a per-game counting stat.
+def _recency_sums(df: pd.DataFrame, grouper: pd.Series) -> pd.DataFrame:
+    """Recency-weighted season totals of the three-point counting stats, per player.
 
     Older evidence counts less, exactly as it does for every other column here, but the
     result stays in *attempts* rather than becoming a rate — which is what a shrinkage
     constant denominated in attempts requires.
     """
-    if per_game_col not in group.columns or "GP" not in group.columns:
-        return float("nan")
-    per_game = pd.to_numeric(group[per_game_col], errors="coerce")
-    games = pd.to_numeric(group["GP"], errors="coerce")
-    season_w = group["season_w"].astype(float)
-    total = (per_game * games * season_w)
-    return float(total.sum()) if total.notna().any() else float("nan")
+    out = {}
+    for per_game_col, name in (("FG3A", "fg3a_window"), ("FG3M", "fg3m_window")):
+        if per_game_col not in df.columns or "GP" not in df.columns:
+            out[name] = pd.Series(np.nan, index=grouper.unique())
+            continue
+        total = (
+            pd.to_numeric(df[per_game_col], errors="coerce")
+            * pd.to_numeric(df["GP"], errors="coerce")
+            * df["season_w"].astype(float)
+        )
+        summed = total.groupby(grouper).sum(min_count=1)
+        out[name] = summed
+    return pd.DataFrame(out)
 
 
 def _derive_post_collapse(window: pd.DataFrame) -> pd.DataFrame:

@@ -52,6 +52,7 @@ from sqlalchemy.orm import Session
 from app.config import BACKEND_DIR
 from app.core.logging import get_logger
 from app.db.models import DataQualityIssue, DraftPick, Team
+from app.ingestion.quality import upsert_issue
 from app.ingestion.runs import sync_run
 
 logger = get_logger(__name__)
@@ -298,17 +299,15 @@ def import_draft_picks(db: Session, source: str | None = None) -> dict:
                 if original is None or owner is None:
                     summary["unmatched_team_names"] += 1
                     unknown = entry.original_team if original is None else entry.owning_team
-                    db.add(
-                        DataQualityIssue(
-                            check_name=UNMATCHED_TEAM_CHECK,
-                            severity="warning",
-                            message=(
-                                f"draft-pick entry names a team this importer cannot "
-                                f"resolve ({unknown!r}); the pick was NOT imported: "
-                                f"{entry.source_text[:200]}"
-                            ),
-                            entity=entry.page_team,
-                        )
+                    upsert_issue(
+                        db,
+                        UNMATCHED_TEAM_CHECK,
+                        (
+                            f"draft-pick entry names a team this importer cannot "
+                            f"resolve ({unknown!r}); the pick was NOT imported: "
+                            f"{entry.source_text[:200]}"
+                        ),
+                        entity=f"{entry.page_team}|{entry.draft_year}|{entry.round_number}",
                     )
                     continue
                 key = (original.id, entry.draft_year, entry.round_number, owner.id)
@@ -357,17 +356,20 @@ def import_draft_picks(db: Session, source: str | None = None) -> dict:
                     ingestion_run_id=run.id,
                 )
             )
-            db.add(
-                DataQualityIssue(
-                    check_name=UNRESOLVED_CHECK,
-                    severity="warning",
-                    message=(
-                        f"{entry.page_team} {entry.draft_year} round {entry.round_number}: "
-                        f"{entry.conveyance} conveyance, not reducible to an owner — "
-                        f"{entry.source_text[:300]}"
-                    ),
-                    entity=entry.page_team,
-                )
+            # Keyed finely enough that two entries for the same team are two findings,
+            # and re-running the import updates them instead of duplicating them.
+            upsert_issue(
+                db,
+                UNRESOLVED_CHECK,
+                (
+                    f"{entry.page_team} {entry.draft_year} round {entry.round_number}: "
+                    f"{entry.conveyance} conveyance, not reducible to an owner — "
+                    f"{entry.source_text[:300]}"
+                ),
+                entity=(
+                    f"{entry.page_team}|{entry.draft_year}|{entry.round_number}"
+                    f"|{entry.source_text[:60]}"
+                ),
             )
             summary["unresolved"] += 1
             run.rows_written += 1
