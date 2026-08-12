@@ -6,32 +6,59 @@ from app.api.schemas import ComparisonIn
 from app.core.errors import NotFoundError
 from app.db.base import get_db
 from app.db.models import ComparisonSet, Scenario, TradeProposal
-from app.services.evaluation import DEFAULT_WEIGHTS
+from app.services.evaluation import COMPONENT_KEYS, DEFAULT_WEIGHTS
 
 router = APIRouter(prefix="/comparisons", tags=["comparisons"])
 
 
+#: Domination is judged on **every** component, not a hardcoded subset.
+#:
+#: The list used to be `["performance", "fit", "timeline", "assets", "risk"]` — omitting
+#: `contract` — while the docstring above it said "(performance, risk)". Neither described
+#: the other, and a deal that was better on price alone could be marked dominated.
+PARETO_AXES = COMPONENT_KEYS
+
+#: A comparison needs enough shared axes to mean anything. Two was the old floor, and with
+#: `assets` now withheld on every player-only trade and `contract` unavailable without a
+#: provider, two axes is a coin flip dressed as a Pareto frontier.
+MIN_SHARED_AXES = 3
+
+
 def _pareto_flags(rows: list[dict]) -> None:
-    """Mark alternatives dominated on (performance, risk) with utility as tiebreak —
-    an alternative is dominated if another is >= on all displayed axes and > on one."""
-    axes = ["performance", "fit", "timeline", "assets", "risk"]
+    """Mark alternatives another alternative dominates on every axis both of them have.
+
+    An alternative is dominated when another is >= on all shared axes and > on at least
+    one. The number of axes the judgement rested on is published beside it, because
+    "dominated on three axes of six" and "dominated on all six" are different claims and
+    the response used to make them look identical.
+    """
     for row in rows:
         row["dominated_by"] = None
+        row["domination"] = None
     for row in rows:
         for other in rows:
             if other is row:
                 continue
-            row_values = [row["components"].get(a) for a in axes]
-            other_values = [other["components"].get(a) for a in axes]
             pairs = [
-                (o, r)
-                for o, r in zip(other_values, row_values, strict=False)
-                if o is not None and r is not None
+                (other["components"][axis], row["components"][axis])
+                for axis in PARETO_AXES
+                if other["components"].get(axis) is not None
+                and row["components"].get(axis) is not None
             ]
-            if len(pairs) < 2:
+            if len(pairs) < MIN_SHARED_AXES:
                 continue
             if all(o >= r for o, r in pairs) and any(o > r for o, r in pairs):
                 row["dominated_by"] = other["trade_id"]
+                row["domination"] = {
+                    "axes_compared": len(pairs),
+                    "axes_total": len(PARETO_AXES),
+                    "axes": [
+                        axis
+                        for axis in PARETO_AXES
+                        if other["components"].get(axis) is not None
+                        and row["components"].get(axis) is not None
+                    ],
+                }
                 break
 
 
@@ -108,6 +135,7 @@ def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
     _pareto_flags(rankable)
     for row in rows:
         row.setdefault("dominated_by", None)
+        row.setdefault("domination", None)
     stability = rank_stability({r["trade_id"]: r["components"] for r in rankable}, weights)
     rows.sort(
         key=lambda r: (r["decision_status"] == "scored", r["composite_utility"] or 0),
@@ -123,7 +151,12 @@ def get_comparison(comparison_id: str, db: Session = Depends(get_db)) -> dict:
         "alternatives": rows,
         "sensitivity": stability,
         "excluded_from_ranking": excluded,
-        "note": "Alternatives marked dominated_by are Pareto-dominated across displayed "
-        "component axes under the current data. Deals that fail a verified rule, or that "
-        "no component could score, are listed but never ranked.",
+        "note": (
+            "Alternatives marked `dominated_by` are Pareto-dominated across **every** "
+            "component both deals could be scored on, and `domination.axes_compared` says "
+            f"how many that was (of {len(COMPONENT_KEYS)}). Fewer than "
+            f"{MIN_SHARED_AXES} shared axes is not enough to call domination, so no flag "
+            "is set. Deals that fail a verified rule, or that no component could score, "
+            "are listed but never ranked."
+        ),
     }

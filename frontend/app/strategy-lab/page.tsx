@@ -1672,9 +1672,12 @@ function RiskView({ ranked }: { ranked: Ranked }) {
   return (
     <div>
       <ViewIntro>
-        Downside risk blends availability history with the share of simulations in which the deal
-        actually helps. A deal that only wins in a narrow band of outcomes is not the same as a
-        deal that wins comfortably.
+        Risk is <em>availability exposure</em> and nothing else — the minutes-weighted change in
+        historical games played between the players arriving and the players leaving. It used to
+        blend in the share of simulations in which the deal helps, which is the on-court
+        projection restated as a probability; the two components were 0.86 correlated, so the
+        composite counted the same thing twice. The simulation is still shown below, and is
+        deliberately not scored.
       </ViewIntro>
       <div className="grid gap-3 lg:grid-cols-2">
         {ranked.map(({ alt }, index) => (
@@ -1785,21 +1788,34 @@ function SensitivityView({
         </div>
         <div className="min-w-0">
           <ParetoScatter
-            points={comparison.alternatives.map((alt) => ({
-              name: alt.name,
-              x: alt.components.performance ?? 0,
-              y: alt.components.risk ?? 0,
-              dominated: !!alt.dominated_by,
-            }))}
+            points={comparison.alternatives
+              .filter(
+                (alt) => alt.components.performance !== null && alt.components.risk !== null,
+              )
+              .map((alt) => ({
+                name: alt.name,
+                x: alt.components.performance as number,
+                y: alt.components.risk as number,
+                dominated: !!alt.dominated_by,
+              }))}
           />
-          {comparison.alternatives.some(
-            (alt) => alt.components.performance === null || alt.components.risk === null,
-          ) && (
-            <p className="mt-1.5 text-[11px] text-unavail">
-              A deal missing on-court impact or downside risk is plotted at 0 on that axis —
-              treat its position as unknown, not as a low score.
-            </p>
-          )}
+          {(() => {
+            const omitted = comparison.alternatives.filter(
+              (alt) => alt.components.performance === null || alt.components.risk === null,
+            );
+            return omitted.length > 0 ? (
+              <p className="mt-1.5 text-[11px] text-unavail">
+                {omitted.length} deal{omitted.length === 1 ? " is" : "s are"} not plotted: on-court
+                impact or availability exposure could not be scored. They used to be drawn at 0,
+                which reads as the worst deal on the board rather than as an unknown.
+              </p>
+            ) : null;
+          })()}
+          <p className="mt-1.5 text-[11px] leading-snug text-faint">
+            The two axes are now genuinely different questions — projected wins against
+            games-missed exposure. Before R5 they were 0.86 correlated and this chart was close to
+            a diagonal line.
+          </p>
         </div>
       </div>
     </div>
