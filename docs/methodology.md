@@ -328,6 +328,96 @@ never presented as certainty.
 volatility, and median rank; plus one-at-a-time ±50% tornado bars. A recommendation
 is called robust only if it survives these perturbations.
 
+## 12. Draft picks (R5-2)
+
+A pick is four separate unknowns, and RosterLab keeps them separate: what the slot is
+worth, where the pick will land, whether it conveys at all, and whether the team owns it.
+
+### The value curve
+
+Estimand: **the above-replacement value the player taken at slot *k* delivers, relative to
+the average pick of his own draft class.**
+
+```
+player value  =  Σ_seasons total_minutes · (TEI_season − REPLACEMENT_TEI),  floored at 0
+relative      =  player value ÷ mean player value of that draft class
+rel(k)        =  3.3855 · exp(−0.08388·(k − 1)) + 0.2525      R² 0.7534 on slot means
+```
+
+Two construction choices carry the honesty:
+
+- **Absence is a measured zero.** A drafted player who never appears in the window
+  contributed nothing above replacement, and that is what a bust is worth. Averaging only
+  over players you can see is the survivorship error that makes every late pick look
+  useful. The estimation set is 448 drafted players from classes 2016–2023, of whom **323
+  appeared** in the window.
+- **Within-class normalisation removes the career-stage confound exactly.** The window is
+  three seasons, so a 2016 draftee is observed in years 7–9 and a 2023 draftee in years
+  0–2. Slot is orthogonal to class by construction — every class has one player at every
+  slot — so dividing by the class mean removes the class effect and leaves the slot effect.
+  The first-round grid is complete: 240 of 240 cells. The second round is missing 32 of
+  240, which are excluded and reported, never imputed.
+
+### What is established, and what is not
+
+| Check (leave-one-class-out over 8 classes) | Result |
+| --- | --- |
+| Curve ranks the held-out class | **0.4624** Spearman, 8/8 positive, t = 15.36 |
+| Within-class permutation null | 0.0588 |
+| **Curve vs a two-band round-only rule** | **+0.0405, t = 1.33, p = 0.22 — not significant** |
+| Four-band model | 0.4808 — indistinguishable from the curve |
+| **Slot gradient inside the first round alone** | **0.3277, 8/8 positive, t = 4.67, p = 0.0023** |
+
+The smooth curve is used because it is not worse than any alternative *and* because the
+thing it adds is independently established: ordering inside the first round, which is where
+trade currency actually lives. The claim that it beats a coarse round-only rule is **not**
+made.
+
+### Why nothing returns a bare number
+
+Bootstrapping the 8 draft classes 2,000 times, the 90 % interval at slot 1 is [2.98, 5.64]
+on a fitted 3.64 — **73 % of the value**; at slot 60 it is 150 %. And a single pick's
+outcome is far more skewed than its mean: the median pick at slots 15–30 returns **0.150**
+against a mean of 0.965, and **38 % return exactly zero**. In the second round 66 % return
+exactly zero.
+
+The landing slot compounds it. Measured on the ingested standings, one-year rank drift has
+sd **8.53** against a no-information ceiling of **8.66** (rank correlation 0.602 and 0.509
+across the two available transitions). A team's finish one year out is barely more
+predictable than a coin flip on this data, and multi-year drift is extrapolated as a random
+walk — **an assumption, labelled as one** — capped at the ceiling. From about four years
+out the cap binds and the support is the whole round.
+
+The **lottery is not modelled**. Only its structure is used: four selections are drawn, so
+a lottery team can fall at most four places and any lottery team can rise to first. That is
+a fact about the draw, not an estimate of its odds, and the odds table is not reproduced
+here because this repository has no source for it. A lottery-exposed pick therefore gets a
+support, never a distribution.
+
+### Precision levels
+
+| Level | When | Point estimate |
+| --- | --- | --- |
+| `interval` | unconditional, ownership verified | yes, with the class-bootstrap band |
+| `range` | protected, swapped, or conditional | **no** |
+| `unknown` | ownership unverified | **no** |
+
+A protection whose text cannot be parsed into a selection range is treated as *conditional*,
+not as unprotected — the dangerous failure mode is unreadable terms silently becoming clean
+ones.
+
+### Ownership
+
+From a local RealGM future-drafts snapshot (`make import-draft-picks`; the file is
+gitignored and never redistributed). Of 394 entries in the 2026-07-28 snapshot, **184 are
+unconditional and become 92 verified picks**; 161 swaps, 33 protections and 16 conditional
+conveyances are stored with their source sentence, `is_verified = false`, and a
+`conveyance` class. Zero team names were unresolvable.
+
+The Stepien rule now **certifies the teams the source resolves** and reports `unavailable`
+— naming the specific clause — for the rest. One unresolved swap is enough: a team's
+ownership picture is then genuinely uncertain, and a pass would be invented.
+
 ## Reproducibility
 
 Fixed seed (20260720) for all stochastic steps; every model version records

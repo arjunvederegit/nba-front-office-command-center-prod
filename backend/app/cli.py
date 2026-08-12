@@ -17,6 +17,14 @@ Commands
   import-kaggle    Import historical enrichment from the Kaggle basketball dataset
   seed-demo        Populate a DEDICATED database with the synthetic demo league used by
                    the end-to-end suite. Refuses to run where nba_api rows exist.
+  import-draft-picks [path]
+                   Import pick ownership from a local RealGM future-drafts snapshot
+                   (default data/imports/draft_picks/realgm_future_drafts.html). Only
+                   unconditional transfers become verified ownership; swaps, protected
+                   and conditional picks are recorded with their source sentence and
+                   filed as data-quality warnings.
+  pick-ownership [year] [round]
+                   Report who verifiably controls each team's own pick for a draft.
   contract-coverage
                    Report ROSTER-side contract coverage without importing anything:
                    how many rostered players have a salary for the cap league year,
@@ -113,6 +121,22 @@ def main() -> None:
             uncovered = roster_side_unmatched(db, settings.current_season, settings.cap_league_year)
         print(json.dumps({**coverage, "roster_players_without_salary": uncovered}, indent=2, default=str))
         print("\n" + summarize(coverage, uncovered))
+    elif command == "import-draft-picks":
+        from app.ingestion.draft_picks import import_draft_picks
+
+        source = sys.argv[2] if len(sys.argv) > 2 else None
+        with SessionLocal() as db:
+            summary = import_draft_picks(db, source)
+        print(json.dumps(summary, indent=2, default=str))
+        if summary.get("error"):
+            sys.exit(2)
+    elif command == "pick-ownership":
+        from app.ingestion.draft_picks import ownership_summary
+
+        year = int(sys.argv[2]) if len(sys.argv) > 2 else date.today().year + 1
+        round_number = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+        with SessionLocal() as db:
+            print(json.dumps(ownership_summary(db, year, round_number), indent=2, default=str))
     elif command == "purge-fixtures":
         from app.ingestion.fixtures import purge_fixtures
 

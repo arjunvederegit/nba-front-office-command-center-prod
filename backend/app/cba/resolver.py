@@ -23,7 +23,14 @@ from typing import Any
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Contract, ContractYear, LeagueCapParameters, Player, RosterEntry
+from app.db.models import (
+    Contract,
+    ContractYear,
+    DraftPick,
+    LeagueCapParameters,
+    Player,
+    RosterEntry,
+)
 
 from .context import PayrollCoverage
 
@@ -40,6 +47,7 @@ def _cache(db: Session) -> dict[str, Any]:
             "roster": {},
             "team_roster": {},
             "player": {},
+            "draft_picks": {},
         }
         db.info[_CACHE_KEY] = cache
     return cache
@@ -229,3 +237,16 @@ def players(db: Session, player_ids: list[str]) -> dict[str, Player]:
         for pid in missing:
             cache.setdefault(pid, None)
     return {pid: cache[pid] for pid in dict.fromkeys(player_ids) if cache.get(pid) is not None}
+
+
+def draft_pick_rows(db: Session) -> list[DraftPick]:
+    """Every reconciled draft-pick row, in one query, memoized per session.
+
+    `generate_candidates` builds a trade context per candidate; without this the table
+    would be re-read once per candidate for a set of rows that cannot change inside a
+    request.
+    """
+    cache = _cache(db)["draft_picks"]
+    if "all" not in cache:
+        cache["all"] = list(db.scalars(select(DraftPick).order_by(DraftPick.draft_year)).all())
+    return cache["all"]

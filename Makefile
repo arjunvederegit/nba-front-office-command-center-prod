@@ -9,7 +9,8 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
         sync-data build-features train score seed-config migrate e2e help \
         index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
-        purge-fixtures import-contracts contract-coverage
+        purge-fixtures import-contracts contract-coverage \
+        import-draft-picks pick-ownership
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -105,3 +106,9 @@ import-stats-csv: ## Import the user-supplied season-totals CSV (data/imports/)
 
 import-kaggle: ## Import historical enrichment from the Kaggle basketball dataset
 	cd $(BACKEND) && .venv/bin/python -m app.cli import-kaggle
+
+import-draft-picks: ## Import pick ownership from the local RealGM snapshot (data/imports/)
+	cd $(BACKEND) && .venv/bin/python -m app.cli import-draft-picks
+
+pick-ownership: ## Report verified pick ownership for a draft year (YEAR=2029 ROUND=1)
+	cd $(BACKEND) && .venv/bin/python -m app.cli pick-ownership $(YEAR) $(ROUND)

@@ -273,6 +273,7 @@ class DraftPick(Base, ProvenanceMixin):
     used in trade construction live in trade_assets with is_hypothetical=True."""
 
     __tablename__ = "draft_picks"
+    __table_args__ = (Index("ix_draft_picks_year_round", "draft_year", "round_number"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     original_team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"))
@@ -281,6 +282,13 @@ class DraftPick(Base, ProvenanceMixin):
     round_number: Mapped[int] = mapped_column(Integer)
     protections: Mapped[str | None] = mapped_column(Text)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: How the pick conveys: unconditional | protected | swap | conditional | unparsed.
+    #: NULL means the row predates the distinction, not that it is unconditional (R5-2).
+    conveyance: Mapped[str | None] = mapped_column(String(20))
+    #: The source's own sentence, kept verbatim. A swap clause that this codebase cannot
+    #: reduce to a rule is still readable by a person, and paraphrasing it would lose the
+    #: only authoritative statement of the terms.
+    source_text: Mapped[str | None] = mapped_column(Text)
 
 
 class LeagueCapParameters(Base, TimestampMixin):

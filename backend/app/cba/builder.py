@@ -117,6 +117,51 @@ def _player_names(db: Session, player_ids: list[str]) -> list[str]:
     return [by_id[pid].full_name if pid in by_id else pid for pid in dict.fromkeys(player_ids)]
 
 
+def _attach_pick_ownership(db: Session, contexts: dict[str, TeamContext]) -> None:
+    """Fill in each team's verified first-round holdings, or leave them `None`.
+
+    Ownership starts from the default every league runs on — a team owns its own picks —
+    and applies only the transfers a source has resolved to an owner. A team with **any**
+    unresolved entry (a swap, a protection, a conditional conveyance) gets `None`, not a
+    partial count: one unreducible clause is enough to make the picture uncertain, and the
+    Stepien rule is entitled to know the difference.
+    """
+    rows = resolver.draft_pick_rows(db)
+    if not rows:
+        return  # no reconciled source loaded; holdings stay None and the rule says so
+    years = sorted({r.draft_year for r in rows})
+    unresolved: dict[str, list[dict]] = {}
+    conveyed: dict[tuple[str, int], int] = {}
+    acquired: dict[tuple[str, int], int] = {}
+    for row in rows:
+        if row.round_number != 1:
+            continue
+        if not row.is_verified:
+            unresolved.setdefault(row.original_team_id, []).append(
+                {
+                    "draft_year": row.draft_year,
+                    "conveyance": row.conveyance,
+                    "source_text": row.source_text,
+                }
+            )
+            continue
+        conveyed[(row.original_team_id, row.draft_year)] = (
+            conveyed.get((row.original_team_id, row.draft_year), 0) + 1
+        )
+        acquired[(row.owning_team_id, row.draft_year)] = (
+            acquired.get((row.owning_team_id, row.draft_year), 0) + 1
+        )
+    for team_id, context in contexts.items():
+        if team_id in unresolved:
+            context.pick_ownership_unresolved = unresolved[team_id]
+            continue
+        context.first_round_holdings = {
+            year: max(1 - conveyed.get((team_id, year), 0), 0)
+            + acquired.get((team_id, year), 0)
+            for year in years
+        }
+
+
 def build_trade_context(
     db: Session,
     team_ids: list[str],
@@ -172,6 +217,8 @@ def build_trade_context(
             contexts[move["from_team_id"]].outgoing.append(asset)
         if move["to_team_id"] in contexts:
             contexts[move["to_team_id"]].incoming.append(asset)
+
+    _attach_pick_ownership(db, contexts)
 
     for move in pick_moves or []:
         pick = PickAsset(

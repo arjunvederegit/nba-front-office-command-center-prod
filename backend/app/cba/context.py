@@ -166,6 +166,15 @@ class TeamContext:
     #: 15-standard limit is a whole-roster property, so the traded players' types alone
     #: never establish it.
     roster_contract_types_known: bool = False
+    #: First-round picks this team verifiably holds, by draft year, **before** the trade.
+    #: `None` when no reconciled ownership source is loaded, or when one is loaded and it
+    #: leaves this team's picks unresolved — a swap or protection nobody can reduce to an
+    #: owner. The Stepien rule needs the difference between "holds none" and "we cannot
+    #: say", and a dict of zeros cannot express the second (R5-2).
+    first_round_holdings: dict[int, int] | None = None
+    #: The source sentences that could not be resolved, so the rule can name them rather
+    #: than reporting an unexplained `unavailable`.
+    pick_ownership_unresolved: list[dict] = field(default_factory=list)
 
     @property
     def payroll_before(self) -> int | None:

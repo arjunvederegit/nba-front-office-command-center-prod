@@ -19,6 +19,7 @@ from app.config import BACKEND_DIR, get_settings
 from app.core.logging import get_logger
 from app.db.models import (
     ModelVersion,
+    Player,
     PlayerArchetype,
     PlayerImpactEstimate,
     RosterEntry,
@@ -30,6 +31,7 @@ from .archetypes import fit_archetypes
 from .availability import availability_from_history
 from .features import build_player_season_features, recency_weighted_features
 from .impact import TEI_SCALE, score_players, train_impact_models
+from .picks import build_draft_outcomes, fit_pick_value_curve, fit_rank_persistence
 from .projection import calibrate_tei_to_net_rating, calibrate_wins_per_net_rating
 
 logger = get_logger(__name__)
@@ -227,6 +229,57 @@ def _team_tei_transitions(
     return pd.DataFrame(rows)
 
 
+def _fit_pick_curve(db: Session, season_df: pd.DataFrame, seasons: list[str]) -> dict[str, Any]:
+    """Fit the pick-value curve and the rank drift its landing-slot support uses.
+
+    Kept beside the other calibrations so a single `make train` produces every fitted
+    quantity the serving path reads, and so the curve cannot drift away from the impact
+    scale it is denominated in: it is built from the same season-z TEI construction.
+    """
+    from .impact import add_zscores, baseline_index
+    from .picks import DEFAULT_ESTIMATION_CLASSES
+
+    window = season_df[season_df["season"].isin(seasons)].copy()
+    if window.empty:
+        return {"calibrated": False, "reason": "no player-seasons in the window"}
+    scored = add_zscores(window.copy())
+    drafted = pd.DataFrame(
+        [
+            {"player_id": p.id, "draft_year": p.draft_year, "draft_number": p.draft_number}
+            for p in db.scalars(
+                select(Player).where(
+                    Player.draft_year.is_not(None), Player.draft_number.is_not(None)
+                )
+            ).all()
+        ]
+    )
+    if drafted.empty:
+        return {"calibrated": False, "reason": "no player carries draft position"}
+    outcomes = build_draft_outcomes(
+        window, baseline_index(scored), drafted, DEFAULT_ESTIMATION_CLASSES
+    )
+    metrics = fit_pick_value_curve(outcomes)
+
+    standings = pd.DataFrame(
+        [
+            {"team_id": s.team_id, "season": s.season, "win_pct": s.win_pct}
+            for s in db.scalars(select(Standing)).all()
+        ]
+    )
+    metrics["rank_persistence"] = fit_rank_persistence(standings)
+    # Cells the estimation grid could not fill: a drafted player who never appeared could
+    # be a zero or a selection that was never made, and the two are indistinguishable
+    # here. Reported, never imputed.
+    if not outcomes.empty:
+        expected = len(DEFAULT_ESTIMATION_CLASSES) * 60
+        metrics["grid_cells_present"] = int(len(outcomes))
+        metrics["grid_cells_expected"] = expected
+        first_round = outcomes[outcomes["slot"] <= 30]
+        metrics["first_round_cells_present"] = int(len(first_round))
+        metrics["first_round_cells_expected"] = len(DEFAULT_ESTIMATION_CLASSES) * 30
+    return metrics
+
+
 def train_all(db: Session) -> dict[str, Any]:
     settings = get_settings()
     seasons = settings.history_season_list
@@ -401,6 +454,24 @@ def train_all(db: Session) -> dict[str, Any]:
         features=["NET_RATING"],
         target="team regular-season wins",
         metrics=mapping,
+        artifact_path=None,
+    )
+
+    # R5-2: the empirical draft-pick value curve, and the rank drift the landing-slot
+    # support is built from. Registered with the diagnostic that FAILS as well as the
+    # ones that pass — the curve does not significantly beat a round-only rule, and the
+    # model version says so rather than reporting only the flattering figures.
+    pick_curve = _fit_pick_curve(db, season_df, seasons)
+    _register_model(
+        db,
+        name="pick_value_curve",
+        version=version,
+        algorithm="exponential decay in draft slot, fitted on within-class-normalised "
+        "above-replacement window value",
+        training_period=training_period,
+        features=["draft_number", "draft_year"],
+        target="relative above-replacement window value (class mean = 1)",
+        metrics=pick_curve,
         artifact_path=None,
     )
 
