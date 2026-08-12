@@ -241,6 +241,71 @@ Availability_i = Σₛ λ^(s−1)·GPᵢ,ₛ / Σₛ λ^(s−1)·82
 over the seasons the player was in the league. This is historical availability, not
 a medical prediction — TradeLab does not model injuries.
 
+### The risk component is availability exposure, and only that (R5-1b)
+
+```
+R = 50 + 50·( a_in − a_out )        a = minutes-weighted availability of a package
+```
+
+Until R5 the dominant risk term was `prob_positive`, the Monte Carlo's probability that
+Δwins > 0 — which is the **performance component restated as a probability**. Measured
+over 482 scored evaluations on the 30 ingested rosters:
+
+| | |
+| --- | --- |
+| corr(`prob_positive`, performance) | **0.913** |
+| corr(risk, performance) | **0.851** Pearson · **0.937** Spearman |
+| risk's share of composite variance | **0.244** |
+
+So a quarter of the composite's variance came from a component that was 85–94 % another
+component, and `performance` carried roughly twice the weight the vector declared. C12
+called folding risk *into* performance backwards; the fix is to take performance back out
+of risk. Re-measured on the same sample after the change: **corr(risk, performance)
+−0.022** Pearson, −0.048 Spearman.
+
+Three properties of the replacement are deliberate:
+
+- **A change, not a level.** "How durable are the arriving players" is not a question
+  about the trade. "Is the team taking on more games-missed exposure than it is shedding"
+  is.
+- **Minutes-weighted.** Thirty minutes of a 60 %-available starter is far more exposure
+  than eight minutes of one.
+- **Where a side is empty the baseline is the roster's own measured availability**, not a
+  default. The minutes an arriving player does not play are played by the roster that is
+  already there, and that roster's availability is measured. When even that is
+  unmeasurable the component is withheld.
+
+Availability is a share of games, so its change is bounded on [−1, 1] and maps affinely
+to the full 0–100 scale — this is the one component that is not squashed, because both
+endpoints mean something.
+
+**A legality-exposure term was built, measured and left unscored.** The share of
+implemented CBA rules reaching a definite verdict runs **0.063 ± 0.071 with a ceiling of
+0.143** across the same 482 evaluations, and what moves it is which contract fields the
+configured provider supplies — a property of the dataset, not of the deal. Scoring it
+would have added a near-constant offset, which is what `assets` already was. It is
+published on every evaluation with `scored: false`.
+
+### What the weights do and do not control
+
+Component spreads are not comparable, and there is no measurement that says one standard
+deviation of fit is worth one of performance — they are in different units, and only
+`performance` has a fitted conversion to a real-world quantity. So the scale constants are
+**not** re-anchored to equalise them, and the consequence is stated instead. Measured
+share of composite variance on 168 fully-scored evaluations after R5:
+
+| component | weight (`custom`) | variance share |
+| --- | --- | --- |
+| fit | 0.18 | 0.373 |
+| contract | 0.14 | 0.243 |
+| timeline | 0.16 | 0.209 |
+| performance | 0.22 | 0.147 |
+| risk | 0.15 | 0.025 |
+| assets | 0.15 | 0.010 |
+
+A slider set to 0.22 does not buy 22 % of the influence. It buys 22 % of the *weight*, on
+a component whose spread is what it is.
+
 ## 9. Age curve and timeline
 
 A conservative piecewise curve (+0.8 TEI/yr under 21 → −1.0 over 36) applied

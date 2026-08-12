@@ -21,7 +21,7 @@ from app.analytics.archetypes import (
     player_skill_vector,
     skill_schema_fingerprint,
 )
-from app.analytics.components import bounded_score
+from app.analytics.components import affine_score, bounded_score
 from app.analytics.features import build_player_season_features, recency_weighted_features
 from app.analytics.fit import fit_score
 from app.analytics.needs import NEED_TO_SKILL
@@ -555,45 +555,143 @@ class EvaluationService:
             detail["payroll_note"] = "payroll delta unknown (no contract data)"
         return bounded_score(score), detail
 
-    def _risk(
-        self, incoming: list[PlayerCard], outgoing: list[PlayerCard], uncertainty: dict
-    ) -> tuple[float | None, dict]:
-        """Two terms, each contributed only when it can actually be measured.
+    @staticmethod
+    def _weighted_availability(cards: list[PlayerCard]) -> tuple[float | None, int]:
+        """Minutes-weighted availability of a package, and how many players it measures.
 
-        Previously both had silent fallbacks: `prob_positive` defaulted to 0.5 and, worse,
-        the availability of an *empty* incoming list was reported as 0.85 — a number the
-        executive report printed as a measurement (QA-8). Terms that cannot be computed
-        are dropped and the survivors renormalized, the same contract the composite uses.
+        Minutes-weighted rather than a flat mean: thirty minutes of a 60 %-available
+        starter is far more exposure than eight minutes of one. A player with no
+        availability record contributes nothing to either sum instead of a default.
         """
-        terms: list[tuple[float, float]] = []  # (value 0..1, weight)
+        pairs = [
+            (c.availability, c.minutes)
+            for c in cards
+            if c.availability is not None and c.minutes is not None and c.minutes > 0
+        ]
+        if not pairs:
+            return None, 0
+        total = sum(m for _, m in pairs)
+        return sum(a * m for a, m in pairs) / total, len(pairs)
+
+    def _risk(
+        self,
+        roster: list[PlayerCard],
+        incoming: list[PlayerCard],
+        outgoing: list[PlayerCard],
+        legality: dict,
+        team_id: str,
+    ) -> tuple[float | None, dict]:
+        """Availability exposure — **the one thing here that performance does not price**.
+
+        Until R5 the dominant term was `prob_positive`, the Monte Carlo's probability that
+        Δwins > 0. That is the performance component restated as a probability, and the
+        composite counted it twice. Measured over 482 scored evaluations of the post-R4
+        engine on the 30 ingested rosters:
+
+            corr(prob_positive, performance)   0.913
+            corr(risk, performance)            0.851  Pearson / 0.937 Spearman
+            risk's share of composite variance 0.244
+
+        So a quarter of the composite's variance came from a component that was 85–94 %
+        the same quantity as another one, and `performance`'s effective weight was roughly
+        double what the weight vector said. C12 called folding risk into performance
+        backwards; the fix is to take performance back out of risk.
+
+        What is left is genuinely orthogonal, measured on the same sample:
+
+            corr(Δ minutes-weighted availability, performance)   0.136
+
+        The score is the **change** in the availability of the minutes involved, not the
+        level of the incoming package's. A level answers "are these players durable",
+        which is not a question about the trade; the change answers "is the team taking on
+        more games-missed exposure than it is shedding", which is. Availability is a share
+        of games in 0..1, so the difference is bounded on [−1, 1] and maps affinely onto
+        the full 0..100 scale — this component is not squashed, because both endpoints
+        mean something.
+
+        **Where a side is empty the baseline is the roster's own measured availability**,
+        not an invented one: minutes not spent on an arriving player are spent by the
+        players already there, and their weighted availability is a measurement this
+        pipeline already makes. When even that is unmeasurable the component is withheld.
+
+        `prob_positive` is not lost — it is still computed, still returned under
+        `uncertainty`, and still drives the displayed interval. It is simply no longer
+        scored a second time.
+        """
         detail: dict[str, Any] = {}
 
-        prob_positive = uncertainty.get("prob_positive")
-        if prob_positive is not None:
-            terms.append((float(prob_positive), 60.0))
-            detail["prob_positive_outcome"] = prob_positive
-        else:
-            detail["prob_positive_outcome"] = None
+        # Reported, never scored — see `legality_verification` below.
+        team_rules = [
+            r
+            for r in legality.get("rule_results", [])
+            if r.get("team_id") in (team_id, None)
+        ]
+        definite = [r for r in team_rules if r.get("status") in ("pass", "fail", "warning")]
+        detail["legality_verification"] = {
+            "rules_evaluated": len(team_rules),
+            "rules_with_a_definite_verdict": len(definite),
+            "share": round(len(definite) / len(team_rules), 4) if team_rules else None,
+            "scored": False,
+            "note": (
+                "How much of the implemented CBA check reached a verdict for this team. "
+                "Reported, never scored: measured over 482 evaluations it runs 0.063 "
+                "± 0.071 with a ceiling of 0.143, and what moves it is which contract "
+                "fields the configured provider supplies — a property of the dataset, "
+                "not of the deal. Scoring it would add a near-constant offset."
+            ),
+        }
 
-        known_availability = [c.availability for c in incoming if c.availability is not None]
-        if known_availability:
-            avail_in = sum(known_availability) / len(known_availability)
-            terms.append((avail_in, 40.0))
-            detail["incoming_availability"] = round(avail_in, 3)
-            detail["incoming_availability_players"] = len(known_availability)
-        else:
-            detail["incoming_availability"] = None
+        roster_availability, roster_n = self._weighted_availability(roster)
+        measured_in, n_in = self._weighted_availability(incoming)
+        measured_out, n_out = self._weighted_availability(outgoing)
 
-        if not terms:
+        # These two fields mean exactly what they say: the measured availability of that
+        # package. They stay `None` for a side with no player carrying the measurement —
+        # QA-8 was a report line reading "Historical availability of incoming players:
+        # 85 %" for a deal with no incoming players, and a substituted baseline under this
+        # key would restore that defect with a different number.
+        detail["incoming_availability"] = (
+            round(measured_in, 3) if measured_in is not None else None
+        )
+        detail["outgoing_availability"] = (
+            round(measured_out, 3) if measured_out is not None else None
+        )
+        detail["incoming_availability_players"] = n_in
+        detail["outgoing_availability_players"] = n_out
+        detail["roster_availability"] = (
+            round(roster_availability, 3) if roster_availability is not None else None
+        )
+        detail["roster_availability_players"] = roster_n
+
+        avail_in = measured_in if measured_in is not None else roster_availability
+        avail_out = measured_out if measured_out is not None else roster_availability
+        substituted = [
+            label
+            for label, measured in (("incoming", measured_in), ("outgoing", measured_out))
+            if measured is None
+        ]
+        if substituted and roster_availability is not None:
+            detail["baseline_note"] = (
+                "no player with a measured availability on the "
+                + " or ".join(substituted)
+                + " side; those minutes are priced at this roster's own measured "
+                "availability, because that is who plays them"
+            )
+
+        if avail_in is None or avail_out is None:
             detail["unavailable"] = (
-                "no incoming players and no outcome distribution — downside risk cannot "
-                "be scored for this deal"
+                "no player on either side of this deal, or on the roster it is evaluated "
+                "against, has a measured availability, so exposure cannot be scored"
             )
             return None, detail
 
-        total_weight = sum(w for _, w in terms)
-        score = sum(value * weight for value, weight in terms) / total_weight * 100.0
-        return max(0.0, min(100.0, score)), detail
+        delta = avail_in - avail_out
+        detail["availability_delta"] = round(delta, 4)
+        detail["method"] = (
+            "minutes-weighted availability of the arriving package minus the departing "
+            "one, on [-1, 1], mapped affinely to 0..100"
+        )
+        return affine_score(delta, -1.0, 1.0), detail
 
     # ------------------------------------------------------------- suppression
 
@@ -753,7 +851,7 @@ class EvaluationService:
         unmodeled_in_deal = sorted({c.name for c in incoming + outgoing if c.tei is None})
         if unmodeled_in_deal:
             uncertainty["unmodeled_players_excluded"] = unmodeled_in_deal
-        risk, risk_detail = self._risk(incoming, outgoing, uncertainty)
+        risk, risk_detail = self._risk(roster, incoming, outgoing, legality, team_id)
 
         components = {
             "performance": performance,

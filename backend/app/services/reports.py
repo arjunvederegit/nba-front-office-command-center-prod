@@ -179,6 +179,24 @@ def build_report_markdown(
             f"{risk_detail['incoming_availability']:.0%} of team games "
             "(availability is historical games played, not a medical prediction)."
         )
+    # The scored quantity is the CHANGE in exposure, so the report states the change —
+    # a level on one side alone was the shape QA-8 filled with a fabricated 85 %.
+    if risk_detail.get("availability_delta") is not None:
+        delta = risk_detail["availability_delta"]
+        direction = "sheds" if delta > 0 else "takes on"
+        lines.append(
+            f"- Availability exposure: the deal {direction} {abs(delta):.1%} of games "
+            "on the minutes involved (minutes-weighted, arriving minus departing). This "
+            "is the entire risk component; the projection's own uncertainty is reported "
+            "in §3 and deliberately not scored a second time."
+        )
+    verification = risk_detail.get("legality_verification") or {}
+    if verification.get("share") is not None:
+        lines.append(
+            f"- {verification['rules_with_a_definite_verdict']} of "
+            f"{verification['rules_evaluated']} implemented CBA checks reached a verdict "
+            "for this team. Reported, never scored."
+        )
     warnings = [r for r in legality.get("rule_results", []) if r.get("status") == "warning"]
     for w in warnings[:4]:
         lines.append(f"- Rule warning ({w['rule_code']}): {w['message']}")

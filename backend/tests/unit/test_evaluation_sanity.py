@@ -155,10 +155,21 @@ def test_empty_trade_scores_neutral(db: Session, seeded_league: dict) -> None:
 
     Before R1-3 this scored 46.36, because `risk` consumed `prob_positive = 0.0` from an
     all-zero draw array.
+
+    **R5-1b changed one answer here, and the new one is the better one.** `risk` used to
+    be `None` for an empty trade, because with no incoming players there was no
+    availability to average and no honest way to fill the gap. Risk is now the *change*
+    in the availability of the minutes involved, and for a trade that moves nobody that
+    change is exactly zero — a measurement, not a fallback. 50 is the correct report and
+    `None` was the evasive one. The composite is 50 either way.
     """
     result = _evaluate(db, seeded_league, seeded_league["team_a"], [])
     assert result["components"]["performance"] == pytest.approx(50.0, abs=0.01)
-    assert result["components"]["risk"] is None
+    assert result["components"]["risk"] == pytest.approx(50.0, abs=1e-9)
+    assert result["detail"]["risk"]["availability_delta"] == pytest.approx(0.0)
+    # ...and it is still not claiming to have measured an incoming package.
+    assert result["detail"]["risk"]["incoming_availability"] is None
+    assert result["detail"]["risk"]["outgoing_availability"] is None
     assert result["composite_utility"] == pytest.approx(50.0, abs=0.01)
 
 

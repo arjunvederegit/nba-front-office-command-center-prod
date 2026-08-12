@@ -160,11 +160,26 @@ interface AssetsDetail {
 }
 
 interface RiskDetail {
-  /** null when nothing moves — there is no outcome distribution to report. */
-  prob_positive_outcome?: number | null;
-  /** null when no incoming player has a known availability history. */
+  /** null when no arriving player has a known availability history. */
   incoming_availability?: number | null;
   incoming_availability_players?: number;
+  /** null when no departing player has a known availability history. */
+  outgoing_availability?: number | null;
+  outgoing_availability_players?: number;
+  /** The measured fallback for a side with no priced package: who actually plays those minutes. */
+  roster_availability?: number | null;
+  roster_availability_players?: number;
+  availability_delta?: number;
+  baseline_note?: string;
+  method?: string;
+  /** Reported, never scored — see `scored: false`. */
+  legality_verification?: {
+    rules_evaluated: number;
+    rules_with_a_definite_verdict: number;
+    share: number | null;
+    scored: boolean;
+    note: string;
+  };
   unavailable?: string;
 }
 
@@ -2548,8 +2563,13 @@ function TimelineTab({ teamEval }: { teamEval: TeamEvaluation }) {
 
 function RiskTab({ teamEval }: { teamEval: TeamEvaluation }) {
   const risk = sectionOf<RiskDetail>(teamEval.detail, "risk");
-  // The component detail is authoritative; the raw simulation block is the fallback.
-  const probPositive = risk.prob_positive_outcome ?? teamEval.uncertainty.prob_positive;
+  // `prob_positive` is the simulation's, and it is deliberately NOT the risk component:
+  // it is the performance projection restated as a probability, and scoring it made
+  // `risk` 0.86-correlated with `performance` (R5-1b).
+  const probPositive = teamEval.uncertainty.prob_positive;
+  const pct = (v: number | null | undefined) =>
+    v === null || v === undefined ? "—" : `${(v * 100).toFixed(0)}%`;
+  const delta = risk.availability_delta;
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div className="min-w-0">
@@ -2557,33 +2577,59 @@ function RiskTab({ teamEval }: { teamEval: TeamEvaluation }) {
         <div className="mt-3 grid grid-cols-2 gap-3">
           <StatBlock
             size="sm"
-            label="Chance it helps"
-            value={
-              probPositive === null || probPositive === undefined
-                ? "—"
-                : `${(probPositive * 100).toFixed(0)}%`
-            }
+            label="Arriving availability"
+            value={pct(risk.incoming_availability ?? risk.roster_availability)}
             note={
-              probPositive === null || probPositive === undefined
-                ? "no players move"
-                : `${teamEval.uncertainty.n_draws.toLocaleString()} simulations`
+              risk.incoming_availability === null || risk.incoming_availability === undefined
+                ? `no arriving player with a games-played history — priced at this roster's ${pct(
+                    risk.roster_availability,
+                  )}`
+                : `${risk.incoming_availability_players ?? 0} player(s), minutes-weighted`
             }
           />
           <StatBlock
             size="sm"
-            label="Arriving availability"
-            value={
-              risk.incoming_availability === null || risk.incoming_availability === undefined
-                ? "—"
-                : `${(risk.incoming_availability * 100).toFixed(0)}%`
-            }
+            label="Departing availability"
+            value={pct(risk.outgoing_availability ?? risk.roster_availability)}
             note={
-              risk.incoming_availability === null || risk.incoming_availability === undefined
-                ? "no arriving player with a games-played history"
-                : "historical games played"
+              risk.outgoing_availability === null || risk.outgoing_availability === undefined
+                ? `no departing player with a games-played history — priced at this roster's ${pct(
+                    risk.roster_availability,
+                  )}`
+                : `${risk.outgoing_availability_players ?? 0} player(s), minutes-weighted`
             }
           />
         </div>
+        {delta !== undefined && (
+          <p className="mt-2 text-[12px] leading-snug text-muted">
+            The risk score is this <span className="data text-foreground">
+              {delta >= 0 ? "+" : ""}
+              {(delta * 100).toFixed(1)} pt
+            </span>{" "}
+            change in the availability of the minutes involved — nothing else.{" "}
+            {delta > 0.02
+              ? "This deal sheds games-missed exposure."
+              : delta < -0.02
+                ? "This deal takes on games-missed exposure."
+                : "Exposure is roughly unchanged."}{" "}
+            Availability is historical games played, not a medical prediction.
+          </p>
+        )}
+        <p className="mt-2 text-[11px] leading-snug text-faint">
+          <span className="data text-muted">{pct(probPositive)}</span> of{" "}
+          {teamEval.uncertainty.n_draws.toLocaleString()} simulations produce a positive win
+          impact. That is the projection&rsquo;s own uncertainty and is reported here, not scored:
+          it is the performance component restated as a probability, and counting it as risk made
+          the two components 0.86-correlated.
+        </p>
+        {risk.legality_verification && risk.legality_verification.share !== null && (
+          <p className="mt-1 text-[11px] leading-snug text-faint">
+            {risk.legality_verification.rules_with_a_definite_verdict} of{" "}
+            {risk.legality_verification.rules_evaluated} implemented CBA checks reached a verdict
+            for this team. Reported, never scored — what moves it is which contract fields the
+            configured provider supplies, not the deal.
+          </p>
+        )}
         {teamEval.uncertainty.top_uncertainty_drivers.length > 0 && (
           <ul className="mt-3 space-y-1 text-[12px] text-muted">
             {teamEval.uncertainty.top_uncertainty_drivers.map((d) => (
