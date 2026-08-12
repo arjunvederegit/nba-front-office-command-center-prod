@@ -21,6 +21,7 @@ from app.analytics.archetypes import (
     player_skill_vector,
     skill_schema_fingerprint,
 )
+from app.analytics.components import bounded_score
 from app.analytics.features import build_player_season_features, recency_weighted_features
 from app.analytics.fit import fit_score
 from app.analytics.needs import NEED_TO_SKILL
@@ -365,8 +366,10 @@ class EvaluationService:
         # size of the coefficient.
         delta_net = team_tei_to_net_rating_delta(before, after)
         delta_wins = net_rating_delta_to_wins(delta_net, self.wins_mapping())
-        # ±10 projected wins spans the full 0..100 scale (documented normalization)
-        score = max(0.0, min(100.0, 50.0 + delta_wins * 5.0))
+        # 5 points per projected win — ±10 wins still spans the scale as documented, but
+        # through `bounded_score`, so a +15-win deal no longer scores identically to a
+        # +10-win one (see analytics/components.py).
+        score = bounded_score(50.0 + delta_wins * 5.0)
         return score, {
             "delta_net_rating": round(delta_net, 2),
             "delta_wins": round(delta_wins, 2),
@@ -441,8 +444,9 @@ class EvaluationService:
             for key in detail.get("needs_without_a_skill", [])
             if key in UNADDRESSABLE_NEEDS
         }
-        return max(0.0, min(100.0, 50.0 + score * 120.0)), {
+        return bounded_score(50.0 + score * 120.0), {
             **detail,
+            "raw_fit": round(score, 4),
             "needs_not_addressable": withheld,
             "needs": needs,
         }
@@ -483,7 +487,7 @@ class EvaluationService:
             return total
 
         net_surplus = surplus(incoming) - surplus(outgoing)  # in cap-share units
-        return max(0.0, min(100.0, 50.0 + net_surplus * 250.0)), {
+        return bounded_score(50.0 + net_surplus * 250.0), {
             "net_surplus_cap_share": round(net_surplus, 4),
             "method": "cap-dollar-per-impact heuristic (no historical salary model data)",
         }
@@ -529,7 +533,7 @@ class EvaluationService:
                 + " and ".join(unweighted_sides)
                 + "; alignment is an unweighted average"
             )
-        return max(0.0, min(100.0, 50.0 + (align_in - align_out) * 100.0)), detail
+        return bounded_score(50.0 + (align_in - align_out) * 100.0), detail
 
     def _assets(
         self,
@@ -549,7 +553,7 @@ class EvaluationService:
             detail["payroll_delta"] = payroll_delta
         else:
             detail["payroll_note"] = "payroll delta unknown (no contract data)"
-        return max(0.0, min(100.0, score)), detail
+        return bounded_score(score), detail
 
     def _risk(
         self, incoming: list[PlayerCard], outgoing: list[PlayerCard], uncertainty: dict

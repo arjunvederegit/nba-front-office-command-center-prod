@@ -204,11 +204,11 @@ class TestServedConstant:
     def test_the_recorded_value_is_the_one_r4_re_measured(self):
         """Re-measured on the post-R4 pipeline against the ingested history: 14.976967.
         If a future change moves the construction, this must be refitted, not nudged."""
-        assert TEI_TO_NET_RATING == pytest.approx(14.977, abs=0.001)
+        assert pytest.approx(14.977, abs=0.001) == TEI_TO_NET_RATING
 
     def test_the_construction_is_documented_beside_the_constant(self):
         assert "minutes-weighted" in TEI_REGRESSOR_CONSTRUCTION
         assert "z-scored within season" in TEI_REGRESSOR_CONSTRUCTION
 
     def test_the_scale_is_unchanged_by_r4(self):
-        assert TEI_SCALE == pytest.approx(2.5)
+        assert pytest.approx(2.5) == TEI_SCALE

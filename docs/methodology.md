@@ -14,6 +14,17 @@ U(t,d) = w_P·P + w_F·F + w_C·C + w_T·T + w_A·A + w_R·R        Σ w_k = 1
 
 - Components are normalized to **0–100 with 50 = neutral** so the composite is
   readable at a glance; every component publishes its raw calculation alongside.
+- **A component is squashed, never truncated (R5-1a).** Components built on a naturally
+  bounded quantity — availability is a share of games — map affinely and can genuinely
+  reach 0 or 100. Components built on an unbounded one — projected wins, cap-share
+  surplus, fit deltas, asset counts — pass through
+  `50 + 50·tanh((linear − 50)/50)`, which is strictly increasing and has slope exactly 1
+  at 50, so every documented scale constant is unchanged and only the tail bends.
+  Truncation was an information choice, not a scale one: measured over 800 evaluations of
+  the 30 ingested rosters, **24.1 % of fit scores, 9.5 % of contract scores and 4.1 % of
+  timeline scores sat exactly on 0 or 100**, so the component stopped ordering deals at
+  precisely the point where they were most extreme. After the change the same sample ties
+  0.5 % of fit scores and none of the others.
 - Weights are user-controlled per scenario (strategy presets provided) and always
   renormalized.
 - **Missing data shrinks scope, never fakes a number**: an unavailable component
@@ -196,9 +207,12 @@ percentile.
 
 Post-trade projection **reallocates the 240 regulation minutes** rather than summing
 player values: proportional to established minutes (a proxy for coach trust), capped
-at 36 min/player, user-overridable; availability discounts expected minutes with
-replacement-level (TEI −2.0) fill-in. Team ΔNetRating ≈ change in minutes-weighted
-average TEI (five players share the floor).
+at 36 min/player, user-overridable, allocated by water-filling so no player can exceed
+his cap (R4-4); availability discounts expected minutes with replacement-level fill-in at
+the **derived −1.214**, not the retired −2.0. Team ΔNetRating is the **fitted** conversion
+of the change in minutes-weighted team TEI — `Δnet = 14.977 · Δ(team TEI)`, §2 above. It
+is *not* "five players share the floor", which is the identity-scale claim R3-2 measured
+and rejected.
 
 Wins conversion is **fit on ingested data**, not hard-coded:
 
