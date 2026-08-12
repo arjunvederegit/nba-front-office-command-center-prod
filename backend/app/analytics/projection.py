@@ -173,6 +173,11 @@ def calibrate_wins_per_net_rating(team_seasons: pd.DataFrame) -> dict:
     """Fit wins = a + b * net_rating on ingested team-seasons (NET_RATING vs actual
     wins). Returns the mapping with fit diagnostics; falls back to the widely
     replicated ~2.7 wins/point with an explicit flag when data is insufficient."""
+    # An empty frame has no columns either, so `dropna(subset=...)` raises `KeyError`
+    # rather than returning nothing — and `make train` on a database with player stats but
+    # no team stats or standings crashed instead of taking the documented fallback below.
+    if team_seasons.empty or not {"net_rating", "wins"} <= set(team_seasons.columns):
+        return {"slope": 2.7, "intercept": 41.0, "r2": None, "n": 0, "calibrated": False}
     df = team_seasons.dropna(subset=["net_rating", "wins"])
     if len(df) < 30:
         return {"slope": 2.7, "intercept": 41.0, "r2": None, "n": len(df), "calibrated": False}

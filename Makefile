@@ -48,7 +48,7 @@ test: test-backend test-frontend ## Run all tests
 # Mirrors CI exactly (see .github/workflows/ci.yml) so a green local run means a green
 # CI run — including the coverage floor.
 test-backend:
-	cd $(BACKEND) && .venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under=68
+	cd $(BACKEND) && .venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under=85
 
 test-frontend:
 	cd $(FRONTEND) && npm run test -- --run

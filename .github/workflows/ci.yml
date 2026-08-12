@@ -23,11 +23,13 @@ jobs:
         run: ruff check app tests
       - name: mypy
         run: mypy app
-      # --cov-fail-under is the measured floor at the R0 baseline (68 %). It exists so
-      # coverage cannot slide silently during the correctness releases; raise it when a
-      # release genuinely improves coverage, never lower it to make a run green.
+      # --cov-fail-under is a ratchet: raise it when a release genuinely improves
+      # coverage, never lower it to make a run green. 68 % was the measured R0 baseline;
+      # R5-5 covered the modelling and ingestion paths that carried it — jobs.py 0 → 77 %,
+      # train.py 36 → 97 %, cli.py 0 → 92 % — taking the total to 88 %. The floor moves to
+      # 85, which leaves headroom for a legitimate refactor without permitting a slide.
       - name: Tests (no network — recorded fixtures only)
-        run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=68
+        run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=85
       - name: Migration check (SQLite)
         # No `|| true`: R2 will produce model/migration drift and this is the only
         # check that detects it.
