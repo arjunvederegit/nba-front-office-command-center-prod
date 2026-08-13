@@ -563,27 +563,59 @@ Resolved since the last report: the impact metric's team-level validity (R3-1),
   players and *wider* below ~257 minutes; summarising the release as "tighter intervals"
   would drop the half that matters. A test pins both directions.
 
+## 11b. R5 — decision engine (complete)
+
+Full detail in `ROSTERLAB_R5_IMPLEMENTATION_REPORT.md`. The headline is that four of the six
+evaluation components were not measuring what they claimed, and each defect was quantified
+before anything changed:
+
+| Defect, measured on 800 evaluations at `296a568` | Fix | After |
+| --- | --- | --- |
+| `risk` was 0.851/0.937 correlated with `performance` — it scored `prob_positive`, the projection restated as a probability, and carried **0.244 of composite variance** | availability exposure only | **−0.022 / −0.048** |
+| `assets` had **three values, {48, 50, 52}**, and a variance share of **−0.006** on 15 % of the weight | picks priced by an empirical curve; salary scored once, by `contract` | 23 distinct values on pick-bearing deals; withheld and disclosed otherwise |
+| Truncation tied **106 of 440 fit scores** at a boundary | strictly monotone squash, unit derivative at 50, no scale constant changed | 2 of 440 |
+| Generator reached **13.8 %** of counterparties and surfaced **38 of 40** deals its own model said would hurt the counterparty | budget divided across the league; both sides must clear neutral; two win-denominated policies | 100 % coverage; every candidate above neutral both ways |
+
+Two constructions were **built, measured and removed**: a legality-exposure risk term (a
+property of the contract dataset — 0.063 ± 0.071, ceiling 0.143) and a payroll term in
+`assets` (0.837 correlated with `contract`). Both are published unscored with the number
+that decided them.
+
+Empirical pick valuation ships with the diagnostic it **fails**: the curve does not
+significantly beat a two-band round-only rule (+0.0405, p = 0.22). What is established is
+the slot gradient inside the first round (0.3277, 8/8 classes, p = 0.0023). Ownership is
+verified for 92 of the RealGM snapshot's traded picks; the 103 swaps, protections and
+conditional conveyances are recorded with their source sentence and keep
+`STEPIEN_FUTURE_FIRSTS` at `unavailable` for the teams they touch.
+
+The composite's ordering survived: **0.9459** rank correlation before against after, mean
+absolute change 2.95 points. The R3 calibration is bit-identical.
+
 ## 12. Exact recommended next action
 
-**R5 — decision engine.** The R4 release boundary is complete: full CI-equivalent suite,
-migrations from a clean database, Playwright (5 passed) and visual QA (98 clean shots) all
-green, and the R3 gate re-measured on the post-R4 database with all 10 criteria met.
+**R6 — differentiation, starting with the rotation allocator.** The R5 release boundary is
+complete: 690 backend tests at 88 % coverage against a floor of 85, migrations from a clean
+database with no drift, Playwright (5 passed), visual QA (98 clean shots), and the R3 gate
+re-measured on the post-R5 path with all 10 criteria met and every calibration figure
+bit-identical.
 
-Nothing in R5 needs data this repository lacks; only the lineup-aware fit does, and that is
-R6. Two things R4 changed about R5's brief:
+**Fix the allocator before building comparable-trade retrieval.** R5 measured two symptoms
+of one cause without fixing it, because fixing it is a projection change and R5 was a
+decision-engine release: Memphis loses only 3.73 projected wins when its three best players
+leave (32.15 on the QA-1 probe, and 31.35 *before* R5 — not something R5 broke), and the
+rebuilt generator repeatedly found deals where a team improves by giving away a rotation
+player. Both come from `allocate_rotation` redistributing the 240 minutes proportionally to
+baseline minutes, so removing a mid-TEI player hands his minutes to whoever remains.
 
-- `fit` is the component the plan expects to clip (x120), and **R4 changed the fit
-  distribution** — re-measure the clip rate before touching the constant.
-- `recency_weighted_features` is the real cold-cache hotspot at **0.796 s**, and R4 added
-  two derivations inside it — re-measure before optimising.
+Five things R5 established that R6 must not undo are listed in
+`ROSTERLAB_AUTONOMOUS_STATE.md`; the shortest version is that `risk` must never read the
+outcome distribution again, `assets` must never score salary again, a conditional pick has
+no point estimate, the pick curve's failing diagnostic stays published, and no component may
+be truncated.
 
-And two things R4 established that R5 must not undo:
-
-- The R3 coefficient holds only for the current regressor construction.
-  `test_r3_gate_after_r4.py` fails the suite if an R4 column reaches `INDEX_WEIGHTS`
-  without a refit.
-- `point_of_attack_defense` is **withheld deliberately**, not pending. Re-adding it
-  requires passing the class check recorded in `archetypes.UNADDRESSABLE_NEEDS`.
+The two R4 constraints remain in force: the R3 coefficient holds only for the current
+regressor construction, and `point_of_attack_defense` is withheld deliberately, not
+pending.
 
 ## 13. Environment anomalies encountered
 

@@ -22,9 +22,9 @@
 
 | Metric | Value |
 | --- | --- |
-| Backend tests | **114 passed**, 1 warning, 4.32 s (now **251 passed / 3 xfailed** at `3cc0fbc`) |
-| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed) |
-| Frontend unit tests | **15 passed** (2 files) |
+| Backend tests | **114 passed**, 1 warning, 4.32 s (now **690 passed / 1 skipped / 1 xfailed** at `57c3edd`) |
+| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88 %**, floor raised to 85 |
+| Frontend unit tests | **15 passed** (2 files); now **43 passed** (6 files) |
 | `data/external/` | **empty** — the Kaggle `nbadb` dataset is NOT present |
 
 ## Datasets present (inspected)
@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | `data/cba/nba_cap_parameters.yml` | ~4 K | Cap/tax/apron/MLE 2026-27 (**confirmed**, NBA Communications) → 2032-33 (estimates/projections, SalarySwish). Carries an explicit `status` per season. |
 | `data/imports/contracts/players.html` | 454 K | Basketball-Reference contracts snapshot, saved 2026-07-28 |
-| `data/imports/draft_picks/realgm_future_drafts.html` | 291 K | RealGM "NBA Future Drafts Detailed", page datetime 2026-07-28 00:49:32 |
+| `data/imports/draft_picks/realgm_future_drafts.html` | 291 K | RealGM "NBA Future Drafts Detailed", page datetime 2026-07-28 00:49:32. **Consumed by `make import-draft-picks` since R5**: 394 entries → 92 verified picks, 103 unresolved, 0 unparsed, 0 unmatched team names. |
 | `data/imports/nba_player_stats_2026.csv` | 820 K (dir) | 2025-26 season totals, already wired to `make import-stats-csv` |
 | `data/external/` | 0 | **empty — Kaggle `nbadb` unavailable** |
 
@@ -41,42 +41,46 @@
 
 ## Current position
 
-**Releases complete:** R0, R1, R2a, **R2c**, **R2b** (feasible scope), **R3**, **R4**.
+**Releases complete:** R0, R1, R2a, **R2c**, **R2b** (feasible scope), **R3**, **R4**, **R5**.
 **R2b's original gate was invalid and has been replaced** — see "R2b gate, reassessed".
 **Three of R4-2's four acceptance criteria were also invalid and have been replaced** —
 see "R4-2 gate, reassessed".
-**Next:** R5 (decision engine). Nothing in R5 is blocked by missing data except the
-lineup-aware fit, which is R6.
-**Status:** working tree clean, pushed. Backend **484 passed / 1 skipped / 1 xfailed**,
-coverage **78.17 %** (floor 68). Frontend 43 passed, `tsc` and eslint clean. Migrations
-apply and reverse on a fresh database. R3 gate re-run on the post-R4 database: **all 10
-criteria met**. Playwright **5 passed**; visual QA **98 shots clean** in `docs/qa/r4/`.
+**Next:** R6 (differentiation) — but **start with the rotation allocator**, see "Exact next
+step".
+**Status:** working tree clean, pushed. Backend **690 passed / 1 skipped / 1 xfailed**,
+coverage **88 %** (floor raised 68 → **85**). Frontend 43 passed; eslint, `tsc` and the
+production build clean. Migrations apply and reverse on a fresh database and `alembic check`
+reports no drift. R3 gate re-run on the post-R5 path: **all 10 criteria met**, every
+calibration figure bit-identical. Playwright **5 passed**; visual QA **98 shots clean** in
+`docs/qa/r5/`.
 
-**Browser QA is complete and clean.**
+**Browser QA is complete and clean.** The Risk and Cap tabs were driven live at 375 / 768 /
+1280 and two copy defects were found and fixed (`57c3edd`).
 
-| Check | Result |
-| --- | --- |
-| Playwright e2e, post-R4 code, demo DB rebuilt via migrate + train + score | **5 passed**, including the full team-outlook → strategy → evaluator → rules → evaluate → save → compare flow |
-| Visual QA, 14 routes x 7 viewports | **98 screenshots, CLEAN** — no horizontal overflow, no console errors, no empty pages · `docs/qa/r4/` |
-| Rendered spot-checks | Player page panel is now **"Role"** with the rule-chain copy and label `off-ball guard`; team-outlook roster shows the new roles throughout (`3&D wing`, `connector wing`, `movement shooter`, `stretch big`, `playmaking big`) |
+### The frontend toolchain looked broken, and it was iCloud
 
-**A misdiagnosis worth recording, because it cost most of an hour.** Mid-session `next dev`
-began printing its banner and nothing else, at 0 % CPU, never binding; `make e2e` then timed
-out on `config.webServer`. I concluded the sandbox had stopped allowing Node to bind a port.
-That was **wrong**, and there were two real causes:
+Worth as much as the R4 `.next` note. At the start of this session `vitest` timed out
+waiting for its worker on every test file, and `tsc --noEmit` sat at **0 % CPU for ten
+minutes**. Neither was caused by the release, and neither was a sandbox restriction.
 
-1. **A corrupt `.next` cache**, left when a `next build` was killed mid-compile
-   (`.next/diagnostics/build-diagnostics.json` frozen at `"buildStage": "compile"`). The fix
-   is `rm -rf frontend/.next` — a gitignored build cache — after which Next 16.2.10 reports
-   "Ready in 12.8s" and binds normally.
-2. **Servers started as `(cmd &)` inside a foreground Bash call get killed when that call
-   returns or times out.** So nothing was listening when the port was probed, which looked
-   like a binding failure. Start them as properly detached background tasks instead; `nc -z
-   127.0.0.1 3000` then succeeds, and `npx playwright test` manages both servers itself.
+**`node_modules` had been evicted to iCloud.**
 
-Neither was a sandbox restriction and neither was caused by the release. If this recurs,
-clear the cache and check how the server was launched before concluding anything about the
-environment.
+```
+find frontend/node_modules -type f -flags +dataless | wc -l   # 16,410
+fileproviderd                                                  # 96 % CPU
+cat 50 jest-dom files                                          # 21.7 s at 0 % CPU
+node -e "import('jsdom')"                                      # 659,821 ms
+```
+
+`brctl download` reported success and materialised nothing. **Reading the files is what
+works:**
+
+```bash
+find node_modules -type f -flags +dataless -print0 | xargs -0 -P 32 -n 30 cat > /dev/null
+```
+
+After that, `vitest` runs in 1.05 s and `tsc` completes. If the frontend toolchain hangs at
+0 % CPU, check for dataless files before concluding anything about the toolchain.
 
 ## Completed work
 
@@ -108,6 +112,14 @@ environment.
 | **R4-4** — continuous curves, self-excluded percentiles, capped rotations | `f495271` | age-30 cliff **0.70 TEI → <0.02**; percentile ceiling **96.7 → 100.0**; allocator returned **39.14** minutes against a 36 cap |
 | **R4-2** — weights re-justified by construct; UI vocabulary named | `969d2c2` | `TS_PCT`, with no defensive content, beats `DREB_PCT` on every criterion — so the criteria cannot select weights |
 | **R4-4** — one rotation depth | `a89d655` | three cutoffs (9 / 10 / 12) reduced to one claim plus one display constant |
+| **R5-1a** — components squashed, not truncated | `fd3b45e` | fit ties **106 of 440 → 2**; contract 16 → 0; timeline 20 → 0; no scale constant changed (unit derivative at 50) |
+| **R5-1b** — performance taken back out of risk | `3f257f8` | corr(risk, performance) **0.851 → −0.022**; risk available 480 → **482 of 482**; legality-exposure term built, measured (0.063 ± 0.071, ceiling 0.143) and left unscored |
+| **R5-2** — empirical pick valuation + verified ownership | `0ec2bab` | curve LOCO **0.4624** (8/8 classes, t 15.36) but **+0.0405 vs round-only, p = 0.22**; first-round gradient **0.3277, p = 0.0023**; 394 entries → **92 verified picks, 103 unresolved, 0 unparsed** |
+| **R5-1c** — assets prices draft capital | `269664e` | 3 distinct values → **23**; payroll term built, measured at **0.837 corr with contract**, and removed |
+| **R5-3** — generator rebuilt | `46c9520` | coverage **13.8 % → 100 %**; counterparty above neutral **2 of 40 → all**; both-above-50 has a **9.5 % base rate** over 241 random trades |
+| **R5-4** — perf and unbounded growth | `57bd580` | collapse **1.045 s → 0.045 s** (exact to 9.1e-13); generate **2.34 s → 1.03 s at 7× the coverage**; issue table upserted + pruned |
+| **R5-5** — modelling / ingestion / CLI coverage | `ae38ac1` | jobs.py **0 → 77 %**, train.py 36 → **97 %**, cli.py **0 → 92 %**, total 78 → **88 %**; found and fixed a `KeyError` crash in `calibrate_wins_per_net_rating` |
+| **R5-6** — Pareto axes and falsified copy | `bef6a94` | domination judged on all six components, `axes_compared` published |
 
 Remaining xfail pins: **1** (22 of 23 flipped)
 - QA-11 `EFF` classification → R7 (needs a third field category; C12)
@@ -118,6 +130,16 @@ point-estimate agreement (R3-5).
 ## Commits
 
 ```
+57c3edd fix(ui): restore a lost space and soften a panel that quoted a release number
+bef6a94 fix(comparisons): judge domination on every shared axis, and correct the copy R5 falsified
+ae38ac1 test: cover the modelling, ingestion and operational paths, and ratchet the floor
+57bd580 perf: vectorise the window collapse, skip the unread simulation, bound the issue table
+46c9520 feat(candidates): search the whole league, and refuse the deals the composite permits
+269664e feat(assets): price draft capital empirically, and stop scoring salary twice
+0ec2bab feat(picks): empirical pick valuation and verified ownership, with the precision it refuses
+3f257f8 fix(evaluation): take performance back out of risk
+fd3b45e fix(evaluation): squash unbounded components instead of truncating them
+296a568 test: add post-R4 R3 calibration gate
 a89d655 refactor(rotation): one definition of rotation depth, and name the display cutoff
 969d2c2 fix(r4): justify the defensive weights by construct, and name the new vocabulary in the UI
 4e88bdf feat(roles): replace k-means archetypes with a deterministic size-first chain
@@ -170,8 +192,16 @@ All pushed to `origin/feat/rosterlab-autonomous-roadmap`.
    `prob_positive` default are the same expression in `_risk`, and a strict xfail must flip
    in the same commit as its fix.
 5. **`fit` is withheld when one side of a deal is empty** rather than scored against a
-   fabricated 50th-percentile player. R5 introduces a measured replacement baseline so
-   one-way deals can be scored again; until then the component is excluded and disclosed.
+   fabricated 50th-percentile player. R1 recorded that R5 would introduce a measured
+   replacement baseline so one-way deals could be scored again. **R5 did not do this**, and
+   the reason is worth keeping: R5-1b established the pattern for exactly this case in
+   `risk` — an empty side is priced at *the roster's own measured availability*, because
+   the minutes an arriving player does not play are played by the roster already there. The
+   same construction is available to `fit` (the roster's own skill percentiles) and is the
+   right shape, but it changes a scored component and no measurement was taken of what it
+   does to the fit distribution. Doing it unmeasured, in a release whose whole point was
+   that unmeasured constructions are how placebos get in, would have been the wrong trade.
+   **Carried to R6**, with `_risk`'s roster-baseline as the template.
 6. **The phantom-move check only fires when the player is on some current roster.** A
    player on no roster is an unknown-roster case, not a phantom move; refusing it would
    block every offseason signing.
@@ -379,46 +409,68 @@ central assertion never executed. `test_r3_gate_after_r4.py` adds 15 tests that 
 
 ## Exact next step
 
-**R5 — decision engine.** R4 is complete and the R3 gate was re-run on the post-R4
-database with all 10 criteria met.
+**R6 — differentiation. But start with the rotation allocator, not with comparable-trade
+retrieval.**
+
+R5 measured two symptoms of one cause and did not fix it, because fixing it is a projection
+change and R5 was a decision-engine release.
+
+- Memphis loses only **3.73 projected wins** when its three best players leave, so it scores
+  **32.15** on the QA-1 "strip the best three" probe against a 25 line — and **31.35**
+  pre-R5, so this is not something R5 broke.
+- The rebuilt generator repeatedly found deals where a team *improves* by giving away a
+  rotation player.
+
+Both come from `allocate_rotation` redistributing the 240 minutes **proportionally to
+baseline minutes**: removing a mid-TEI player hands his minutes to whoever remains, and if
+the next man up is above replacement the team gains. The allocator is right about the
+minutes constraint and wrong about who absorbs them.
 
 ```bash
 git checkout feat/rosterlab-autonomous-roadmap
 cd "nba front office command center prod"
-make test        # 484 backend + 43 frontend
-make e2e         # RUN THIS FIRST — it could not run at the end of the R4 session
-make visual-qa   # likewise
+make test        # 690 backend + 43 frontend
+make e2e
+make visual-qa
 ```
 
-Two things R4 established that R5 must not undo:
+In order:
 
-1. **The R3 coefficient survives because it was re-measured, not because it passed
-   before.** `make train` on the post-R4 path returns 14.976967 against the recorded
-   14.977, with every diagnostic identical. It holds because R4 touched neither
-   `INDEX_WEIGHTS` nor `Z_SOURCE_COLS`, and `test_r3_gate_after_r4.py` fails loudly if a
-   future change moves an R4 column into either. Feeding the new defensive term into TEI
-   was tested and **rejected**: team-level R² 0.7505 → 0.5655.
-2. **`point_of_attack_defense` is withheld on purpose.** It is not an oversight and not a
-   TODO. Re-adding it requires passing the class check in
-   `archetypes.UNADDRESSABLE_NEEDS`, which no box-score composite has.
+1. **Measure the allocator's replacement behaviour.** For each of the 30 rosters, the change
+   in `team_tei_per_minute` from removing each player in turn, against what a depth-chart-
+   aware reallocation would give. The gap is the defect's size, and it is the number R6
+   should be judged on.
+2. **Then** comparable-trade retrieval — the plan's R6 headline and the only feature that
+   replaces model output with evidence. It will be judged against a projection that has the
+   above fixed.
+3. Lineup-aware fit stays blocked on the absent Kaggle dataset. `TeamPlayerOnOffDetails` is
+   **Large**: it requires changing `client.fetch_dataframe`'s single-dataset contract that
+   all six existing endpoints flow through, plus a `uq_pss` key change.
 
-R5, in the plan's order, with what R4 changed about it:
+**Do not start R6 by re-tuning the composite.** R5 established that its components are now
+distinct (max |r| 0.372, down from 0.864), that its ordering survived the release
+(**0.9459** rank correlation before against after, mean absolute change 2.95 points), and
+that its weakest link is the projection feeding `performance`, not the weighting on top.
 
-- **Do not fold `risk` into `performance`** (C12 — it is backwards). Make `risk` orthogonal:
-  availability and legality exposure only.
-- **`fit` scaling (×120) is the component that plausibly clips** — and R4 changed the fit
-  distribution, so re-measure the clip rate before touching the constant.
-- `comparisons.py:17`'s hardcoded 5-axis Pareto list, the `scenario_weights` EAV migration,
-  and Strategy Lab's `(performance, risk)` scatter all need work. `sensitivity.py` needs
-  none.
-- Empirical pick valuation unblocks `STEPIEN_FUTURE_FIRSTS`.
-- Rebuild the candidate generator — it currently reaches **13.8 %** of counterparties.
-- `recency_weighted_features` is the real cold-cache hotspot at **0.796 s**, and R4 added
-  two derivations to it, so re-measure before optimising.
-- Modelling-path coverage to > 70 %, starting with `ingestion/jobs.py` at **0 %**.
+Five things R5 established that R6 must not undo:
+
+1. **`risk` must not read the outcome distribution.** It is not handed `uncertainty` any
+   more, and `test_risk_orthogonality.py` asserts no executable line in `_risk` mentions
+   `prob_positive`. Re-adding it restores a 0.86 correlation with `performance`.
+2. **`assets` must not score salary.** Measured at 0.837 correlation with `contract`. The
+   delta is reported with `payroll_scored: false` and the number that decided it.
+3. **A conditional pick has no point estimate.** `precision` is `range` or `unknown`, and
+   `test_pick_valuation.py` pins each refusal. A midpoint is how a protected pick acquires a
+   false decimal.
+4. **The pick curve does not beat a round-only rule** (+0.0405, p = 0.22). What is
+   established is the gradient *inside* the first round (0.3277, p = 0.0023). The model
+   version carries the failing diagnostic alongside the passing ones.
+5. **No component may be truncated.** `bounded_score` has unit derivative at 50, so every
+   documented scale constant still holds; truncation cost 106 of 440 fit scores their
+   ordering.
 
 ## Push status
 
-`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`a89d655`** (R4) plus
-the R4 report and this state file. `main` untouched; no history rewritten; nothing
+`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`57c3edd`** (R5) plus
+the R5 report and this state file. `main` untouched; no history rewritten; nothing
 force-pushed; no `git stash` used at any point.
