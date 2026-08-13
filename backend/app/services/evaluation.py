@@ -726,10 +726,9 @@ class EvaluationService:
 
         if not priced:
             detail["unavailable"] = (
-                "no draft pick in this deal could be priced, so there is no draft capital "
-                "to score. What remains is the roster-spot term, which spans four points "
-                "and cannot express asset value — scoring it alone would put a constant "
-                "in the composite, which is exactly what this component was before R5."
+                "No draft pick in this deal could be priced, so there is no draft capital "
+                "to score. The roster-spot term alone spans four points and cannot express "
+                "asset value, so scoring it would put a near-constant in the composite."
             )
             return None, detail
 

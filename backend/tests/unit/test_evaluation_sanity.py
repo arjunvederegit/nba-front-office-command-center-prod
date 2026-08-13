@@ -122,6 +122,29 @@ def test_gutting_a_roster_does_not_look_like_an_upgrade(db: Session, seeded_leag
     assert performance < 25.0, f"performance was {performance} for a roster stripped of its best three"
 
 
+def test_stripping_the_whole_roster_still_scores_near_the_floor(
+    db: Session, seeded_league: dict
+) -> None:
+    """The R3 gate's own construction, re-pinned after R5-1a changed the transform.
+
+    The recorded gate figure — "roster-gut performance < 25 on all 30, max 0.00" — was
+    measured by stripping the *entire* roster, which the legality gate refuses as a trade
+    but which `_performance` will still evaluate directly. Truncation used to floor that at
+    exactly 0.00; `bounded_score` never reaches an endpoint, so the same rosters now land
+    just above it. Re-measured across the 30 ingested rosters: **max 0.00 → 9.72**, still
+    0 of 30 at or above 25.
+
+    Worth stating precisely, because it is the one number R5 moved in the R3 gate and the
+    move is a property of the scale, not of the projection: `delta_wins` is identical.
+    """
+    service = EvaluationService(db)
+    roster = service._roster_cards(seeded_league["team_a"].id)
+    performance, detail = service._performance(roster, [], {c.player_id for c in roster})
+    assert performance is not None
+    assert 0.0 < performance < 25.0
+    assert detail["delta_wins"] < -5.0, "the projection itself is unchanged and severe"
+
+
 def test_minutes_a_roster_cannot_fill_are_charged_to_replacement(db: Session) -> None:
     """The mechanism behind QA-1, isolated from the legality gate.
 

@@ -146,7 +146,7 @@ class TestRefusals:
         assert len(detail["picks_not_priced"]) == 1
         assert detail["picks_not_priced"][0]["precision"] == "unknown"
         assert score is None
-        assert "no draft pick in this deal could be priced" in detail["unavailable"]
+        assert "No draft pick in this deal could be priced" in detail["unavailable"]
 
     def test_a_swapped_pick_is_not_midpointed_into_the_score(
         self, db: Session, seeded_league: dict, service: EvaluationService

@@ -2679,10 +2679,11 @@ function RiskTab({ teamEval }: { teamEval: TeamEvaluation }) {
         )}
         <p className="mt-2 text-[11px] leading-snug text-faint">
           <span className="data text-muted">{pct(probPositive)}</span> of{" "}
-          {teamEval.uncertainty.n_draws.toLocaleString()} simulations produce a positive win
-          impact. That is the projection&rsquo;s own uncertainty and is reported here, not scored:
-          it is the performance component restated as a probability, and counting it as risk made
-          the two components 0.86-correlated.
+          {teamEval.uncertainty.n_draws.toLocaleString()}
+          {" simulations produce a positive win impact. That is the projection’s own "}
+          {"uncertainty and is reported here, not scored: it is the performance component "}
+          {"restated as a probability, and counting it as risk made the two components "}
+          {"0.86-correlated."}
         </p>
         {risk.legality_verification && risk.legality_verification.share !== null && (
           <p className="mt-1 text-[11px] leading-snug text-faint">
