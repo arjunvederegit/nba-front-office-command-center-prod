@@ -22,8 +22,8 @@
 
 | Metric | Value |
 | --- | --- |
-| Backend tests | **114 passed**, 1 warning, 4.32 s (now **690 passed / 1 skipped / 1 xfailed** at `57c3edd`) |
-| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88 %**, floor raised to 85 |
+| Backend tests | **114 passed**, 1 warning, 4.32 s (now **748 passed / 1 skipped / 1 xfailed** at `9efe8d7`) |
+| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88.24 %**, floor raised to 85 |
 | Frontend unit tests | **15 passed** (2 files); now **43 passed** (6 files) |
 | `data/external/` | **empty** — the Kaggle `nbadb` dataset is NOT present |
 
@@ -41,21 +41,41 @@
 
 ## Current position
 
-**Releases complete:** R0, R1, R2a, **R2c**, **R2b** (feasible scope), **R3**, **R4**, **R5**.
+**Releases complete:** R0, R1, R2a, **R2c**, **R2b** (feasible scope), **R3**, **R4**, **R5**,
+**R5.5** (the rotation allocator — a prerequisite correctness release for R6).
 **R2b's original gate was invalid and has been replaced** — see "R2b gate, reassessed".
 **Three of R4-2's four acceptance criteria were also invalid and have been replaced** —
 see "R4-2 gate, reassessed".
-**Next:** R6 (differentiation) — but **start with the rotation allocator**, see "Exact next
-step".
-**Status:** working tree clean, pushed. Backend **690 passed / 1 skipped / 1 xfailed**,
-coverage **88 %** (floor raised 68 → **85**). Frontend 43 passed; eslint, `tsc` and the
-production build clean. Migrations apply and reverse on a fresh database and `alembic check`
-reports no drift. R3 gate re-run on the post-R5 path: **all 10 criteria met**, every
+**Next:** R6 (differentiation) — **comparable-trade retrieval**. The allocator prerequisite
+is done; see "Exact next step".
+**Status:** working tree clean, pushed. Backend **748 passed / 1 skipped / 1 xfailed**,
+coverage **88.24 %** (floor **85**). Frontend 43 passed; eslint, `tsc` and the production
+build (12 routes) clean. Migrations apply and reverse on a fresh database and `alembic check`
+reports no drift. R3 gate re-run on the post-R5.5 path: **19 of 19 criteria met**, every
 calibration figure bit-identical. Playwright **5 passed**; visual QA **98 shots clean** in
-`docs/qa/r5/`.
+`docs/qa/r55/`. Scenario battery **16 of 16**.
 
-**Browser QA is complete and clean.** The Risk and Cap tabs were driven live at 375 / 768 /
-1280 and two copy defects were found and fixed (`57c3edd`).
+**Browser QA is complete and clean.** R5: the Risk and Cap tabs driven live at 375 / 768 /
+1280, two copy defects found and fixed (`57c3edd`). R5.5: the trade evaluator driven live —
+`/trades/evaluate` 200, no console errors, and the rotation chart shows incumbents moving by
+**≤ 0.1 minutes** when a player leaves, which is the fix visible in the product.
+
+### The dev database was a migration behind, and it looked like a regression
+
+`backend/tradelab.db` sat at `d3e5a71b9c02`, missing R5's `e5c81f4a7b30`
+(`draft_picks.conveyance`). `generate_candidates` wraps `build_trade_context` in a bare
+`except Exception: continue`, so **the generator returned 0 candidates on all 30 teams**
+with nothing surfaced — 406 pairs evaluated, 406 silently discarded. This was mistaken for
+an R5.5 regression until the exception was surfaced deliberately.
+
+```bash
+cd backend && .venv/bin/alembic current   # d3e5a71b9c02, not head
+.venv/bin/alembic upgrade head
+```
+
+If the generator returns nothing, check `alembic current` before concluding anything about
+the ranking. Narrowing that `except` is worth a later release: it turns schema drift into an
+empty result set that reads as a modelling outcome.
 
 ### The frontend toolchain looked broken, and it was iCloud
 
@@ -120,6 +140,9 @@ After that, `vitest` runs in 1.05 s and `tsc` completes. If the frontend toolcha
 | **R5-4** — perf and unbounded growth | `57bd580` | collapse **1.045 s → 0.045 s** (exact to 9.1e-13); generate **2.34 s → 1.03 s at 7× the coverage**; issue table upserted + pruned |
 | **R5-5** — modelling / ingestion / CLI coverage | `ae38ac1` | jobs.py **0 → 77 %**, train.py 36 → **97 %**, cli.py **0 → 92 %**, total 78 → **88 %**; found and fixed a `KeyError` crash in `calibrate_wins_per_net_rating` |
 | **R5-6** — Pareto axes and falsified copy | `bef6a94` | domination judged on all six components, `axes_compared` published |
+| **R5.5-1** — a departure's minutes are a replacement's | `bef1d66` | above-replacement removals scored as gains **191 of 370 → 0**; rotation players (≥15 mpg) **152 → 0**; MEM strip-best-3 **−3.73 → −6.03 wins**; QA-1 **32.15 → 23.06** |
+| **R5.5-2** — one-way `fit` baseline, measured | `457f3eb` | `REPLACEMENT_SKILLS` on n=187; scoring **0.391** (t −5.99) vs rebounding **0.528**; spread 0.136 against a 0.031 level shift; two-sided deals untouched (baseline `None` ×240) |
+| **R5.5-3** — the property pinned through the service | `9efe8d7` | the defect was in calling the allocator twice, so an allocator-only test would have passed throughout |
 
 Remaining xfail pins: **1** (22 of 23 flipped)
 - QA-11 `EFF` classification → R7 (needs a third field category; C12)
@@ -130,6 +153,10 @@ point-estimate agreement (R3-5).
 ## Commits
 
 ```
+9efe8d7 test(evaluation): pin the giveaway property through the service, not just the allocator
+457f3eb feat(fit): score one-way deals against a measured replacement, not a constant
+bef1d66 fix(projection): charge a departure's minutes to a replacement, not to the roster
+f217710 docs: record R5 — the decision-engine release, and what it measured before changing anything
 57c3edd fix(ui): restore a lost space and soften a panel that quoted a release number
 bef6a94 fix(comparisons): judge domination on every shared axis, and correct the copy R5 falsified
 ae38ac1 test: cover the modelling, ingestion and operational paths, and ratchet the floor
@@ -191,17 +218,15 @@ All pushed to `origin/feat/rosterlab-autonomous-roadmap`.
 4. **QA-8 landed in the R1-3 commit, not R1-4** — the availability default and the
    `prob_positive` default are the same expression in `_risk`, and a strict xfail must flip
    in the same commit as its fix.
-5. **`fit` is withheld when one side of a deal is empty** rather than scored against a
-   fabricated 50th-percentile player. R1 recorded that R5 would introduce a measured
-   replacement baseline so one-way deals could be scored again. **R5 did not do this**, and
-   the reason is worth keeping: R5-1b established the pattern for exactly this case in
-   `risk` — an empty side is priced at *the roster's own measured availability*, because
-   the minutes an arriving player does not play are played by the roster already there. The
-   same construction is available to `fit` (the roster's own skill percentiles) and is the
-   right shape, but it changes a scored component and no measurement was taken of what it
-   does to the fit distribution. Doing it unmeasured, in a release whose whole point was
-   that unmeasured constructions are how placebos get in, would have been the wrong trade.
-   **Carried to R6**, with `_risk`'s roster-baseline as the template.
+5. **(resolved in R5.5) `fit` was withheld when one side of a deal is empty** rather than
+   scored against a fabricated 50th-percentile player. R1 deferred the measured baseline to
+   R5; R5 deferred it again, because it changes a scored component and no measurement had
+   been taken of what it does to the fit distribution. **R5.5 took both measurements.**
+   `REPLACEMENT_SKILLS` (n = 187, players outside their team's top ten) is the arriving
+   baseline when nothing arrives; the roster's own minutes-weighted profile is the departing
+   baseline when nothing departs — R5-1b's `risk` construction, applied to skills. The two
+   differ for the same reason the allocator's two directions differ. Two-sided deals are
+   untouched (baseline `None` on all 240 sampled).
 6. **The phantom-move check only fires when the player is on some current roster.** A
    player on no roster is an unknown-roster case, not a phantom move; refusing it would
    block every offseason signing.
@@ -359,6 +384,38 @@ Expected at `data/external/` (also `KAGGLE_DATA_DIR`; consumed by
 `backend/app/integrations/kaggle_nba/importer.py` via `make import-kaggle`). Blocks R6's
 lineup-aware fit and any tracking/play-type work. **Blocks nothing in R0–R5.**
 
+## R3 gate — re-measured on the POST-R5.5 path, 19 of 19 criteria met
+
+Re-run in full after R5.5 rather than carried forward. Every calibration figure is
+**bit-identical** to R3, R4 and R5, for a structural reason now worth stating: R5.5 changed
+only the *counterfactual* path, `_team_tei_transitions` builds `d_tei` from
+`player_season_stats` weighted by season minutes and **never calls `allocate_rotation`**,
+and the level model that produces the served `before` allocation is untouched.
+
+| Criterion | Gate | Post-R5.5 | At R5 |
+| --- | --- | --- | --- |
+| Coefficient | — | **14.976967** | 14.976967 |
+| Slope significance | t > 5 | **9.802** | 9.802 |
+| LOTO out-of-sample RMSE | < 4.5 | **2.944 / 3.773** | same |
+| …as a share of predicting zero | < 75 % | **56.6 % / 65.0 %** | same |
+| Per-fold slopes vs pooled | ±15 % | **14.716 / 15.276 (±2 %)** | same |
+| Served constant matches the fit | ±2 % | **14.977 vs 14.977** | same |
+| R² · n | — | **0.6236 · 60** | same |
+| Roster-gut (whole roster) | < 25 on all 30 | **max 9.72**, 0 ≥ 25 | max 9.72 |
+| **QA-1 strip the best three** | < 25 on all 30 | **max 23.06 (MEM)**, 0 ≥ 25 | **32.15 — over the line** |
+| Distinct band widths | > 400 of 512 | **510 of 512** | 510 |
+| Band width monotone in minutes | ρ < −0.95 | **−1.0000** | −1.0000 |
+| Performance-component sd | > 8 | **18.489** | 14.744 |
+| Performance boundary ties | 0 | **0 of 800** | 0 |
+| Fit boundary ties | < 3 % | **0 of 800** | 2 of 440 |
+| Above-replacement giveaway never gains | 0 violations | **0 of 370** | **191** |
+
+Two band criteria are properties of the **player impact estimate**, not of the allocator —
+"512" is the number of scored players and the quantity is `tei_high − tei_low` against
+`total_minutes_window`. Measuring them against the simulated *outcome* interval, or against
+last season's minutes rather than the window, reports spurious failures; both mistakes were
+made and corrected while re-running this gate.
+
 ## R3 gate — re-measured on the POST-R4 database, all criteria met
 
 Re-run after R4, because R4 changed the skill and feature path. Every figure below is from
@@ -409,43 +466,59 @@ central assertion never executed. `test_r3_gate_after_r4.py` adds 15 tests that 
 
 ## Exact next step
 
-**R6 — differentiation. But start with the rotation allocator, not with comparable-trade
-retrieval.**
-
-R5 measured two symptoms of one cause and did not fix it, because fixing it is a projection
-change and R5 was a decision-engine release.
-
-- Memphis loses only **3.73 projected wins** when its three best players leave, so it scores
-  **32.15** on the QA-1 "strip the best three" probe against a 25 line — and **31.35**
-  pre-R5, so this is not something R5 broke.
-- The rebuilt generator repeatedly found deals where a team *improves* by giving away a
-  rotation player.
-
-Both come from `allocate_rotation` redistributing the 240 minutes **proportionally to
-baseline minutes**: removing a mid-TEI player hands his minutes to whoever remains, and if
-the next man up is above replacement the team gains. The allocator is right about the
-minutes constraint and wrong about who absorbs them.
+**R6 — differentiation. Start with comparable-trade retrieval.** The allocator prerequisite
+R5 identified is **done** (R5.5); the projection it will be judged against is fixed.
 
 ```bash
 git checkout feat/rosterlab-autonomous-roadmap
 cd "nba front office command center prod"
-make test        # 690 backend + 43 frontend
+cd backend && .venv/bin/alembic current   # must be e5c81f4a7b30, or the generator returns nothing
+make test        # 748 backend + 43 frontend
 make e2e
-make visual-qa
+make visual-qa OUT=docs/qa/r6
 ```
 
 In order:
 
-1. **Measure the allocator's replacement behaviour.** For each of the 30 rosters, the change
-   in `team_tei_per_minute` from removing each player in turn, against what a depth-chart-
-   aware reallocation would give. The gap is the defect's size, and it is the number R6
-   should be judged on.
-2. **Then** comparable-trade retrieval — the plan's R6 headline and the only feature that
-   replaces model output with evidence. It will be judged against a projection that has the
-   above fixed.
-3. Lineup-aware fit stays blocked on the absent Kaggle dataset. `TeamPlayerOnOffDetails` is
+1. **Comparable-trade retrieval** — the plan's R6 headline and the only feature that
+   replaces model output with evidence.
+2. Lineup-aware fit stays blocked on the absent Kaggle dataset. `TeamPlayerOnOffDetails` is
    **Large**: it requires changing `client.fetch_dataframe`'s single-dataset contract that
    all six existing endpoints flow through, plus a `uq_pss` key change.
+
+**Do not re-open the rotation allocator's level model without new data.** R5.5 measured
+three alternatives out of sample over 60 team-season transitions and every one lost:
+proportional-to-baseline **5.803** MAE against a depth-chart cascade at **8.641**, a soft
+cascade at 8.367, `mpg × availability` at 6.437, and an equal-minutes null at **8.148**. A
+fitted compression exponent chose the shipped value on all 30 leave-one-team-out folds.
+`test_rotation_absorption.py::test_the_level_model_is_untouched_by_the_release` pins it.
+
+The level model *is* still implausible in levels — ~13 players above 10 minutes against a
+real ~10, and the best player at ~22 minutes against a real ~30. That is deviation 1 of the
+R5.5 report and it is a **larger** change than it looks: the fix needs a *load*-shaped
+estimand, which means separating a player's role from his availability throughout the
+projection, and the R3 coefficient is fitted on the current meaning of `minutes`.
+
+Six things R5.5 established that R6 must not undo:
+
+1. **The after-roster is priced against the before-allocation**, never re-derived. Calling
+   `allocate_rotation` independently on both rosters is the defect itself, and the allocator's
+   own arithmetic was never wrong — so an allocator-only test cannot catch a regression here.
+   `test_evaluation_sanity.py` guards the service path.
+2. **A departure's minutes go unfilled, at `REPLACEMENT_TEI`.** The absorbers cannot be told
+   apart from a replacement: outside a team's top ten the signal share of served TEI is
+   **0.000** (spread 1.031, mean estimation sd 1.409) against **0.529** inside.
+3. **Shedding stays proportional.** The two directions are genuinely asymmetric — gaining
+   loses to a permutation of its own weights (4.081 vs 3.437), shedding beats every
+   alternative (2.813 vs 3.375 uniform, t −7.49).
+4. **Departures and arrivals have different thresholds, deliberately.** Losing anyone above
+   replacement always hurts; gaining a free player only helps if he beats whom he displaces.
+   A free below-average player making a good team slightly worse is correct, not a defect.
+5. **One-way `fit` uses a measured profile, not a scalar.** The mean is 0.469 against the
+   0.5 R1 removed, but the per-skill spread is 0.136 — the shape carries the information.
+6. **`_team_tei_transitions` must never call `allocate_rotation`.** That independence is why
+   every R3 figure survived this release bit-identical, and it is what makes the calibration
+   robust to projection changes.
 
 **Do not start R6 by re-tuning the composite.** R5 established that its components are now
 distinct (max |r| 0.372, down from 0.864), that its ordering survived the release
@@ -471,6 +544,6 @@ Five things R5 established that R6 must not undo:
 
 ## Push status
 
-`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`57c3edd`** (R5) plus
-the R5 report and this state file. `main` untouched; no history rewritten; nothing
+`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`9efe8d7`** (R5.5) plus
+the R5.5 report and this state file. `main` untouched; no history rewritten; nothing
 force-pushed; no `git stash` used at any point.
