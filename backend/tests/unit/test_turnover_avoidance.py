@@ -65,9 +65,7 @@ class TestMappingIsFixed:
 class TestSignIsInverted:
     def test_more_turnovers_means_less_turnover_avoidance(self):
         league = _league()
-        vectors = {
-            i: player_skill_vector(league.iloc[i], league) for i in range(len(league))
-        }
+        vectors = {i: player_skill_vector(league.iloc[i], league) for i in range(len(league))}
         worst = int(league["TM_TOV_PCT"].idxmax())
         best = int(league["TM_TOV_PCT"].idxmin())
         assert vectors[best]["turnover_avoidance"] > vectors[worst]["turnover_avoidance"]
@@ -162,9 +160,7 @@ class TestInversionIsNamed:
         path = Path(__file__).resolve().parents[2] / "app" / "analytics" / "archetypes.py"
         tree = ast.parse(path.read_text())
 
-        names = {
-            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-        }
+        names = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
         assert "pct_inv" in names, "the inversion must be a named helper"
 
         offenders = [
@@ -181,7 +177,14 @@ class TestInversionIsNamed:
         assert offenders == [], f"inline inversion found instead of pct_inv: {offenders}"
 
     def test_turnover_avoidance_is_wired_to_the_inverting_helper(self):
-        """Not just that `pct_inv` exists — that the skill actually calls it."""
+        """Not just that `pct_inv` exists — that the skill actually calls it.
+
+        Scoped to dicts whose values are *computed*, which is what a skill definition is.
+        A literal mapping keyed by the same skill names is a different kind of object —
+        `REPLACEMENT_SKILLS` is a measured percentile per skill, not a definition of how
+        the skill is derived — and matching it here would fail the guard for a reason that
+        has nothing to do with the R4-1b defect it exists to catch.
+        """
         import ast
         from pathlib import Path
 
@@ -192,7 +195,9 @@ class TestInversionIsNamed:
             for node in ast.walk(tree)
             if isinstance(node, ast.Dict)
             for key, value in zip(node.keys, node.values, strict=False)
-            if isinstance(key, ast.Constant) and key.value == "turnover_avoidance"
+            if isinstance(key, ast.Constant)
+            and key.value == "turnover_avoidance"
+            and not isinstance(value, ast.Constant)
         ]
         # `ast.unparse` normalises string literals to single quotes.
         assert wired == ["pct_inv('TM_TOV_PCT')"], wired

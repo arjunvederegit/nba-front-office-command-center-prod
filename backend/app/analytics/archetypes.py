@@ -100,9 +100,7 @@ def league_thresholds(weighted: pd.DataFrame) -> dict[str, dict[int, float]]:
         if len(series) < 30:
             continue
         arr = np.sort(series.to_numpy(dtype=float))
-        thresholds[col] = {
-            p: float(np.percentile(arr, p, method="linear")) for p in PERCENTILES
-        }
+        thresholds[col] = {p: float(np.percentile(arr, p, method="linear")) for p in PERCENTILES}
     return thresholds
 
 
@@ -225,6 +223,48 @@ SKILL_KEYS = [
     "size",
     "scoring",
 ]
+
+# R5.5. **What a replacement player looks like in skill space**, measured on the same
+# population `REPLACEMENT_TEI` is fitted on: rostered players outside their team's top ten
+# by minutes (n = 187 across 30 teams, against 300 inside).
+#
+#     skill                inside   OUTSIDE   t vs 0.5
+#     scoring               0.632    0.391      -5.99
+#     creation              0.568    0.420      -3.97
+#     shooting_volume       0.540    0.444      -2.66
+#     turnover_avoidance    0.520    0.446      -2.46
+#     size                  0.453    0.468      -1.48
+#     shooting_accuracy     0.552    0.482      -0.93
+#     rim_protection        0.500    0.516      +0.71
+#     team_defense          0.505    0.522      +1.01
+#     rebounding            0.497    0.528      +1.36
+#
+# **The shape is the finding, not the level.** The mean across skills is 0.469, only 0.031
+# below the flat 0.5 that R1 removed from `fit_score` as a fabricated median player — but
+# the spread across skills is 0.136, four times that gap. What separates a bench player is
+# that he cannot score or create; he rebounds and protects the rim at roughly a league
+# median rate, and those three skills are not distinguishable from 0.5 at all. A single
+# scalar, at 0.5 or at 0.469, would erase exactly the part that carries information.
+#
+# Four of the nine are not separated from 0.5 on their own, and they are used at their
+# measured values anyway: 0.5 is not the better-supported alternative for them, it is
+# simply a different unmeasured constant. Leave-one-team-out moves no skill mean by more
+# than 0.0092.
+REPLACEMENT_SKILLS: dict[str, float] = {
+    "shooting_volume": 0.4436,
+    "shooting_accuracy": 0.4821,
+    "creation": 0.4201,
+    "turnover_avoidance": 0.4462,
+    "team_defense": 0.5221,
+    "rim_protection": 0.5164,
+    "rebounding": 0.5278,
+    "size": 0.4683,
+    "scoring": 0.3914,
+}
+REPLACEMENT_SKILL_RULE = (
+    "mean skill percentile of rostered players outside their team's top 10 by minutes "
+    "(n = 187), the same population REPLACEMENT_TEI is fitted on"
+)
 
 # Needs the product measures on the team side but **declines to claim any player skill
 # addresses**, with the reason shown wherever the need is. This is not a TODO list; it is

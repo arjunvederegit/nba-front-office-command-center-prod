@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.analytics.age_curve import timeline_alignment
 from app.analytics.archetypes import (
+    REPLACEMENT_SKILL_RULE,
+    REPLACEMENT_SKILLS,
     SKILL_KEYS,
     UNADDRESSABLE_NEEDS,
     player_skill_vector,
@@ -284,9 +286,7 @@ class EvaluationService:
             tei=tei,
             tei_sigma=sigma,
             availability=(
-                float(impact.availability)
-                if impact and impact.availability is not None
-                else None
+                float(impact.availability) if impact and impact.availability is not None else None
             ),
             minutes=(
                 float(impact.minutes_estimate)
@@ -396,9 +396,7 @@ class EvaluationService:
             "delta_net_rating": round(delta_net, 2),
             "delta_wins": round(delta_wins, 2),
             "rotation_before": _rotation_view(before.detail, outgoing_ids),
-            "rotation_after": _rotation_view(
-                after.detail, {c.player_id for c in incoming}
-            ),
+            "rotation_after": _rotation_view(after.detail, {c.player_id for c in incoming}),
             "wins_mapping": self.wins_mapping(),
             "unmodeled_players": unmodeled,
             "modeled_players_after": len(after_rotation),
@@ -418,25 +416,81 @@ class EvaluationService:
         if not needs:
             return None, {"unavailable": "team needs not computed; run `make score`"}
 
-        # Fit compares the arriving package against the departing one. With nothing on a
-        # side there is no package to compare, and the old code substituted a
-        # 50th-percentile player for it — so trading everyone away for nothing scored as
-        # if a median NBA rotation player had been acquired in every skill. Rather than
-        # invent a replacement percentile here, the component is withheld. R5 replaces
-        # this with a measured replacement baseline so one-way deals can be scored.
+        # Fit compares the arriving package against the departing one. R1 found the old
+        # code substituting a flat 50th-percentile player for an empty side — so trading
+        # everyone away for nothing scored as if a median NBA rotation player had been
+        # acquired in every skill — and withheld the component rather than invent a
+        # number. R5 recorded that it would supply a measured baseline and did not.
+        #
+        # R5.5 supplies it, and the two sides get DIFFERENT baselines for the same reason
+        # the allocator's two directions differ (see `projection.ABSORPTION_RULE`):
+        #
+        #   nothing arriving   the departing player's minutes are played by a REPLACEMENT
+        #                      player, so the arriving package is `REPLACEMENT_SKILLS` —
+        #                      measured on the population REPLACEMENT_TEI is fitted on.
+        #   nothing departing  the arriving player's minutes are taken from the
+        #                      INCUMBENTS proportionally, so the departing package is this
+        #                      roster's own minutes-weighted skill profile. That is R5-1b's
+        #                      construction for `risk`, applied to skills.
+        #
+        # Both substitutions are disclosed under `baseline_note` and `baseline_used`; the
+        # component is still withheld when neither side has a measurable player at all.
+        #
+        # Measured on 240 deals of each shape against the 30 ingested rosters: two-sided
+        # deals are untouched (baseline `None` on all 240, mean 48.83), one-way giveaways
+        # land below neutral 68.3 % of the time at mean 41.01, and the worst of them are
+        # Michael Porter Jr., Jaren Jackson Jr. and Myles Turner — real rotation players.
+        #
+        # **What this score does not say is how MUCH changes.** `fit_score` normalises
+        # minutes within each side, so a package's weight cancels and the component
+        # measures the fit of the change rather than its size: acquiring an 8-minute
+        # player who answers a need scores like acquiring a 32-minute one. That is
+        # pre-existing behaviour on two-sided deals, it is why `performance` and not `fit`
+        # carries magnitude, and re-normalising it would be a re-tuning of the composite
+        # that no measurement here motivates.
         incoming_entries = [(c.skills, c.minutes) for c in incoming if c.skills and c.minutes]
         outgoing_entries = [(c.skills, c.minutes) for c in outgoing if c.skills and c.minutes]
-        if not incoming_entries or not outgoing_entries:
+        if not incoming_entries and not outgoing_entries:
             return None, {
                 "unavailable": (
                     "roster fit compares the arriving package with the departing one; "
-                    "one side of this deal has no player with a skill profile and "
+                    "neither side of this deal has a player with a skill profile and "
                     "minutes estimate, so there is nothing to compare"
                 ),
                 "needs": needs,
             }
 
         with_minutes = [c for c in roster if c.minutes is not None]
+        baseline_note: str | None = None
+        baseline_used: str | None = None
+        if not incoming_entries:
+            weight = sum(w for _, w in outgoing_entries)
+            incoming_entries = [(dict(REPLACEMENT_SKILLS), weight)]
+            baseline_used = "replacement"
+            baseline_note = (
+                "nothing arrives, so the departing minutes are priced at a "
+                f"replacement player's measured skill profile ({REPLACEMENT_SKILL_RULE})"
+            )
+        elif not outgoing_entries:
+            roster_profile = self._roster_skill_profile(roster, exclude=set())
+            if roster_profile is None:
+                return None, {
+                    "unavailable": (
+                        "nothing departs, so the arriving minutes come out of this "
+                        "roster — and no rostered player has both a skill profile and a "
+                        "minutes estimate, so there is nothing to price them against"
+                    ),
+                    "needs": needs,
+                }
+            weight = sum(w for _, w in incoming_entries)
+            outgoing_entries = [(roster_profile, weight)]
+            baseline_used = "roster"
+            baseline_note = (
+                "nothing departs, so the arriving minutes are priced against this "
+                "roster's own minutes-weighted skill profile, because that is who "
+                "gives them up"
+            )
+
         # ROTATION_DEPTH, not a local 9: the depth at which a roster counts as strong in
         # a skill must match the depth at which `REPLACEMENT_TEI` says a player becomes
         # replaceable (R4-4).
@@ -445,9 +499,7 @@ class EvaluationService:
         ]
         roster_strengths: dict[str, float | None] = {}
         for key in SKILL_KEYS:
-            values = sorted(
-                c.skills[key] for c in top_rotation if c.skills and key in c.skills
-            )
+            values = sorted(c.skills[key] for c in top_rotation if c.skills and key in c.skills)
             # Third-best is the "already strong here" threshold; with fewer than three
             # observations the roster's strength in that skill is unknown, not average.
             roster_strengths[key] = values[-3] if len(values) >= 3 else None
@@ -471,7 +523,40 @@ class EvaluationService:
             "raw_fit": round(score, 4),
             "needs_not_addressable": withheld,
             "needs": needs,
+            # `None` on an ordinary two-sided deal. Named rather than inferred, so a
+            # one-way score can never be read as if both packages were measured.
+            "baseline_used": baseline_used,
+            **({"baseline_note": baseline_note} if baseline_note else {}),
         }
+
+    def _roster_skill_profile(
+        self, roster: list[PlayerCard], exclude: set[str]
+    ) -> dict[str, float] | None:
+        """The roster's own minutes-weighted skill profile.
+
+        Used as the departing package when nothing departs: an arriving player's minutes
+        come out of the incumbents, proportionally to what they hold, so the skills he
+        displaces are the incumbents' own. Weighted by minutes for the same reason
+        `_weighted_availability` is — thirty minutes of a starter displaces more than
+        eight of a reserve.
+        """
+        entries = [
+            (c.skills, c.minutes)
+            for c in roster
+            if c.skills and c.minutes and c.player_id not in exclude
+        ]
+        total = sum(w for _, w in entries)
+        if not entries or total <= 0:
+            return None
+        profile: dict[str, float] = {}
+        for key in SKILL_KEYS:
+            weighted = [(s[key], w) for s, w in entries if key in s]
+            covered = sum(w for _, w in weighted)
+            # A skill only enters when it is measured, on the same principle `fit_score`
+            # applies to the packages: an unmeasured skill is not a median one.
+            if covered > 0:
+                profile[key] = sum(v * w for v, w in weighted) / covered
+        return profile or None
 
     def _contract_value(
         self,
@@ -504,7 +589,9 @@ class EvaluationService:
             total = 0.0
             for c in cards_:
                 actual = (salaries.get(c.player_id) or 0) / cap
-                assert c.tei is not None  # guarded above: unmodelled players withhold this component
+                assert (
+                    c.tei is not None
+                )  # guarded above: unmodelled players withhold this component
                 total += market_share(c.tei) - actual
             return total
 
@@ -815,9 +902,7 @@ class EvaluationService:
 
         # Reported, never scored — see `legality_verification` below.
         team_rules = [
-            r
-            for r in legality.get("rule_results", [])
-            if r.get("team_id") in (team_id, None)
+            r for r in legality.get("rule_results", []) if r.get("team_id") in (team_id, None)
         ]
         definite = [r for r in team_rules if r.get("status") in ("pass", "fail", "warning")]
         detail["legality_verification"] = {
@@ -843,9 +928,7 @@ class EvaluationService:
         # QA-8 was a report line reading "Historical availability of incoming players:
         # 85 %" for a deal with no incoming players, and a substituted baseline under this
         # key would restore that defect with a different number.
-        detail["incoming_availability"] = (
-            round(measured_in, 3) if measured_in is not None else None
-        )
+        detail["incoming_availability"] = round(measured_in, 3) if measured_in is not None else None
         detail["outgoing_availability"] = (
             round(measured_out, 3) if measured_out is not None else None
         )
@@ -984,8 +1067,7 @@ class EvaluationService:
         # per team per evaluation, i.e. 800 of the 815 queries a `/trades/generate`
         # request still issued after the salary batching.
         incoming = [
-            self._card(player)
-            for player in resolver.players(self.db, incoming_ids).values()
+            self._card(player) for player in resolver.players(self.db, incoming_ids).values()
         ]
         outgoing = [c for c in roster if c.player_id in set(outgoing_ids)]
 
@@ -1096,9 +1178,7 @@ class EvaluationService:
 
         # Players on this side of the deal, or on the roster it is evaluated against,
         # that the impact model has never scored.
-        unmodeled_players = sorted(
-            {c.name for c in roster + incoming + outgoing if c.tei is None}
-        )
+        unmodeled_players = sorted({c.name for c in roster + incoming + outgoing if c.tei is None})
 
         confidence = "high"
         if excluded:
