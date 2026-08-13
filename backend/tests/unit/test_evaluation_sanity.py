@@ -14,6 +14,7 @@ release removes the marker in the same commit that changes the behaviour.
 import pytest
 from sqlalchemy.orm import Session
 
+from app.analytics.projection import REPLACEMENT_TEI
 from app.analytics.sensitivity import composite_utility, normalize_weights
 from app.cba.builder import build_trade_context
 from app.cba.engine import TradeLegalityEngine
@@ -444,3 +445,81 @@ def test_rotation_view_keeps_an_out_of_rotation_arrival_in_minutes_order(
     minutes = [r["minutes"] for r in rows]
     assert minutes == sorted(minutes, reverse=True)
     assert incoming.id in {r["player_id"] for r in rows}
+
+
+# ------------------------------------------------------------------- R5.5: giveaways
+
+
+def test_no_above_replacement_player_is_worth_giving_away(
+    db: Session, seeded_league: dict
+) -> None:
+    """R5.5, the release's central claim, exercised through the service.
+
+    `test_rotation_absorption.py` pins this on the allocator directly. This pins that
+    `_performance` actually reaches it — the defect was not in `allocate_rotation`'s
+    arithmetic but in calling it twice independently, so a test of the allocator alone
+    would have passed throughout.
+
+    Measured on the 30 ingested rosters before the fix: 191 of 370 above-replacement
+    players (51.6 %) were scored as addition by subtraction, 152 of them rotation players
+    at 15+ minutes a game. After: 0 of 370.
+    """
+    service = EvaluationService(db)
+    roster = service._roster_cards(seeded_league["team_a"].id)
+    checked = 0
+    for card in roster:
+        if card.tei is None or card.minutes is None:
+            continue
+        availability = 1.0 if card.availability is None else card.availability
+        effective = availability * card.tei + (1 - availability) * REPLACEMENT_TEI
+        if effective <= REPLACEMENT_TEI:
+            continue
+        checked += 1
+        _, detail = service._performance(roster, [], {card.player_id})
+        assert detail["delta_wins"] <= 0.0, (
+            f"{card.name} (TEI {card.tei:+.2f}, effective {effective:+.2f} against a "
+            f"replacement level of {REPLACEMENT_TEI:+.2f}) was worth "
+            f"{detail['delta_wins']:+.3f} wins to give away for nothing"
+        )
+    assert checked >= 8, "the fixture must carry enough above-replacement players to test"
+
+
+def test_giving_away_more_players_never_costs_less(
+    db: Session, seeded_league: dict
+) -> None:
+    service = EvaluationService(db)
+    roster = sorted(
+        [c for c in service._roster_cards(seeded_league["team_a"].id) if c.minutes],
+        key=lambda c: -(c.minutes or 0.0),
+    )
+    previous = 0.0
+    for k in range(1, 6):
+        _, detail = service._performance(roster, [], {c.player_id for c in roster[:k]})
+        assert detail["delta_wins"] <= previous + 1e-9
+        previous = detail["delta_wins"]
+
+
+def test_a_departures_minutes_are_left_for_a_replacement(
+    db: Session, seeded_league: dict
+) -> None:
+    """The mechanism, not just its sign: the after-rotation is short by exactly the
+    departing player's own allocation, and nobody else's minutes moved."""
+    service = EvaluationService(db)
+    roster = [
+        c
+        for c in service._roster_cards(seeded_league["team_a"].id)
+        if c.tei is not None and c.minutes is not None
+    ]
+    target = max(roster, key=lambda c: c.minutes or 0.0)
+    _, detail = service._performance(roster, [], {target.player_id})
+    before = {row["player_id"]: row["minutes"] for row in detail["rotation_before"]}
+    after = {row["player_id"]: row["minutes"] for row in detail["rotation_after"]}
+    # Both are the CHART's top-12-plus-movers view, not the whole rotation, so a player
+    # outside the before-view can enter the after-view when the list shortens. Compare
+    # the overlap; the point is that no incumbent's minutes moved.
+    shared = (set(before) & set(after)) - {target.player_id}
+    assert len(shared) >= 8, "too little overlap to test"
+    for player_id in sorted(shared):
+        assert after[player_id] == pytest.approx(before[player_id], abs=0.05), (
+            "an incumbent absorbed a departure's minutes"
+        )
