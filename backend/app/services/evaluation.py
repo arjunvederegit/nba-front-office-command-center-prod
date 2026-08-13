@@ -376,7 +376,13 @@ class EvaluationService:
             }
 
         before = allocate_rotation(before_rotation)
-        after = allocate_rotation(after_rotation)
+        # R5.5: the after-roster is priced AGAINST the before-allocation, not allocated
+        # from scratch. Re-allocating independently re-shared a departure's minutes
+        # across everyone who stayed, so a team could be scored as improving by giving a
+        # rotation player away — 191 of 370 above-replacement players, measured. With the
+        # anchor supplied the freed minutes are replacement minutes, which is what
+        # `REPLACEMENT_TEI` already means. See `projection.ABSORPTION_RULE`.
+        after = allocate_rotation(after_rotation, anchor=before.minutes)
         # R3-5: one definition of delta_net. The point estimate and the Monte Carlo must
         # compute the same quantity through the same conversion, or they disagree by the
         # size of the coefficient.

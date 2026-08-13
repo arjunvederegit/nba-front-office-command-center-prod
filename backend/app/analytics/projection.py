@@ -1,10 +1,21 @@
 """Team performance projection with an explicit rotation allocator.
 
-Post-trade projection reallocates the 240 regulation minutes per game rather than
-naively summing player values: departing minutes are redistributed to arrivals and
-incumbents under per-player caps. Net-rating deltas convert to wins through a
-historically calibrated linear mapping (fit on ingested team-seasons, not a
-hard-coded constant)."""
+Two questions, answered differently and deliberately (R5.5).
+
+**What does this roster do with 240 minutes?** The level model: minutes in proportion to
+baseline minutes, under per-player caps. Kept because it is the best out-of-sample
+predictor available here of what a team actually does.
+
+**What happens to those 240 minutes when the roster changes?** The counterfactual, priced
+against the pre-trade allocation rather than re-derived from scratch. An incumbent keeps
+the minutes he had, an arrival claims his role on the anchor's own scale, and a
+departure's minutes go unfilled — charged to a replacement player, because the player who
+would really absorb them cannot be distinguished from one. Re-deriving instead re-shared a
+departure's minutes across everyone who stayed, which let a team improve by giving a
+rotation player away.
+
+Net-rating deltas convert to wins through a historically calibrated linear mapping (fit on
+ingested team-seasons, not a hard-coded constant)."""
 
 from dataclasses import dataclass, field
 
@@ -61,6 +72,46 @@ TEI_REGRESSOR_CONSTRUCTION = (
 )
 
 
+# R5.5. **The marginal minute is a replacement minute.**
+#
+# The level model below (proportional to baseline minutes) is kept because it is the best
+# out-of-sample predictor of what a roster actually does: handed the season-s roster and
+# each player's season-s minutes, it predicts season-(s+1) load at MAE 5.803 over 60
+# team-season transitions, against 8.641 for a depth-chart cascade and 8.148 for an
+# equal-minutes null. Nothing measured here supports replacing it.
+#
+# What is replaced is the *counterfactual*. `allocate_rotation` was called independently
+# on the before-roster and the after-roster, so a departure's minutes were re-shared
+# across everyone who remained, in proportion to baseline minutes. Three measurements say
+# that is wrong:
+#
+#   1. Analytically, removing player j changed team TEI by (w_j/W)*(ebar_-j - e_j), so a
+#      removal was scored as an improvement exactly when the player sat below his own
+#      team's minutes-weighted mean. That rule predicted the sign on **487 of 487**
+#      leave-one-out removals across the 30 rosters, and 191 of the 370 above-replacement
+#      players (51.6 %) were measured as addition by subtraction — including 152 rotation
+#      players at 15+ minutes.
+#   2. On the 59 usable team-season transitions, proportional-to-baseline predicts who
+#      absorbs vacated minutes *worse than a permutation of its own weights* (MAE 4.081
+#      against a null of 3.437). Every alternative shape beat it.
+#   3. The players who really absorb them cannot be told apart. Outside a team's top ten
+#      by minutes the spread of served TEI is 1.031 against a mean estimation sd of
+#      1.409 — a **signal share of 0.000**. Inside the top ten it is 0.529. Promoting a
+#      bench player at his own point estimate is promoting estimation error.
+#
+# So the freed minutes are charged to a replacement player, which is what `REPLACEMENT_TEI`
+# already means ("outside their team's top 10 by minutes") and what `ROTATION_DEPTH`
+# already asserts. This also makes the projection exactly monotone: with `anchor` supplied,
+# removing a player whose effective TEI is above replacement can never improve the team.
+#
+# Minutes are only *shed* proportionally, and that direction is kept because the same
+# transitions support it: proportional-to-current predicts who gives minutes up at MAE
+# 2.813, against 3.375 uniform (t = -7.49) and 4.585 bottom-of-the-chart-first (t = -7.99),
+# and it beats its own permutation null (3.517). The two directions are genuinely
+# asymmetric and the code now says so.
+ABSORPTION_RULE = "freed minutes are replacement minutes; surplus is shed proportionally"
+
+
 @dataclass
 class RotationPlayer:
     player_id: str
@@ -77,13 +128,64 @@ class RotationResult:
     minutes: dict[str, float]
     team_tei_per_minute: float
     detail: list[dict] = field(default_factory=list)
+    # Minutes this roster could not cover, charged to a replacement player. Published
+    # rather than inferred, because it is the whole content of a one-way deal.
+    unfilled_minutes: float = 0.0
 
 
-def allocate_rotation(players: list[RotationPlayer]) -> RotationResult:
-    """Distribute 240 minutes proportionally to baseline minutes (a proxy for coach
-    trust) with user overrides and per-player caps. Availability discounts expected
-    minutes: a 70%-available player contributes 70% of allocated minutes in
-    expectation."""
+def _shed_proportionally(
+    minutes: dict[str, float], surplus: float, order: list[RotationPlayer]
+) -> None:
+    """Remove `surplus` minutes, in proportion to what each player currently holds.
+
+    Floored at zero by the same water-filling the cap side uses: a player who runs out
+    of minutes stops absorbing the cut and the rest is re-shared among those who have
+    minutes left, so the loop terminates in at most one pass per player.
+    """
+    remaining = surplus
+    eligible = {p.player_id for p in order if minutes.get(p.player_id, 0.0) > 1e-12}
+    while remaining > 1e-9 and eligible:
+        total = sum(minutes[k] for k in eligible)
+        if total <= 1e-12:
+            break
+        if total <= remaining + 1e-12:
+            for k in eligible:
+                minutes[k] = 0.0
+            remaining -= total
+            break
+        exhausted = set()
+        for k in sorted(eligible):
+            cut = minutes[k] / total * remaining
+            if cut >= minutes[k] - 1e-12:
+                exhausted.add(k)
+        if not exhausted:
+            for k in eligible:
+                minutes[k] -= minutes[k] / total * remaining
+            remaining = 0.0
+            break
+        for k in exhausted:
+            remaining -= minutes[k]
+            minutes[k] = 0.0
+        eligible -= exhausted
+
+
+def allocate_rotation(
+    players: list[RotationPlayer], anchor: dict[str, float] | None = None
+) -> RotationResult:
+    """Distribute 240 minutes across a roster.
+
+    Without `anchor` this is the level model: proportional to baseline minutes (a proxy
+    for coach trust) with user overrides and per-player caps.
+
+    With `anchor` — the minutes the same team was allocated *before* the trade — this is
+    the counterfactual, and it is a different question. Incumbents keep the minutes they
+    already had rather than re-sharing a departure's; a departure therefore leaves
+    replacement minutes behind, and an arrival's claim is priced on the anchor's own
+    scale so the two sides are comparable. See `ABSORPTION_RULE` above for the three
+    measurements behind that choice. Availability is applied downstream, not here: a
+    70 %-available player's allocated minutes are his ROLE's minutes, of which he plays
+    70 % and a replacement plays the rest.
+    """
     minutes: dict[str, float] = {}
     remaining = TEAM_MINUTES
 
@@ -94,6 +196,9 @@ def allocate_rotation(players: list[RotationPlayer]) -> RotationResult:
         minutes[p.player_id] = allotted
         remaining -= allotted
     remaining = max(remaining, 0.0)
+
+    if anchor is not None:
+        return _allocate_against_anchor(players, flexible, minutes, remaining, anchor)
 
     weights = np.array([max(p.baseline_minutes, 2.0) for p in flexible], dtype=float)
     if flexible and weights.sum() > 0:
@@ -130,12 +235,67 @@ def allocate_rotation(players: list[RotationPlayer]) -> RotationResult:
         for p, m in zip(flexible, alloc, strict=False):
             minutes[p.player_id] = float(m)
 
-    # R3-3: normalise by the 240 minutes a team must actually field, NOT by the minutes
-    # this roster happened to fill. Dividing by allocated minutes made a gutted roster
-    # look fine — the same average taken over fewer minutes — which is the real mechanism
-    # behind the roster-gut defect (the `or 1.0` guard the audit named is dead code in
-    # the empty-roster path). Minutes a team cannot fill are played by someone, and that
-    # someone is a replacement-level player.
+    return _score(players, minutes)
+
+
+def _allocate_against_anchor(
+    players: list[RotationPlayer],
+    flexible: list[RotationPlayer],
+    minutes: dict[str, float],
+    remaining: float,
+    anchor: dict[str, float],
+) -> RotationResult:
+    """The post-trade counterfactual, priced against the pre-trade allocation.
+
+    An incumbent keeps the minutes he already had. An arrival claims his established
+    role, converted onto the anchor's scale so the two sides are measured the same way:
+    the anchor allocated 240 minutes across baseline minutes summing to `W`, so a minute
+    of baseline was worth `240/W` allocated minutes, and an arrival's claim is priced at
+    that same rate. Without the conversion an arrival's raw minutes-per-game would be
+    compared against incumbents' compressed minutes, and every acquisition would look
+    like an upgrade purely from the change of units.
+    """
+    incumbents = [p for p in flexible if p.player_id in anchor]
+    arrivals = [p for p in flexible if p.player_id not in anchor]
+    if not incumbents:
+        # Nothing to anchor to — every modelled player is new. There is no counterfactual
+        # to price, so this is the level question again and the level model answers it.
+        return allocate_rotation(players)
+
+    # The rate the anchor itself used, recovered FROM the anchor rather than assumed.
+    # The anchor allocated `scale * max(baseline, 2)` to each uncapped player, so the
+    # ratio of the sums returns `scale` exactly when no cap bound, and a minutes-weighted
+    # average of the effective rates when some did.
+    held = sum(max(anchor.get(p.player_id, 0.0), 0.0) for p in incumbents)
+    claimed = sum(max(p.baseline_minutes, 2.0) for p in incumbents)
+    scale = (held / claimed) if claimed > 0 else 1.0
+
+    for p in incumbents:
+        minutes[p.player_id] = min(max(anchor.get(p.player_id, 0.0), 0.0), p.max_minutes)
+    for p in arrivals:
+        minutes[p.player_id] = min(max(p.baseline_minutes, 2.0) * scale, p.max_minutes)
+
+    surplus = sum(minutes.values()) - TEAM_MINUTES
+    if surplus > 1e-9:
+        # More claimed minutes than a game has. Shed proportionally to what each player
+        # holds — the direction the transitions support (MAE 2.813 against 3.375 uniform,
+        # t = -7.49, and 4.585 bottom-first, t = -7.99).
+        _shed_proportionally(minutes, surplus, flexible)
+    # A shortfall is deliberately NOT redistributed. It is the departure's minutes, and
+    # `_score` charges them to a replacement player.
+    del remaining
+    return _score(players, minutes)
+
+
+def _score(players: list[RotationPlayer], minutes: dict[str, float]) -> RotationResult:
+    """Minutes-weighted team TEI, with whatever the roster cannot cover at replacement.
+
+    R3-3: normalise by the 240 minutes a team must actually field, NOT by the minutes
+    this roster happened to fill. Dividing by allocated minutes made a gutted roster look
+    fine — the same average taken over fewer minutes — which is the real mechanism behind
+    the roster-gut defect. Minutes a team cannot fill are played by someone, and that
+    someone is a replacement-level player.
+    """
     allocated = sum(minutes.values())
     weighted = 0.0
     detail = []
@@ -154,7 +314,12 @@ def allocate_rotation(players: list[RotationPlayer]) -> RotationResult:
         )
     unfilled = max(TEAM_MINUTES - allocated, 0.0)
     weighted += unfilled / TEAM_MINUTES * REPLACEMENT_TEI
-    return RotationResult(minutes=minutes, team_tei_per_minute=weighted, detail=detail)
+    return RotationResult(
+        minutes=minutes,
+        team_tei_per_minute=weighted,
+        detail=detail,
+        unfilled_minutes=unfilled,
+    )
 
 
 def team_tei_to_net_rating_delta(before: RotationResult, after: RotationResult) -> float:
@@ -191,9 +356,7 @@ def calibrate_wins_per_net_rating(team_seasons: pd.DataFrame) -> dict:
     # The SLOPE's standard error, which is what an interval over the conversion needs.
     # `residual_std` is the spread of team wins about the line — a different quantity,
     # ~55x larger, and using it as the slope's sigma made every band that much too wide.
-    slope_se = float(
-        np.sqrt(ss_res / max(len(x) - 2, 1) / max(((x - x.mean()) ** 2).sum(), 1e-12))
-    )
+    slope_se = float(np.sqrt(ss_res / max(len(x) - 2, 1) / max(((x - x.mean()) ** 2).sum(), 1e-12)))
     # Leave-one-out R2, reported instead of in-sample: the label was the defect here, not
     # the model. Measured 0.9505 LOO against 0.9527 in-sample — the best-calibrated thing
     # in the pipeline, and it should be described accurately.
