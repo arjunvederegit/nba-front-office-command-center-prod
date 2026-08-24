@@ -524,17 +524,23 @@ similar, so there is no target to fit them against; what is established is that 
 single dimension reproduces the shipped ranking and that the per-dimension decomposition
 is returned with every result, so the choice is inspectable rather than hidden.
 
-### One criterion was replaced rather than waived
+### One criterion was replaced rather than waived — and not because it failed
 
 The battery originally asserted that a side whose two directions are genuinely different
 must resemble its own mirror image **less** than two unrelated sides resemble each other.
-It failed, at 0.679 against 0.672 — and the failure is uninformative, because similarity
-*levels* on this corpus compress into p05 0.510 … p95 0.865, so 0.007 of level is not
-evidence about a list. The list is what the product shows, and by list the mirror is far
-away: injected into the corpus it is the nearest neighbour for 4 of 141 asymmetric
-sides, reaches the top five for 16, and sits at **median rank 89 of 338**. Direction
-confusion measured on **real** trades replaces it, at 0.019. Both figures are still
-reported.
+It did fail when it was written, at 0.679 against a 0.672 median. It was replaced because
+it does not test *retrieval*: similarity **levels** on this corpus compress into p05 0.521
+… p95 0.873, so hundredths of level are not evidence about a list.
+
+The clearest illustration is that the same statistic now reads **0.676 against a 0.685
+median** — it would pass — purely as a side effect of splitting first-round picks by
+conveyance, a change made for an unrelated reason. A criterion that flips on a change made
+elsewhere is not measuring what it claims to.
+
+By list, the mirror is far away: injected into the corpus it is the nearest neighbour for
+2 of 141 asymmetric sides, reaches the top five for 11, and sits at **median rank 89 of
+338**. Direction confusion measured on **real** trades replaces it, at 0.019. Both figures
+are still reported.
 
 ## 14. Need-driven acquisition (R6-3)
 

@@ -22,10 +22,10 @@
 
 | Metric | Value |
 | --- | --- |
-| Backend tests | **114 passed**, 1 warning, 4.32 s (now **748 passed / 1 skipped / 1 xfailed** at `9efe8d7`) |
-| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88.24 %**, floor raised to 85 |
-| Frontend unit tests | **15 passed** (2 files); now **43 passed** (6 files) |
-| `data/external/` | **empty** — the Kaggle `nbadb` dataset is NOT present |
+| Backend tests | **114 passed**, 1 warning, 4.32 s (now **869 passed / 1 skipped / 1 xfailed** at `623134f`) |
+| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88.43 %**, floor 85 |
+| Frontend unit tests | **15 passed** (2 files); now **45 passed** (6 files) |
+| `data/external/` | **does not exist** — the Kaggle `nbadb` dataset is NOT present. A copy on this machine (`~/Downloads/nbadatabase/nba.sqlite`) ends **2023-06-12**, before the first modelled season, so it cannot serve R6's lineup question either. |
 
 ## Datasets present (inspected)
 
@@ -35,25 +35,29 @@
 | `data/imports/contracts/players.html` | 454 K | Basketball-Reference contracts snapshot, saved 2026-07-28 |
 | `data/imports/draft_picks/realgm_future_drafts.html` | 291 K | RealGM "NBA Future Drafts Detailed", page datetime 2026-07-28 00:49:32. **Consumed by `make import-draft-picks` since R5**: 394 entries → 92 verified picks, 103 unresolved, 0 unparsed, 0 unmatched team names. |
 | `data/imports/nba_player_stats_2026.csv` | 820 K (dir) | 2025-26 season totals, already wired to `make import-stats-csv` |
-| `data/external/` | 0 | **empty — Kaggle `nbadb` unavailable** |
+| `data/imports/transactions/NBA_<year>_transactions.html` | ~3.9 M (10 files) | Basketball-Reference season transaction pages, 2016-17 … 2025-26, fetched by `make fetch-transactions` (3.5 s apart, honouring the source's published `Crawl-delay: 3`). Gitignored. **Consumed by `make import-transactions` since R6**: 565 trades, 2,568 asset legs, 1,341/1,500 player legs resolved, 0 unparsed trades, 0 unresolved franchise abbreviations. `provenance.json` beside them records URL + SHA-256 + retrieval time per page. |
+| `data/external/` | — | **absent — Kaggle `nbadb` unavailable** |
 
 ---
 
 ## Current position
 
 **Releases complete:** R0, R1, R2a, **R2c**, **R2b** (feasible scope), **R3**, **R4**, **R5**,
-**R5.5** (the rotation allocator — a prerequisite correctness release for R6).
+**R5.5** (the rotation allocator), **R6** (differentiation).
 **R2b's original gate was invalid and has been replaced** — see "R2b gate, reassessed".
 **Three of R4-2's four acceptance criteria were also invalid and have been replaced** —
 see "R4-2 gate, reassessed".
-**Next:** R6 (differentiation) — **comparable-trade retrieval**. The allocator prerequisite
-is done; see "Exact next step".
-**Status:** working tree clean, pushed. Backend **748 passed / 1 skipped / 1 xfailed**,
-coverage **88.24 %** (floor **85**). Frontend 43 passed; eslint, `tsc` and the production
-build (12 routes) clean. Migrations apply and reverse on a fresh database and `alembic check`
-reports no drift. R3 gate re-run on the post-R5.5 path: **19 of 19 criteria met**, every
-calibration figure bit-identical. Playwright **5 passed**; visual QA **98 shots clean** in
-`docs/qa/r55/`. Scenario battery **16 of 16**.
+**One R6 comparable-trade criterion was replaced too** — see "R6 mirror criterion,
+reassessed".
+**Next:** R7 — start by **widening the comparable corpus behind the R3 gate**, then the
+plan's visual/product cleanup. See "Exact next step".
+**Status:** working tree clean, pushed through `623134f`. Backend **869 passed / 1 skipped /
+1 xfailed**, coverage **88.43 %** (floor **85**). Frontend 45 passed; eslint, `tsc` and the
+production build (13 routes) clean. Migrations apply, reverse to base and re-apply on a
+fresh database, and `alembic check` reports no drift. R3 gate re-run on the post-R6 path:
+every calibration figure **bit-identical**. Playwright **5 passed**; visual QA **98 shots
+clean** in `docs/qa/r6/`. Adversarial scenario battery **20 of 20**. Both R6 validation
+batteries pass (`make comparable-validation`, `make acquisition-validation`).
 
 **Browser QA is complete and clean.** R5: the Risk and Cap tabs driven live at 375 / 768 /
 1280, two copy defects found and fixed (`57c3edd`). R5.5: the trade evaluator driven live —
@@ -143,6 +147,13 @@ After that, `vitest` runs in 1.05 s and `tsc` completes. If the frontend toolcha
 | **R5.5-1** — a departure's minutes are a replacement's | `bef1d66` | above-replacement removals scored as gains **191 of 370 → 0**; rotation players (≥15 mpg) **152 → 0**; MEM strip-best-3 **−3.73 → −6.03 wins**; QA-1 **32.15 → 23.06** |
 | **R5.5-2** — one-way `fit` baseline, measured | `457f3eb` | `REPLACEMENT_SKILLS` on n=187; scoring **0.391** (t −5.99) vs rebounding **0.528**; spread 0.136 against a 0.031 level shift; two-sided deals untouched (baseline `None` ×240) |
 | **R5.5-3** — the property pinned through the service | `9efe8d7` | the defect was in calling the allocator twice, so an allocator-only test would have passed throughout |
+| **R6-1** — ten seasons of completed trades ingested | `e2a3a03` | 565 trades / 2,568 asset legs / **0 unparsed trades**; 1,341 of 1,500 player legs resolved (89.4 %); conveyance 580 unconditional / 194 swap / 44 protected / 41 conditional |
+| **R6-2** — comparable-trade retrieval | `9b82540` `623134f` | archetype precision@5 **0.797** vs a 0.414 base rate (random null 0.397, shuffled-feature null 0.405); direction confusion **0.019**; best single-dimension null 0.089 |
+| **R6-3** — need-driven acquisition | `eb5e718` | distinct players across the league's top fives **26 → 72** once each candidate is run through the trade evaluator; shuffled-need null changes 84 % of a list |
+| **R6-4** — rotation shape; lineup fit deferred on measurement | `3a7b16e` | five-man median group **20.2 minutes**, implied sd **16.1** net-rating points per 100 against a ±10 league spread |
+| **R6-5** — the decision memo | `d83ef29` | eight entries in "What is not known" on a live deal, every one of which existed before and none of which was collected anywhere |
+| **R6-UI** — precedent, rotation consequences, targets, memo | `553d0d0` | 98 visual-QA shots clean; three defects found by driving it (duplicate sides, "3th percentile", a deep link built to a private encoding) |
+| **R6-perf** — the league role reference batched | `e6a0d00` | cold `/trades/evaluate` **37 → 8** queries for one team; the budget file now asserts the shape, not a number |
 
 Remaining xfail pins: **1** (22 of 23 flipped)
 - QA-11 `EFF` classification → R7 (needs a third field category; C12)
@@ -153,6 +164,16 @@ point-estimate agreement (R3-5).
 ## Commits
 
 ```
+623134f fix(comparables): a protected first is not the same asset as an unconditional one
+ae9e1cb docs: record what R6 measured, and what it refused
+e6a0d00 perf(evaluation): load the league's rosters once, not once per team
+553d0d0 feat(ui): put precedent, rotation consequences and the memo in front of a user
+d83ef29 feat(memo): turn the report into a decision artifact a front office can review
+3a7b16e feat(roster-shape): report what a trade does to the rotation, and defer the lineup model
+eb5e718 feat(acquisition): start from the need, and end at a trade you can evaluate
+9b82540 feat(comparables): retrieve the completed trades a proposal actually resembles
+e2a3a03 feat(transactions): ingest ten seasons of completed trades as evidence
+4f3bdf0 docs: record R5.5 — the rotation allocator, and the two changes it did not make
 9efe8d7 test(evaluation): pin the giveaway property through the service, not just the allocator
 457f3eb feat(fit): score one-way deals against a measured replacement, not a constant
 bef1d66 fix(projection): charge a departure's minutes to a replacement, not to the roster
@@ -378,11 +399,16 @@ see "R2b gate, reassessed" above. A hand-curated CSV at `data/contracts/contract
 with `CONTRACT_DATA_PROVIDER=file` remains the only route to `verified_legal`, because it
 is the only source that carries `signed_date`, `no_trade_clause` and `contract_type`.
 
-### Kaggle `nbadb` absent
+### (answered in R6) Kaggle `nbadb` absent — and it would not have helped
 
 Expected at `data/external/` (also `KAGGLE_DATA_DIR`; consumed by
-`backend/app/integrations/kaggle_nba/importer.py` via `make import-kaggle`). Blocks R6's
-lineup-aware fit and any tracking/play-type work. **Blocks nothing in R0–R5.**
+`backend/app/integrations/kaggle_nba/importer.py` via `make import-kaggle`). Still absent.
+
+R6 measured what it was blocking, and the answer is that it was never the blocker. A copy
+on this machine (`~/Downloads/nbadatabase/nba.sqlite`, 2.3 GB) holds no lineup or on/off
+table at all, and its `play_by_play` **ends 2023-06-12** — before the first season this
+product models. The real question was answered elsewhere; see "R6 — lineup-aware fit,
+refused on measurement".
 
 ## R3 gate — re-measured on the POST-R5.5 path, 19 of 19 criteria met
 
@@ -464,27 +490,115 @@ central assertion never executed. `test_r3_gate_after_r4.py` adds 15 tests that 
 | No literal ×5 on `team_tei_per_minute` | none | `PLAYERS_ON_COURT` deleted; test greps for it | ✅ |
 | No doc/UI asserts "points per 100" unless b = 1.0 | none | 7 docs + the in-product page rewritten | ✅ |
 
+## R6 mirror criterion, reassessed
+
+The comparable-trade battery originally asserted that a side whose two directions are
+genuinely different must resemble its own **mirror image** less than two unrelated sides
+resemble each other. It failed when written, at 0.679 against a 0.672 median.
+
+It was replaced **because it does not test retrieval**, not because it failed. Similarity
+*levels* on this corpus compress into p05 0.521 … p95 0.873, so hundredths of level are not
+evidence about a list — and the clearest proof is that the same statistic now reads 0.676
+against a 0.685 median, i.e. it would pass, purely as a side effect of splitting first-round
+picks by conveyance for an unrelated reason. A criterion that flips on a change made
+elsewhere is not measuring what it claims to.
+
+**What replaced it.** Direction confusion, on real corpus trades: of the top-5 neighbours
+returned for a side that **sold** on-court value for first-round picks, at most 5 % may be
+sides that **bought** it. Measured **1.9 %**. The mirror is still reported, by rank rather
+than by level: injected into the corpus it is nearest for 2 of 141 asymmetric sides, top-five
+for 11, median rank **89 of 338**.
+
+## R6 — lineup-aware fit, refused on measurement
+
+Not deferred on a schedule. `nba_api`'s `LeagueDashLineups` **is** reachable and returns real
+five-man data; the samples are the problem. 2024-25 totals, top 2,000 groups by minutes:
+
+| group size | median minutes | share ≥ 200 min | implied sd(net rating) |
+| --- | --- | --- | --- |
+| 2 | 376.9 | 88.4 % | 3.7 per 100 |
+| 3 | 249.4 | 66.6 % | 4.6 per 100 |
+| 5 | **20.2** | **1.6 %** | **16.1** per 100 |
+
+16 points per 100 against a ±10 league spread, at the median of the *top* 2,000 groups. Two-
+and three-man groups are estimable and still do not give a **trade** fit model: a trade
+prices combinations that have never played together, so observed groups can only support a
+synergy model, and nothing here holds a held-out target to validate one against — and any
+target from on-court net rating is R4-2's circularity again.
+
+Confirmations: the local Kaggle play-by-play ends 2023-06-12; Basketball-Reference's
+`robots.txt` disallows `*/on-off/` and `*/lineups/`.
+
+`make lineup-availability` re-runs it. **Do not re-open this without new data**, and if you
+do, run that command first — the deferral is falsifiable by design.
+
+## Six things R6 established that R7 must not undo
+
+1. **The retrieval unit is a side, not a trade.** Direction lives on the asset. It is what
+   made `direction_confusion` measurable at all, and a per-team representation cannot express
+   a three-team trade where one franchise both sends and receives.
+2. **Query and corpus sides are built by ONE function** (`services/comparables.py::_side`). A
+   retrieval engine whose halves are constructed differently measures the construction.
+   `test_query_and_corpus_sides_are_built_by_one_function` pins it.
+3. **Counts carry a declared unit; only continuous quantities are scaled from the corpus.**
+   295 of 337 sides receive no first-round pick, so the IQR is 0, the MAD is 0, and an
+   estimated scale degenerates to the standard deviation — the statistic this module rejects.
+4. **First-round picks are split by conveyance.** With a single `conditional_pick_share` a
+   top-4 protection changed *nothing*: max 0.033 of distance against a corpus spanning 0.52
+   to 0.87. R5-2 refuses to price a protected pick; the similarity must not treat it as the
+   same asset.
+5. **Salary, cash, trade exceptions and outcomes are never scored.** A feature the query can
+   only answer "no" to penalizes the 37 % of completed trades that include one.
+6. **`roster_shape` reads the allocation the projection produced.** Re-deriving it is R5.5-1's
+   defect wearing a different hat.
+
 ## Exact next step
 
-**R6 — differentiation. Start with comparable-trade retrieval.** The allocator prerequisite
-R5 identified is **done** (R5.5); the projection it will be judged against is fixed.
+**R7 — start by widening the comparable corpus behind the R3 gate**, then the plan's
+visual/product cleanup.
 
 ```bash
 git checkout feat/rosterlab-autonomous-roadmap
 cd "nba front office command center prod"
-cd backend && .venv/bin/alembic current   # must be e5c81f4a7b30, or the generator returns nothing
-make test        # 748 backend + 43 frontend
+cd backend && .venv/bin/alembic current   # must be 7a7a8e16cd96, or the generator returns nothing
+make test                      # 869 backend + 45 frontend
+make comparable-validation     # exits non-zero on a stated threshold
+make acquisition-validation
 make e2e
-make visual-qa OUT=docs/qa/r6
+make visual-qa OUT=docs/qa/r7
+```
+
+**If the comparable corpus is empty**, the pages are gitignored and were fetched, not
+committed:
+
+```bash
+make fetch-transactions FROM=2017 TO=2026   # ~40 s, 3.5 s between requests
+make import-transactions
+make transaction-coverage                    # expect 565 trades / 1,225 sides / 337 rankable
 ```
 
 In order:
 
-1. **Comparable-trade retrieval** — the plan's R6 headline and the only feature that
-   replaces model output with evidence.
-2. Lineup-aware fit stays blocked on the absent Kaggle dataset. `TeamPlayerOnOffDetails` is
-   **Large**: it requires changing `client.fetch_dataframe`'s single-dataset contract that
-   all six existing endpoints flow through, plus a `uq_pss` key change.
+1. **Widen the corpus, behind the R3 gate.** 407 of 565 ingested trades are unrankable only
+   because their feature season sits outside 2023-24 … 2025-26. Sync
+   `LeagueDashPlayerStats` (Base, Advanced) + `PlayerEstimatedMetrics` for 2016-17 … 2022-23
+   into a **scratch copy**; do **not** add them to `history_seasons`. Then re-run the R3
+   gate: `add_zscores` standardizes within season and `_team_tei_transitions` filters to
+   `history_season_list`, so every figure *should* be bit-identical — and if one is not,
+   stop, because the window filtering has a leak and finding it is the release. Then re-run
+   both R6 batteries; if archetype precision falls, that is evidence the current numbers
+   were partly a small-corpus artifact and belongs in the report.
+2. **Let a suggested acquisition package include picks.** Draft capital cannot currently
+   constrain the acquisition path because it proposes players only. The valuation it needs
+   already exists (R5-2), including its refusals.
+3. **Narrow the bare `except Exception`** in `generate_candidates` and now also in
+   `acquisition._evaluate_feasibility`. Both count and report rather than swallow, which is
+   already better than R5.5 found — but a schema drift still reads as a modelling outcome.
+4. Then the plan's own R7: `EFF` reclassification with a third field category (C12, the last
+   strict xfail); the minimum-GP filter and percentile-population fix in Player Explorer;
+   favourite-team persistence with a `storage` listener; component extraction from the
+   trade-evaluator page, which R6 grew rather than shrank; TradeLab → RosterLab in the stale
+   docs; rewrite or delete `docs/demo-script.md`.
 
 **Do not re-open the rotation allocator's level model without new data.** R5.5 measured
 three alternatives out of sample over 60 team-season transitions and every one lost:
@@ -544,6 +658,11 @@ Five things R5 established that R6 must not undo:
 
 ## Push status
 
-`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`9efe8d7`** (R5.5) plus
-the R5.5 report and this state file. `main` untouched; no history rewritten; nothing
-force-pushed; no `git stash` used at any point.
+`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`623134f`** (R6) plus the
+R6 report and this state file. `main` untouched; no history rewritten; nothing force-pushed;
+no `git stash` used at any point.
+
+**No raw dataset is committed.** The only data-adjacent files in the R6 diff are a
+hand-written synthetic test fixture (`backend/tests/fixtures/bbref_transactions_sample.html`,
+marked as such in its own HTML comment), `data/imports/README.md`, and
+`data/imports/transactions/.gitkeep`.
