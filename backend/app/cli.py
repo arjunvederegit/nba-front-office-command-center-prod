@@ -36,6 +36,10 @@ Commands
                    name is recorded as unresolved and filed as a data-quality warning.
   transaction-coverage
                    Report what the imported corpus contains without importing anything.
+  acquisition-validation
+                   Run the need-driven acquisition validation battery over the whole
+                   league: need-filter differentiation, same-need versus cross-need
+                   agreement, the shuffled-need null, and a team-type breakdown.
   comparable-validation
                    Run the comparable-trade validation battery: perturbation stability,
                    scale-form and distance-form sensitivity, single-dimension and
@@ -169,6 +173,15 @@ def main() -> None:
             summary = import_transactions(db, source)
         print(json.dumps(summary, indent=2, default=str))
         if summary.get("error"):
+            sys.exit(2)
+    elif command == "acquisition-validation":
+        from app.services.acquisition_validation import run_battery as acquisition_battery
+
+        with SessionLocal() as db:
+            report = acquisition_battery(db)
+        print(json.dumps(report, indent=2, default=str))
+        if report["failed"]:
+            print(f"\nFAILED: {', '.join(report['failed'])}")
             sys.exit(2)
     elif command == "comparable-validation":
         from app.analytics.comparables_validation import run_battery

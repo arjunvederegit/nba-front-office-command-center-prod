@@ -19,6 +19,7 @@ from app.db.models import (
     TeamNeed,
     TeamSeasonStats,
 )
+from app.services.acquisition import DEFAULT_LIMIT, acquisition_targets
 from app.services.payroll import team_payroll_summary
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -216,6 +217,41 @@ def get_needs(team_id: str, db: Session = Depends(get_db)) -> dict:
         "method": "Transparent percentile rules over real team statistics and roster "
         "composition (see /methodology); no LLM involvement.",
     }
+
+
+@router.get(
+    "/{team_id}/acquisition-targets",
+    summary="Start from a need: who addresses it, what it would cost, and the trade",
+    description=(
+        "Diagnosis to trade in one call. The chosen need defaults to the most severe one "
+        "a player skill can address; candidates are **filtered** to players above this "
+        "roster's own level in that skill and **ranked** by projected win change, and "
+        "both rules are named in the response.\n\n"
+        "Each target is then put through the trade evaluator with a package that balances "
+        "its modelled value, and returned only if both sides clear the conditions the "
+        "candidate generator already applies. Set `feasible_only=false` to see the "
+        "unfiltered ranking — across the 30 ingested rosters that filter takes the number "
+        "of distinct players appearing in a top five from 26 to 72."
+    ),
+)
+def team_acquisition_targets(
+    team_id: str,
+    need_key: str | None = None,
+    limit: int = DEFAULT_LIMIT,
+    sort: str = "impact",
+    feasible_only: bool = True,
+    scenario_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    return acquisition_targets(
+        db,
+        team_id,
+        need_key=need_key,
+        limit=limit,
+        sort=sort,
+        feasible_only=feasible_only,
+        scenario_id=scenario_id,
+    )
 
 
 @router.get("/{team_id}/payroll")
