@@ -57,6 +57,9 @@ data/imports/*
 !data/imports/contracts/
 data/imports/contracts/*
 !data/imports/contracts/.gitkeep
+!data/imports/transactions/
+data/imports/transactions/*
+!data/imports/transactions/.gitkeep
 
 # Visual-QA working artifacts (regenerate with scripts/visual_qa.mjs)
 docs/qa/

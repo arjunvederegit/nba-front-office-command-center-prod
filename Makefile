@@ -10,7 +10,8 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
         sync-data build-features train score seed-config migrate e2e help \
         index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
         purge-fixtures import-contracts contract-coverage \
-        import-draft-picks pick-ownership
+        import-draft-picks pick-ownership fetch-transactions import-transactions \
+        transaction-coverage
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -112,3 +113,12 @@ import-draft-picks: ## Import pick ownership from the local RealGM snapshot (dat
 
 pick-ownership: ## Report verified pick ownership for a draft year (YEAR=2029 ROUND=1)
 	cd $(BACKEND) && .venv/bin/python -m app.cli pick-ownership $(YEAR) $(ROUND)
+
+fetch-transactions: ## Fetch BBRef season transaction pages into data/imports/ (FROM=2017 TO=2026)
+	cd $(BACKEND) && .venv/bin/python -m app.cli fetch-transactions $(FROM) $(TO) $(if $(FORCE),--force,)
+
+import-transactions: ## Parse the local transaction snapshots into historical_trades
+	cd $(BACKEND) && .venv/bin/python -m app.cli import-transactions
+
+transaction-coverage: ## Report what the imported historical-trade corpus contains
+	cd $(BACKEND) && .venv/bin/python -m app.cli transaction-coverage

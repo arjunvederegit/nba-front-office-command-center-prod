@@ -268,6 +268,99 @@ class Transaction(Base, ProvenanceMixin):
     occurred_on: Mapped[date | None] = mapped_column(Date)
 
 
+class HistoricalTrade(Base, ProvenanceMixin):
+    """A completed NBA trade, as a secondary provider reported it.
+
+    Separate from `TradeProposal` on purpose: a proposal is something a user built and
+    this is something that happened. They share no lifecycle, no editability and no
+    identity, and folding the two into one table would make "did this trade occur?" a
+    column rather than a table.
+
+    `n_teams` is the source's own count, cross-checked against the distinct teams the
+    legs name. The two agree on all 565 trades in the ten-season corpus, and the importer
+    files a data-quality warning where they would not.
+    """
+
+    __tablename__ = "historical_trades"
+    __table_args__ = (
+        UniqueConstraint("source_provider", "source_record_id", name="uq_historical_trade"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
+    season: Mapped[str] = mapped_column(String(10), index=True)
+    transaction_date: Mapped[date] = mapped_column(Date, index=True)
+    n_teams: Mapped[int] = mapped_column(Integer)
+    #: The source's sentence, flattened to text and kept verbatim. Everything derived
+    #: below can be checked against it by a person.
+    source_text: Mapped[str] = mapped_column(Text)
+    #: The source's trailing notes — pick conditions and trade-exception sentences — kept
+    #: verbatim for the same reason.
+    notes_text: Mapped[str | None] = mapped_column(Text)
+    #: Asset phrases the grammar did not recognize. Kept rather than dropped: a trade with
+    #: an unreadable leg is still a real trade, and pretending the leg was empty is how a
+    #: retrieval engine ends up comparing against a deal that never happened.
+    unparsed_assets: Mapped[list] = mapped_column(JSON, default=list)
+    #: Teams the notes say received a trade exception, resolved against this trade's own
+    #: participants. A city naming two participants (Los Angeles) resolves to neither.
+    trade_exception_team_ids: Mapped[list] = mapped_column(JSON, default=list)
+    trade_exception_unresolved: Mapped[list] = mapped_column(JSON, default=list)
+
+    assets: Mapped[list["HistoricalTradeAsset"]] = relationship(
+        back_populates="trade", lazy="selectin", cascade="all, delete-orphan"
+    )
+
+
+class HistoricalTradeAsset(Base, TimestampMixin):
+    """One asset moving one way in a historical trade.
+
+    Direction is stored per asset rather than per team, because a three-team trade has
+    legs in both directions between the same pair and a per-team representation cannot
+    express that. `from_team_id` / `to_team_id` are nullable only so an unresolvable
+    franchise abbreviation is recorded as unresolved instead of silently dropped; the
+    abbreviations the source printed are always kept.
+    """
+
+    __tablename__ = "historical_trade_assets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
+    trade_id: Mapped[str] = mapped_column(ForeignKey("historical_trades.id"), index=True)
+    asset_type: Mapped[str] = mapped_column(String(20))  # player | pick | cash
+    from_team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"))
+    to_team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"))
+    from_abbreviation: Mapped[str] = mapped_column(String(10))
+    to_abbreviation: Mapped[str] = mapped_column(String(10))
+
+    # --- player legs ---
+    player_id: Mapped[str | None] = mapped_column(ForeignKey("players.id"))
+    #: The name the source printed. Retained even when resolution succeeds, so a wrong
+    #: match is visible rather than hidden behind this database's spelling.
+    player_name: Mapped[str | None] = mapped_column(String(120))
+    #: Basketball-Reference's own player id. Not a RosterLab identity — kept so a
+    #: resolution can be re-checked against the source rather than only against a name.
+    source_player_slug: Mapped[str | None] = mapped_column(String(20))
+    #: How the name became a player here: nba_player_id | exact_name | unaccented |
+    #: suffix_insensitive | *+season | ambiguous | none. Never blank on a player leg.
+    resolution_method: Mapped[str | None] = mapped_column(String(30))
+    via_draft_rights: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # --- pick legs ---
+    draft_year: Mapped[int | None] = mapped_column(Integer)
+    round_number: Mapped[int | None] = mapped_column(Integer)
+    #: unconditional | protected | swap | conditional — the same vocabulary
+    #: `draft_picks.conveyance` uses.
+    conveyance: Mapped[str | None] = mapped_column(String(20))
+    note_text: Mapped[str | None] = mapped_column(Text)
+    #: True when the trade moved more than one pick with this year and round, so the
+    #: source's note could not be bound to exactly one of them. The note is attached to
+    #: both rather than assigned to one by guessing.
+    note_binding_ambiguous: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Who the pick became, where the source says so. Never a traded player.
+    later_selected: Mapped[str | None] = mapped_column(String(120))
+
+    trade: Mapped[HistoricalTrade] = relationship(back_populates="assets")
+    player: Mapped[Player | None] = relationship(lazy="joined")
+
+
 class DraftPick(Base, ProvenanceMixin):
     """Verified pick ownership requires an authoritative provider; hypothetical picks
     used in trade construction live in trade_assets with is_hypothetical=True."""

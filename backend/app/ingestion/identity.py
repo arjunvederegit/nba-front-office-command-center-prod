@@ -69,16 +69,32 @@ class PlayerIdentityIndex:
     returned as an ambiguity rather than resolved by picking.
     """
 
-    def __init__(self, db: Session, season: str):
+    def __init__(
+        self, db: Session, season: str, preferred_player_ids: set[str] | None = None
+    ):
+        """`preferred_player_ids` overrides the tie-break population.
+
+        The default is the current roster, which is right for a contract snapshot: it is
+        about players who are on a team now. It is wrong for a *historical* transaction —
+        a 2016-17 trade is not about whoever holds the name today — so the transaction
+        importer passes the players who actually recorded a season in the trade's own
+        season instead. Passing an empty set disables the tie-break entirely, which
+        leaves a duplicated name reported as ambiguous rather than resolved to the wrong
+        era's player.
+        """
         self._players = list(db.scalars(select(Player)).all())
-        self._rostered: set[str] = {
-            entry.player_id
-            for entry in db.scalars(
-                select(RosterEntry).where(
-                    RosterEntry.season == season, RosterEntry.is_current
-                )
-            ).all()
-        }
+        self._rostered: set[str] = (
+            preferred_player_ids
+            if preferred_player_ids is not None
+            else {
+                entry.player_id
+                for entry in db.scalars(
+                    select(RosterEntry).where(
+                        RosterEntry.season == season, RosterEntry.is_current
+                    )
+                ).all()
+            }
+        )
         self._by_nba_id: dict[int, Player] = {
             p.nba_player_id: p for p in self._players if p.nba_player_id is not None
         }

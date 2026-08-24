@@ -25,6 +25,17 @@ Commands
                    filed as data-quality warnings.
   pick-ownership [year] [round]
                    Report who verifiably controls each team's own pick for a draft.
+  fetch-transactions [first_end_year] [last_end_year]
+                   Fetch Basketball-Reference season transaction pages into
+                   data/imports/transactions/ (gitignored). One request per season,
+                   3.5 s apart, honouring the source's published Crawl-delay. Existing
+                   files are kept unless --force is passed.
+  import-transactions
+                   Parse the local transaction snapshots into historical_trades /
+                   historical_trade_assets. Nothing is fuzzy-matched: an unresolvable
+                   name is recorded as unresolved and filed as a data-quality warning.
+  transaction-coverage
+                   Report what the imported corpus contains without importing anything.
   contract-coverage
                    Report ROSTER-side contract coverage without importing anything:
                    how many rostered players have a salary for the cap league year,
@@ -130,6 +141,34 @@ def main() -> None:
         print(json.dumps(summary, indent=2, default=str))
         if summary.get("error"):
             sys.exit(2)
+    elif command == "fetch-transactions":
+        from app.ingestion.transactions.fetch import FetchRefused, fetch_seasons
+
+        args = [a for a in sys.argv[2:] if not a.startswith("--")]
+        first = int(args[0]) if args else 2017
+        last = int(args[1]) if len(args) > 1 else date.today().year
+        try:
+            summary = fetch_seasons(first, last, force="--force" in sys.argv[2:])
+        except FetchRefused as exc:
+            print(f"fetch-transactions refused: {exc}")
+            sys.exit(2)
+        print(json.dumps(summary, indent=2, default=str))
+        if summary["failed"]:
+            sys.exit(2)
+    elif command == "import-transactions":
+        from app.ingestion.transactions.importer import import_transactions
+
+        source = sys.argv[2] if len(sys.argv) > 2 else None
+        with SessionLocal() as db:
+            summary = import_transactions(db, source)
+        print(json.dumps(summary, indent=2, default=str))
+        if summary.get("error"):
+            sys.exit(2)
+    elif command == "transaction-coverage":
+        from app.ingestion.transactions.importer import coverage_summary
+
+        with SessionLocal() as db:
+            print(json.dumps(coverage_summary(db), indent=2, default=str))
     elif command == "pick-ownership":
         from app.ingestion.draft_picks import ownership_summary
 
