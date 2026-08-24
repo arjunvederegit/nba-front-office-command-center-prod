@@ -32,10 +32,23 @@ about what it doesn't know.
    Carlo bands, tornado sensitivity, confidence level.
 5. **Comparison** — 2–5 alternatives: table, Pareto dominance flags, first-place
    share under sampled weights, rank volatility.
-6. **Executive report** — deterministic 9-section memo (Markdown + printable HTML).
+6. **Decision memo** — deterministic, Markdown / printable HTML / JSON, for a saved
+   trade *or* one the user is still building (`POST /trades/memo`). Recommendation,
+   what changes on the floor including the rotation consequences, roster fit in the
+   model's own terms, cost in salary and draft capital, the CBA rules that fired,
+   comparable completed trades, risks, and one consolidated section naming everything
+   the memo could not establish.
 7. **Candidate generation** — constrained beam search with both-sides utility
    floors; labeled as model exploration.
-8. **Data health** — provider status, per-table freshness, sync runs, quality
+8. **Comparable trades** — retrieval over 565 completed trades (2016-17 … 2025-26),
+   from one team's side, with a per-dimension similarity breakdown, the dimensions that
+   could not be compared, and the fields deliberately excluded from the similarity.
+   `make comparable-validation` re-runs the battery the method rests on.
+9. **Need-driven acquisition** — begin from a diagnosed weakness rather than a trade:
+   candidates filtered by the need, ranked by projected wins, each already run through
+   the trade evaluator with a balancing package, and a link that opens that deal.
+   Both rules are printed in the response; the search's own rejection tally is too.
+10. **Data health** — provider status, per-table freshness, sync runs, quality
    issues, model versions.
 
 ## Data requirements

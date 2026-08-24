@@ -43,6 +43,40 @@ always display their own `source_name`/`source_date` and are never described as
 NBA.com data. **No provider configured ⇒ salary features are unavailable, and
 legality caps at `conditionally_valid`.**
 
+## Secondary (optional): completed trades
+
+`nba_api` publishes no transaction history. Source: **Basketball-Reference season
+transaction pages**, `/leagues/NBA_<year>_transactions.html`, one page per season.
+
+`make fetch-transactions FROM=2017 TO=2026` is the only fetcher in this repository, and
+it exists because ten pages is too many to save by hand and they change as a season
+advances. It reads its constraints from the source's own published policy rather than
+assuming them: `robots.txt` allows `/leagues/` for `User-agent: *` and publishes
+`Crawl-delay: 3`, so requests are **3.5 seconds apart**, one per season page, following
+no links, with a user agent that names the project. A `provenance.json` sidecar records
+each page's URL, HTTP status, byte count, SHA-256 and retrieval timestamp, so any parsed
+row can be traced to the exact bytes it came from. Pages already present are not
+re-requested.
+
+Raw pages land in `data/imports/transactions/`, which is **gitignored in full** and never
+redistributed. `make import-transactions` parses them into `historical_trades` /
+`historical_trade_assets`; only normalized, attributable rows enter the database. On the
+2016-17 … 2025-26 corpus that is 565 trades, 2,568 asset legs, 89.4 % of player legs
+resolved, five unreadable asset phrases kept verbatim and filed as warnings, and nothing
+fuzzy-matched.
+
+The same `robots.txt` **disallows** `*/on-off/` and `*/lineups/`, which is one of the
+measurements behind R6's decision not to build a lineup-aware fit model
+(see [limitations.md](limitations.md)).
+
+## Measured, never stored: lineup availability
+
+`make lineup-availability` asks NBA.com `LeagueDashLineups` how many minutes two-, three-
+and five-man groups actually played, and prints the standard error a net-rating estimate
+would carry at each. It reads sample sizes and throws the rows away — there is no table
+behind it, no ingestion path, and no NBA.com payload is retained. It exists so a
+deferral made on measurement can be re-checked rather than believed.
+
 ## Not sourced (by design)
 
 - **Injuries** — no provider bundled; availability uses historical games played

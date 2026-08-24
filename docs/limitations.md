@@ -17,6 +17,10 @@ itself, not fine print.
   provider error rather than hiding).
 - NBA.com may change or throttle endpoints without notice; the client fails to
   classified errors and retains the last valid snapshot with stale badges.
+- **No historical salaries.** The comparable-trade corpus knows what moved in 565
+  completed trades and nothing about what any of it was paid. Salary is therefore
+  excluded from the similarity, and the response says so rather than scoring the
+  query's money against nothing (R6-2).
 
 ## Modeling
 
@@ -77,6 +81,65 @@ itself, not fine print.
   a deal, and with that coverage they are not evidence of anything league-wide either.
   R5 rebuilds the search salary-matched and deterministic.
 
+### Comparable trades stop where the player model does (R6-2)
+
+Ten seasons of Basketball-Reference transaction pages are ingested — **565 trades,
+2,568 asset legs, 69 of them involving three or more teams**. Only some can be
+*ranked*, because ranking needs the on-court value of every player in a trade and
+`player_season_stats` holds 2023-24, 2024-25 and 2025-26:
+
+| | |
+| --- | --- |
+| trades ingested | 565 (2016-17 … 2025-26) |
+| team-sides | 1,225 |
+| sides whose feature season is inside the modelled window | 352 |
+| ...rankable | **337** |
+| ...withheld because a player in them has no modelled production | 15 |
+
+The 15 are withheld rather than priced at zero: each contains a player who had played
+in the NBA before the trade but recorded no minutes in its feature season, and pricing
+him at zero would understate the package by an unknown amount. A player who had
+recorded **no** NBA season before the trade — a draft right, a rookie moved on draft
+night — contributes zero, which is a measurement rather than an imputation.
+
+**1,341 of 1,500 player legs (89.4 %) resolve to a player in this database.** The 159
+that do not are almost entirely draft-rights players who never appeared in an NBA game;
+each is filed as a data-quality warning and none is fuzzy-matched.
+
+The restriction is not purely a loss. The 2023 CBA changed how trades are built, and
+the corpus shows it: across all ten seasons the share of moved picks carrying a
+condition rose from **0.217 to 0.442** and the multi-team share from 0.163 to 0.247. A
+2019 comparable is a comparable under different rules.
+
+### Lineup-aware fit is deferred, on measurement (R6-4)
+
+Not "not built yet" — measured and refused. `nba_api`'s `LeagueDashLineups` is reachable
+and returns real data; on 2024-25 totals, over the top 2,000 groups by minutes:
+
+| group size | median minutes | share ≥ 200 min | implied sd of net rating |
+| --- | --- | --- | --- |
+| 2 | 376.9 | 88.4 % | 3.7 per 100 |
+| 3 | 249.4 | 66.6 % | 4.6 per 100 |
+| 5 | **20.2** | **1.6 %** | **16.1** per 100 |
+
+At five-man level the estimate is noise: 16 points per 100 possessions against a league
+team spread of roughly ±10, and that is the median of the *top* 2,000 groups. Two- and
+three-man groups are estimable and still do not give a trade-fit model — a trade prices
+combinations that have never played together, so observed groups can only support a
+synergy model, and nothing here holds a held-out target to validate one against. Any
+target built from on-court net rating is also the circularity R4-2 withdrew a claim
+over.
+
+Two independent confirmations: the local Kaggle `nbadb` play-by-play ends **2023-06-12**,
+before the first season this product models, and Basketball-Reference's `robots.txt`
+disallows `*/on-off/` and `*/lineups/` outright.
+
+`make lineup-availability` re-runs the measurement, so the deferral can be overturned by
+evidence rather than becoming folklore. What *is* built is **roster composition** —
+minutes by player role before and after a trade, against the league's own distribution —
+and it says in its own text that it is not lineup data and makes no claim about on-court
+synergy.
+
 ## What the product refuses to answer
 
 - **An illegal trade gets no decision score.** When any participating team's verdict is
@@ -89,6 +152,19 @@ itself, not fine print.
   0 %, when no players move.
 - **Zeroing every weight yields no score**, rather than silently restoring a uniform
   prior over components the user switched off.
+- **A comparable trade is not a prediction.** Nothing in the retrieval reads what
+  happened after the trades it returns. Resemblance is evidence about precedent, not
+  about consequence, and a historical deal that worked is not an argument that yours
+  will (R6-2).
+- **A target list is not an offer.** Acquisition targets are filtered by a diagnosed
+  need and ranked by projected wins, then put through the trade evaluator under the
+  conditions the candidate generator applies. Surviving those is not evidence that the
+  other front office would accept, and how central a player is to his own team is
+  reported, never scored (R6-3).
+- **A need no player skill addresses returns nothing, and says why.** San Antonio's only
+  measured weakness on the ingested data is point-of-attack defence, which R4-2
+  withdrew every player-side claim over; the response names the need and quotes the
+  reason rather than returning an empty list.
 
 ## CBA coverage
 
@@ -102,7 +178,7 @@ honest bounds). **TradeLab is not an official cap-management product.**
 
 - Dev-mode cache is in-process (single instance); Redis semantics only in
   compose/production.
-- Backend coverage is **72 %** overall, enforced by a `--cov-fail-under` floor in CI
+- Backend coverage is **88 %** overall, enforced by a `--cov-fail-under=85` floor in CI
   — core domain logic (CBA rules, analytics) is the tested surface; network-touching
   ingestion paths are exercised by probe scripts and classified-error tests rather
   than live CI calls. (`ingestion/jobs.py` remains at 0 %; R5 addresses it.)

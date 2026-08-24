@@ -246,3 +246,72 @@ Carlo error (the regression test's tolerance is the simulation's own standard er
 it tightens automatically if the draw count rises). The median sits slightly off it
 because the availability beta is skewed, which is a real property of the distribution
 rather than a disagreement; `mean` is therefore reported alongside the quantiles.
+
+## ADR-18 · A comparable is a **side**, not a trade (R6-2)
+
+**Context:** "Boston traded Marcus Smart for Kristaps Porziņģis" and "Washington traded
+Kristaps Porziņģis for Marcus Smart" are one transaction. A front office asking for
+precedent is not asking about the transaction; it is asking what happened to teams that
+did what it is about to do.
+
+**Decision:** the retrieval unit is one team's view of one trade. A three-team trade
+contributes three of them, direction lives on the asset rather than on the team, and a
+result list returns at most one side of any transaction — both remain in the corpus and
+both are ranked.
+
+**Consequences:** the corpus is 1,225 sides over 565 trades, 337 of them rankable. The
+direction of a deal became a first-class property, which is what made
+`direction_confusion` measurable at all: of the neighbours returned for a side that sold
+on-court value for first-round picks, **1.0 %** are sides that bought it.
+
+## ADR-19 · Similarity excludes what only one half can state (R6-2)
+
+**Context:** a distance is a claim that two things are alike in the dimensions it reads.
+Three dimensions are available on only one side of the comparison: salary (no historical
+contracts exist here), cash and trade exceptions (the corpus states both, a *proposed*
+trade states neither), and the outcome.
+
+**Decision:** none of the three is scored. Cash and trade exceptions are reported as
+attributes of a neighbour; salary and outcome are named in a `not_scored` block with the
+reason on each.
+
+**Consequences:** a feature the query can only ever answer "no" to would have penalized
+the **37 %** of completed trades whose notes report a trade exception — a systematic bias
+that would have looked like a preference for clean two-team deals. And the product never
+implies that a comparable predicts anything: "resemblance is not consequence" is in the
+panel's own text and in the memo, not in a tooltip.
+
+## ADR-20 · A target list ranks on wins and filters on the need — not one blended score (R6-3)
+
+**Context:** need-driven discovery has to combine "does he fix our problem" with "is he
+any good". A single score needs a weight between them, and nothing in this repository
+labels a target as good, so the weight could not be fitted.
+
+**Decision:** two rules, both printed in the response. Filter on the need; rank on the
+projected win change from adding the player. `sort=need` reorders by need improvement
+instead. Ranking on `fit` was rejected because `fit_score` normalises minutes within a
+side, so an 8-minute specialist scores like a 32-minute starter.
+
+**Consequences:** ranking by wins alone gave all 30 teams the same names — **26 distinct
+players** across every team's top five. Putting each candidate through the trade
+evaluator under the candidate generator's own conditions took that to **72**, and made
+the acquisition path and the generator agree by construction about what a front office
+would accept.
+
+## ADR-21 · Lineup-aware fit is refused on a measurement, not deferred on a schedule (R6-4)
+
+**Context:** R6's third objective was a lineup-aware fit "where the available data
+honestly permits it". The obvious answer — "the data is missing" — was not true:
+`LeagueDashLineups` is reachable and returns real five-man data.
+
+**Decision:** measure the samples instead of assuming them. At the median five-man group
+among the top 2,000 by minutes (20.2 minutes, 2024-25) a net-rating estimate carries a
+standard error of about **16 points per 100 possessions**, against a league team spread
+of roughly ±10. Two- and three-man groups are estimable and still cannot support a
+*trade* fit model, because a trade prices combinations that have never played together
+and nothing here holds a held-out target to validate a synergy model against.
+
+**Consequences:** what shipped is roster composition — minutes by role, before and after,
+against the league's own distribution — labelled in its own text as not lineup data.
+`make lineup-availability` re-runs the measurement, so the refusal is falsifiable rather
+than permanent.

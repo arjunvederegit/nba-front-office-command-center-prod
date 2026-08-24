@@ -418,6 +418,153 @@ The Stepien rule now **certifies the teams the source resolves** and reports `un
 — naming the specific clause — for the rest. One unresolved swap is enough: a team's
 ownership picture is then genuinely uncertain, and a pass would be invented.
 
+## 13. Comparable trades (R6-2)
+
+### The unit is a side
+
+"Boston traded Marcus Smart for Kristaps Porziņģis" and "Washington traded Kristaps
+Porziņģis for Marcus Smart" are the same transaction and two different decisions. The
+retrieval unit is therefore **one team's view of one trade**, and a three-team trade
+contributes three of them. At most one side of any transaction is returned in a result
+list; both remain in the corpus and both are ranked.
+
+### The distance
+
+Sixteen features in six dimensions. Each dimension's distance is the mean over the
+features **both sides state**; the total is the weighted mean over the dimensions that
+survive:
+
+```
+d(a, b) = Σ_g w_g · d_g(a, b) / Σ_g w_g          over dimensions g with data
+d_g     = mean over f in g of  |a_f − b_f| / (|a_f − b_f| + scale_f)
+```
+
+| dimension | w | features |
+| --- | --- | --- |
+| `player_value` | 0.30 | value in, value out, best player in, best player out |
+| `draft_capital` | 0.25 | net firsts, net seconds, picks in, picks out, conditional share |
+| `structure` | 0.20 | players in, players out, teams involved |
+| `age_profile` | 0.10 | minutes-weighted age in, age out |
+| `team_context` | 0.10 | win percentage, gap to the other side |
+| `timing` | 0.05 | in-season or offseason |
+
+**Nothing is truncated.** `|Δ| / (|Δ| + s)` is bounded, monotone and scale-free, so two
+very different trades stay ordered rather than both landing on a ceiling — R5-1a's
+finding applied again; a hard clip at one scale unit put 41 % of corpus pairs on the cap.
+
+**Counts get a declared unit; continuous quantities get the corpus's interquartile
+range.** One pick is one pick. Estimating the pick scales was tried first and
+degenerates: 295 of 337 rankable sides receive no first-round pick, so the interquartile
+range is zero, the median absolute deviation is zero, and the chain falls through to the
+standard deviation — the tail-driven statistic this construction rejects for exactly
+those columns.
+
+**A feature enters only when both sides state it**, and a dimension neither side states
+is dropped with its weight redistributed and its name returned.
+
+### What the similarity deliberately excludes
+
+- **Salary** — no source here carries a historical contract, so scoring the query's
+  money would compare a number against nothing.
+- **Cash and trade exceptions** — the corpus states both, a proposal states neither, so
+  the feature could only ever penalize the 37 % of completed trades that include one.
+  Both are reported as attributes of a neighbour.
+- **What happened next.** Nothing reads the outcome.
+
+### Validation
+
+`make comparable-validation`, leave-one-out over 337 sides at k = 5:
+
+| check | measured | gate | |
+| --- | --- | --- | --- |
+| Perturbation stability (±10 % of each feature's scale) | **0.674** | ≥ 0.60 | ✅ |
+| Scale form — standard deviation instead of IQR | **0.756** | ≥ 0.50 | ✅ |
+| Scale form — min-max | 0.449 | reported | null, see below |
+| Distance form — hard clip instead of saturation | **0.700** | ≥ 0.50 | ✅ |
+| Best single-dimension null | **0.094** | ≤ 0.75 | ✅ |
+| Archetype recovery, lift over a shuffled-feature corpus | **0.422** | ≥ 0.10 | ✅ |
+| Direction confusion (selling retrieved as buying) | **0.010** | ≤ 0.05 | ✅ |
+
+Archetype precision@5 is **0.817** against a 0.414 base rate; a random ranker scores
+0.397 and a corpus whose feature vectors have been permuted between sides scores 0.395 —
+both land on the base rate, which is what a null must do. Leave-one-dimension-out shows
+draft capital drives the list hardest (0.291 overlap without it), then player value
+(0.364) and structure (0.396); timing barely matters (0.738). Neighbours do not cluster
+in the query's own season (0.383 against a 0.348 base rate), so this is not a date
+lookup.
+
+**Min-max scaling is a null, not an alternative.** It takes every feature's unit from the
+single most extreme trade in the corpus — a seven-team deal moving six first-round picks
+— which is the failure the declared scales exist to avoid. Its 0.449 overlap is
+reported, never gated: agreement with a scaling that is known to be wrong would be the
+bad outcome.
+
+**The weights are chosen by construct and they matter.** Uniform weights change 55 % of
+the returned list (0.445 overlap). Nothing in this repository labels two trades as
+similar, so there is no target to fit them against; what is established is that no
+single dimension reproduces the shipped ranking and that the per-dimension decomposition
+is returned with every result, so the choice is inspectable rather than hidden.
+
+### One criterion was replaced rather than waived
+
+The battery originally asserted that a side whose two directions are genuinely different
+must resemble its own mirror image **less** than two unrelated sides resemble each other.
+It failed, at 0.679 against 0.672 — and the failure is uninformative, because similarity
+*levels* on this corpus compress into p05 0.510 … p95 0.865, so 0.007 of level is not
+evidence about a list. The list is what the product shows, and by list the mirror is far
+away: injected into the corpus it is the nearest neighbour for 4 of 141 asymmetric
+sides, reaches the top five for 16, and sits at median rank 67 of 338. Direction
+confusion measured on **real** trades replaces it, at 0.010. Both figures are still
+reported.
+
+## 14. Need-driven acquisition (R6-3)
+
+Two rules, stated in every response and deliberately not merged:
+
+- **Filter** — the player's percentile in the skill that addresses the chosen need must
+  exceed the acquiring roster's own level in that skill (its third-best rotation value,
+  the same definition §5 uses for "already strong here").
+- **Rank** — the projected win change from adding him, from §6, before anything leaves.
+
+Ranking on `fit` was rejected for a reason §5's own construction records: `fit_score`
+normalises minutes within each side, so a package's size cancels and an 8-minute
+specialist scores like a 32-minute starter. A single blended score was rejected because
+the weight between need and impact cannot be fitted — nothing here labels a target as
+good.
+
+**Feasibility is what makes it a target list rather than a leaderboard.** Ranking by
+projected wins alone gave all 30 teams the same names: 26 distinct players across every
+team's top five. Each candidate is now put through the trade evaluator with a package
+that balances its modelled value, and kept only if it clears the conditions the
+candidate generator already applies — both sides above 50, neither worse than −2
+projected wins, not verified illegal. Distinct players across the league's top fives:
+**26 → 72**.
+
+`make acquisition-validation`, over the 30 ingested rosters:
+
+| check | measured | gate | |
+| --- | --- | --- | --- |
+| Need filter differentiates (distinct-player ratio) | **2.77** | ≥ 1.5 | ✅ |
+| Same-need teams hear more alike than cross-need teams | **+0.090** | ≥ 0.05 | ✅ |
+| ...but not identical (same-need overlap) | **0.113** | ≤ 0.9 | ✅ |
+| Every returned target improves its need | **1.000** | = 1.0 | ✅ |
+| Shuffled-need null (overlap with the team's own list) | 0.160 | reported | |
+
+Cross-need overlap is 0.023 against same-need 0.113, and re-running a team with another
+team's diagnosed need changes 84 % of its list.
+
+## 15. Rotation shape (R6-4)
+
+Minutes by player role before and after a trade, from §3's deterministic roles and the
+**same** §6 allocation the projection used — never re-derived, because calling the
+allocator twice is the defect R5.5 fixed. A role is congested when its post-trade minutes
+exceed the 90th percentile of that role across the 30 ingested teams, computed from each
+team's own allocated rotation; every team contributes a zero for a role it does not hold,
+so a rare role's threshold is not high *because* it is rare.
+
+This is roster composition, not lineup data. Nothing here knows who is on the floor
+together. See [limitations.md](limitations.md) for the measurement behind that.
+
 ## Reproducibility
 
 Fixed seed (20260720) for all stochastic steps; every model version records

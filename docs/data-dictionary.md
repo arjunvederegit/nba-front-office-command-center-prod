@@ -27,9 +27,22 @@ External NBA identifiers are separate columns (`nba_team_id`, `nba_player_id`,
 | `contracts` | header: type, signed_date, no_trade_clause, **source_name/source_date shown in UI** |
 | `contract_years` | season, salary, guaranteed, player/team options |
 | `injuries` | empty unless an injury provider is configured — never fabricated |
-| `transactions` | reserved for a transaction provider |
+| `transactions` | reserved for a per-player transaction provider; unused |
 | `draft_picks` | `is_verified` false unless an authoritative provider exists |
 | `league_cap_parameters` | per league year: cap, tax, aprons, minimum, source + verification timestamp, `extras` JSON |
+
+## Completed trades (R6)
+
+Separate from `trade_proposals` on purpose: a proposal is something a user built and can
+edit, a historical trade is something that happened and cannot be. Separate from
+`transactions` because that table is one row per (player, team, type) and cannot express
+a trade at all — the corpus holds 69 trades with three or more teams, one with seven,
+where the same franchise both sends and receives.
+
+| Table | Grain | Notes |
+| --- | --- | --- |
+| `historical_trades` | one completed trade | season, date, `n_teams`, the source's sentence and notes kept **verbatim**, `unparsed_assets` (phrases the grammar could not read — five in ten seasons, kept rather than dropped), `trade_exception_team_ids` resolved against the trade's own participants and `trade_exception_unresolved` where a city names two of them |
+| `historical_trade_assets` | one asset moving one way | direction lives on the asset, because a three-team trade has legs both ways between the same pair. Player legs carry `player_name` as printed, `source_player_slug` (Basketball-Reference's id, kept so a resolution can be re-checked against the source) and `resolution_method`, which is `ambiguous` or `none` where the name did not resolve. Pick legs carry `conveyance` in the same vocabulary `draft_picks` uses, the source's `note_text`, `note_binding_ambiguous` where a trade moved two picks of one year and round, and `later_selected` where the source says who the pick became |
 
 ## Data engineering
 
