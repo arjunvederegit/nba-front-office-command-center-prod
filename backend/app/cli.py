@@ -40,6 +40,11 @@ Commands
                    Run the need-driven acquisition validation battery over the whole
                    league: need-filter differentiation, same-need versus cross-need
                    agreement, the shuffled-need null, and a team-type breakdown.
+  lineup-availability [season]
+                   Measure whether NBA.com lineup data could support a lineup-aware fit
+                   model: group counts, minutes distributions and the implied standard
+                   error of a net-rating estimate at each group size. Network required;
+                   nothing is stored.
   comparable-validation
                    Run the comparable-trade validation battery: perturbation stability,
                    scale-form and distance-form sensitivity, single-dimension and
@@ -57,6 +62,7 @@ Commands
 """
 
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import date, datetime
@@ -68,6 +74,19 @@ from app.core.logging import configure_logging, get_logger
 from app.db.base import SessionLocal
 
 logger = get_logger(__name__)
+
+#: Commands that reach a third party. `ROSTERLAB_OFFLINE=1` refuses them.
+#:
+#: The test suite sets it, and it has to: `test_every_documented_command_is_reachable`
+#: executes every command named in this docstring, which for these two means a real
+#: request to Basketball-Reference or NBA.com on every `pytest` run — ten pages at a
+#: 3.5-second crawl delay in the first case. A test suite is not a reason to make traffic
+#: on someone else's servers, and a CI runner is not a reason either.
+NETWORK_COMMANDS = frozenset({"fetch-transactions", "lineup-availability"})
+
+
+def offline() -> bool:
+    return os.environ.get("ROSTERLAB_OFFLINE", "").strip() not in ("", "0", "false", "False")
 
 
 def seed_config() -> None:
@@ -113,6 +132,18 @@ def main() -> None:
         print(__doc__)
         sys.exit(1)
     command = sys.argv[1]
+    if command in NETWORK_COMMANDS and offline():
+        print(
+            json.dumps(
+                {
+                    "refused": command,
+                    "reason": "ROSTERLAB_OFFLINE is set, and this command reaches a "
+                    "third-party service",
+                },
+                indent=2,
+            )
+        )
+        sys.exit(3)
 
     from app.ingestion import jobs
 
@@ -173,6 +204,15 @@ def main() -> None:
             summary = import_transactions(db, source)
         print(json.dumps(summary, indent=2, default=str))
         if summary.get("error"):
+            sys.exit(2)
+    elif command == "lineup-availability":
+        from app.analytics.lineup_availability import measure
+
+        season = sys.argv[2] if len(sys.argv) > 2 else "2024-25"
+        try:
+            print(json.dumps(measure(season), indent=2, default=str))
+        except Exception as exc:  # network or upstream failure, reported not swallowed
+            print(json.dumps({"error": type(exc).__name__, "message": str(exc)[:300]}, indent=2))
             sys.exit(2)
     elif command == "acquisition-validation":
         from app.services.acquisition_validation import run_battery as acquisition_battery

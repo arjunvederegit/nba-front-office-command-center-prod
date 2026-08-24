@@ -11,7 +11,7 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
         index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
         purge-fixtures import-contracts contract-coverage \
         import-draft-picks pick-ownership fetch-transactions import-transactions \
-        transaction-coverage comparable-validation acquisition-validation
+        transaction-coverage comparable-validation acquisition-validation lineup-availability
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -128,3 +128,6 @@ comparable-validation: ## Run the comparable-trade validation battery (fails on 
 
 acquisition-validation: ## Run the need-driven acquisition battery over the league
 	cd $(BACKEND) && .venv/bin/python -m app.cli acquisition-validation
+
+lineup-availability: ## Re-measure whether lineup data could support a fit model (network)
+	cd $(BACKEND) && .venv/bin/python -m app.cli lineup-availability $(SEASON)

@@ -36,10 +36,12 @@ from app.analytics.picks import (
 from app.analytics.projection import (
     ROTATION_DEPTH,
     RotationPlayer,
+    RotationResult,
     allocate_rotation,
     net_rating_delta_to_wins,
     team_tei_to_net_rating_delta,
 )
+from app.analytics.roster_shape import league_role_reference, role_minutes, shape_report
 from app.analytics.sensitivity import (
     component_contributions,
     composite_utility,
@@ -59,9 +61,11 @@ from app.core.cache import get_cache
 from app.db.models import (
     ModelVersion,
     Player,
+    PlayerArchetype,
     PlayerImpactEstimate,
     RosterEntry,
     Standing,
+    Team,
     TeamNeed,
 )
 
@@ -211,6 +215,7 @@ class EvaluationService:
         self._needs_cache: dict[str, dict[str, float]] = {}
         self._win_pct_cache: dict[str, float] | None = None
         self._pick_curve_cache: dict[str, float] | None = None
+        self._roles_cache: dict[str, str] | None = None
 
     # ------------------------------------------------------------- data loading
 
@@ -528,6 +533,76 @@ class EvaluationService:
             "baseline_used": baseline_used,
             **({"baseline_note": baseline_note} if baseline_note else {}),
         }
+
+    def _roles(self) -> dict[str, str]:
+        """Player role labels for the current season, from `player_archetypes`.
+
+        `role_id` comes from a frozen append-only map (R4-3), so the label is stable
+        across retrains and can be compared between seasons.
+        """
+        if self._roles_cache is None:
+            rows = self.db.scalars(
+                select(PlayerArchetype).where(
+                    PlayerArchetype.season == self.settings.current_season
+                )
+            ).all()
+            self._roles_cache = {r.player_id: r.label for r in rows}
+        return self._roles_cache
+
+    def _league_role_reference(self) -> dict[str, dict[str, float]]:
+        """Each role's league median and congestion threshold, over the 30 rosters.
+
+        Cached under the data-version namespace, like the skill vectors: it needs one
+        rotation allocation per team, and a request that evaluates a trade has no reason
+        to redo the whole league every time.
+        """
+        cache = get_cache()
+        key = cache.versioned_key("role_minutes", self.settings.current_season)
+        cached = cache.get_json(key)
+        if cached:
+            return cached
+        roles = self._roles()
+        per_team: list[dict[str, float]] = []
+        for team_id in self.db.scalars(select(Team.id)).all():
+            rotation = [
+                RotationPlayer(
+                    player_id=c.player_id,
+                    name=c.name,
+                    tei=c.tei,
+                    baseline_minutes=c.minutes,
+                    availability=1.0 if c.availability is None else c.availability,
+                )
+                for c in self._roster_cards(team_id)
+                if c.tei is not None and c.minutes is not None
+            ]
+            if not rotation:
+                continue
+            per_team.append(role_minutes(allocate_rotation(rotation).minutes, roles))
+        reference = league_role_reference(per_team)
+        cache.set_json(key, reference, ttl_seconds=6 * 3600)
+        return reference
+
+    def _roster_shape(
+        self,
+        rotations: tuple[RotationResult, RotationResult] | None,
+        incoming: list[PlayerCard],
+    ) -> dict:
+        """Role minutes before and after, against the league's own distribution."""
+        if rotations is None:
+            return {
+                "unavailable": (
+                    "the rotation could not be projected, so its shape cannot be "
+                    "reported either"
+                )
+            }
+        before, after = rotations
+        return shape_report(
+            before.minutes,
+            after.minutes,
+            self._roles(),
+            self._league_role_reference(),
+            {c.player_id for c in incoming},
+        )
 
     def _roster_skill_profile(
         self, roster: list[PlayerCard], exclude: set[str]
@@ -1131,6 +1206,9 @@ class EvaluationService:
             if c.tei_sigma is not None
         }
         rotations = perf_detail.pop("_rotations", None)
+        # Roster consequences, computed from the SAME allocation the projection used.
+        # Re-deriving it here would reintroduce exactly the defect R5.5-1 fixed.
+        roster_shape = self._roster_shape(rotations, incoming)
         uncertainty: dict[str, Any]
         if not simulate:
             uncertainty = {
@@ -1213,6 +1291,7 @@ class EvaluationService:
             "weights": weights,
             "detail": {
                 "performance": perf_detail,
+                "roster_shape": roster_shape,
                 "fit": fit_detail,
                 "contract": contract_detail,
                 "timeline": timeline_detail,

@@ -14,6 +14,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+# No test may reach Basketball-Reference or NBA.com. `test_every_documented_command_is_
+# reachable` runs every CLI command, and two of them fetch from a third party; this makes
+# them refuse instead.
+os.environ.setdefault("ROSTERLAB_OFFLINE", "1")
 
 from app.db.models import (  # noqa: E402
     Base,

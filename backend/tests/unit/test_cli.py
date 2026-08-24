@@ -84,8 +84,12 @@ class TestUsage:
             monkeypatch.setattr(cli.sys, "argv", ["cli", command])
             try:
                 cli.main()
-            except SystemExit as exit_info:
-                assert exit_info.value.code != 1 or "unknown command" not in (
+            except SystemExit as exited:
+                # `exited` is the exception, not pytest's ExceptionInfo, so the code is
+                # `exited.code`. It read `.value.code` until R6, and never fired because
+                # no documented command happened to exit in this loop on a machine with
+                # every optional snapshot present — which is not the machine CI runs on.
+                assert exited.code != 1 or "unknown command" not in (
                     capsys.readouterr().out
                 ), command
             except Exception:
@@ -236,3 +240,29 @@ class TestSyncDispatch:
         monkeypatch.setattr(jobs, "sync_all", lambda db: {"teams": 30, "players": 500})
         run(monkeypatch, "sync-all")
         assert printed_json(capsys.readouterr().out)["players"] == 500
+
+
+class TestNetworkCommandsAreRefusedOffline:
+    """Two commands reach a third party, and the suite runs every documented command."""
+
+    def test_declared_network_commands_refuse_when_offline(self, monkeypatch, capsys):
+        for command in sorted(cli.NETWORK_COMMANDS):
+            with pytest.raises(SystemExit) as exit_info:
+                run(monkeypatch, command)
+            assert exit_info.value.code == 3
+            payload = printed_json(capsys.readouterr().out)
+            assert payload["refused"] == command
+            assert "third-party" in payload["reason"]
+
+    def test_every_fetching_command_is_declared(self):
+        """A new command that reaches a third party must be added to the set, or the
+        suite will start making requests on someone else's servers."""
+        assert set(cli.NETWORK_COMMANDS) == {"fetch-transactions", "lineup-availability"}
+
+    def test_the_guard_is_off_by_default(self, monkeypatch):
+        monkeypatch.delenv("ROSTERLAB_OFFLINE", raising=False)
+        assert cli.offline() is False
+        monkeypatch.setenv("ROSTERLAB_OFFLINE", "0")
+        assert cli.offline() is False
+        monkeypatch.setenv("ROSTERLAB_OFFLINE", "1")
+        assert cli.offline() is True
