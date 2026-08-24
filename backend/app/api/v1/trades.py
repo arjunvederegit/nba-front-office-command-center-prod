@@ -7,6 +7,7 @@ from app.api.schemas import (
     ComparablesRequest,
     EvaluateRequest,
     GenerateRequest,
+    MemoRequest,
     ReportFormat,
     TradeIn,
     ValidateRequest,
@@ -29,9 +30,13 @@ from app.db.models import (
 from app.services.candidates import generate_candidates
 from app.services.comparables import ComparableTradeService
 from app.services.evaluation import EvaluationService
-from app.services.reports import build_report_markdown, report_to_html
+from app.services.reports import build_report_markdown, memo_payload, report_to_html
 
 router = APIRouter(prefix="/trades", tags=["trades"])
+
+#: Comparable trades shown in a memo. Three, not twenty-five: the memo is a document a
+#: person reads, and the fourth-closest precedent has never changed anyone's mind.
+MEMO_COMPARABLES = 3
 
 
 def _moves_from_payload(payload: ValidateRequest) -> tuple[list[dict], list[dict]]:
@@ -329,9 +334,97 @@ def saved_trade_comparables(
     return ComparableTradeService(db).find(focal, team_ids, player_moves, pick_moves, k=k)
 
 
+def _memo_markdown(
+    db: Session,
+    *,
+    trade_name: str,
+    team_ids: list[str],
+    player_moves: list[dict],
+    pick_moves: list[dict],
+    focal_team_id: str,
+    strategy: str,
+    legality: dict,
+    evaluations: dict,
+    include_comparables: bool,
+) -> str:
+    """One builder for both memo routes, so a saved trade and an unsaved one cannot
+    diverge into two documents that disagree."""
+    teams = {t.id: t for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()}
+    focal_team = teams.get(focal_team_id)
+    comparables = None
+    if include_comparables:
+        comparables = ComparableTradeService(db).find(
+            focal_team_id, team_ids, player_moves, pick_moves, k=MEMO_COMPARABLES
+        )
+    last_sync = db.scalar(
+        select(DataSyncRun.finished_at)
+        .where(DataSyncRun.status == "succeeded")
+        .order_by(DataSyncRun.finished_at.desc())
+    )
+    return build_report_markdown(
+        trade_name=trade_name,
+        focal_team_name=focal_team.full_name if focal_team else "the focal team",
+        strategy=strategy,
+        legality=legality,
+        evaluations=evaluations,
+        focal_team_id=focal_team_id,
+        data_freshness={"last_sync": last_sync.isoformat() if last_sync else "never"},
+        comparables=comparables,
+    )
+
+
+@router.post(
+    "/memo",
+    summary="Decision memo for a trade that has not been saved",
+    description=(
+        "The same document `/trades/{id}/report` produces, for a deal the user is still "
+        "building. Recommendation, what changes on the floor including the rotation "
+        "consequences, roster fit, cost in salary and draft capital, the CBA rules that "
+        "fired, comparable completed trades, risks, and one consolidated section naming "
+        "everything the memo could not establish."
+    ),
+)
+def trade_memo(payload: MemoRequest, db: Session = Depends(get_db)):
+    if payload.focal_team_id not in payload.team_ids:
+        raise DomainError("focal_team_id must be one of team_ids")
+    player_moves, pick_moves = _moves_from_payload(payload)
+    strategy, weights, _ = _scenario_weights(db, payload.scenario_id)
+    if payload.strategy != "custom":
+        strategy = payload.strategy
+    context = build_trade_context(db, payload.team_ids, player_moves, pick_moves)
+    legality = TradeLegalityEngine().evaluate(context)
+    service = EvaluationService(db)
+    evaluations = {
+        team_id: service.evaluate_for_team(
+            team_id, payload.team_ids, player_moves, pick_moves, strategy, weights, legality
+        )
+        for team_id in payload.team_ids
+    }
+    markdown_text = _memo_markdown(
+        db,
+        trade_name=payload.name,
+        team_ids=payload.team_ids,
+        player_moves=player_moves,
+        pick_moves=pick_moves,
+        focal_team_id=payload.focal_team_id,
+        strategy=strategy,
+        legality=legality,
+        evaluations=evaluations,
+        include_comparables=payload.include_comparables,
+    )
+    if payload.format == "html":
+        return HTMLResponse(report_to_html(markdown_text))
+    if payload.format == "markdown":
+        return PlainTextResponse(markdown_text, media_type="text/markdown")
+    return memo_payload(markdown_text)
+
+
 @router.get("/{trade_id}/report")
 def get_trade_report(
-    trade_id: str, format: ReportFormat = "markdown", db: Session = Depends(get_db)
+    trade_id: str,
+    format: ReportFormat = "markdown",
+    include_comparables: bool = True,
+    db: Session = Depends(get_db),
 ):
     """`format` is a closed set. It used to be a bare `str`, and the `GeneratedReport`
     row was written *before* the branch, so `?format=pdf` returned markdown while
@@ -339,26 +432,21 @@ def get_trade_report(
     detail = _trade_detail(db, trade_id)
     trade = db.get(TradeProposal, trade_id)
     assert trade is not None
+    team_ids, player_moves, pick_moves = _trade_moves(trade)
     strategy, _, scenario_focal = _scenario_weights(db, trade.scenario_id)
     focal_team_id = scenario_focal or detail["teams"][0]["team_id"]
-    focal_team_name = next(
-        (t["name"] for t in detail["teams"] if t["team_id"] == focal_team_id),
-        detail["teams"][0]["name"],
-    )
 
-    last_sync = db.scalar(
-        select(DataSyncRun.finished_at)
-        .where(DataSyncRun.status == "succeeded")
-        .order_by(DataSyncRun.finished_at.desc())
-    )
-    markdown_text = build_report_markdown(
+    markdown_text = _memo_markdown(
+        db,
         trade_name=detail["name"],
-        focal_team_name=focal_team_name,
+        team_ids=team_ids,
+        player_moves=player_moves,
+        pick_moves=pick_moves,
+        focal_team_id=focal_team_id,
         strategy=strategy,
         legality=detail["legality"],
         evaluations=detail["evaluations"],
-        focal_team_id=focal_team_id,
-        data_freshness={"last_sync": last_sync.isoformat() if last_sync else "never"},
+        include_comparables=include_comparables,
     )
     response = (
         HTMLResponse(report_to_html(markdown_text))

@@ -214,11 +214,16 @@ def test_trade_save_report_and_comparison(client, seeded):
 
     report = client.get(f"/api/v1/trades/{trade1['id']}/report")
     assert report.status_code == 200
-    assert report.text.startswith("# Executive Trade Recommendation")
-    assert "Data freshness and limitations" in report.text
+    assert report.text.startswith("# Decision memo — ")
+    # R6 renamed the artifact and reorganized it. The sections asserted here are the
+    # ones a memo is useless without: where the numbers came from, and what it could not
+    # establish.
+    assert "## Assumptions and provenance" in report.text
+    assert "## What is not known" in report.text
+    assert "## 5. Precedent" in report.text
 
     html = client.get(f"/api/v1/trades/{trade1['id']}/report", params={"format": "html"})
-    assert "<title>TradeLab Executive Report</title>" in html.text
+    assert "<title>RosterLab decision memo</title>" in html.text
 
     t2 = client.post("/api/v1/trades", json=trade_payload("Deal 2", seeded["a2"], seeded["b1"]))
     comparison = client.post(

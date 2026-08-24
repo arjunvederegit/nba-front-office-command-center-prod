@@ -160,6 +160,23 @@ class ComparablesRequest(ValidateRequest):
     k: int = Field(ge=1, le=25, default=5)
 
 
+class MemoRequest(ValidateRequest):
+    """A decision memo for a deal that has not been saved.
+
+    `format` is a closed set here for the same reason it is on the saved-trade report: a
+    format that is accepted and then answered with something else is a lie in the
+    response headers. `json` returns the markdown plus its section list, for a client
+    that renders its own.
+    """
+
+    name: str = Field(min_length=1, max_length=120, default="Untitled trade")
+    focal_team_id: str
+    scenario_id: str | None = None
+    strategy: Strategy = "custom"
+    format: Literal["markdown", "html", "json"] = "markdown"
+    include_comparables: bool = True
+
+
 class GenerateRequest(BaseModel):
     scenario_id: str | None = None
     focal_team_id: str | None = None
