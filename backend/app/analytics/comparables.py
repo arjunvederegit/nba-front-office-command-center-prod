@@ -86,11 +86,11 @@ CONDITIONAL_CONVEYANCES = frozenset({"protected", "swap", "conditional"})
 FEATURE_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "player_value": ("value_in", "value_out", "best_in_tei", "best_out_tei"),
     "draft_capital": (
-        "firsts_net",
+        "firsts_net_unconditional",
+        "firsts_net_conditional",
         "seconds_net",
         "picks_in",
         "picks_out",
-        "conditional_pick_share",
     ),
     "structure": ("players_in", "players_out", "n_teams"),
     "age_profile": ("age_in", "age_out"),
@@ -112,11 +112,11 @@ FEATURE_LABELS: dict[str, str] = {
     "value_out": "value sent",
     "best_in_tei": "best player acquired",
     "best_out_tei": "best player sent",
-    "firsts_net": "net first-round picks",
+    "firsts_net_unconditional": "net unconditional first-round picks",
+    "firsts_net_conditional": "net protected or swapped firsts",
     "seconds_net": "net second-round picks",
     "picks_in": "picks acquired",
     "picks_out": "picks sent",
-    "conditional_pick_share": "share of picks with conditions",
     "players_in": "players acquired",
     "players_out": "players sent",
     "n_teams": "teams involved",
@@ -277,10 +277,20 @@ class TradeSide:
 
     def features(self) -> dict[str, float | None]:
         """The feature vector. `None` means the side does not state the feature."""
-        picks = (*self.picks_in, *self.picks_out)
-        conditional_share = (
-            sum(1 for p in picks if p.is_conditional) / len(picks) if picks else None
-        )
+        def net_firsts(conditional: bool) -> float:
+            return float(
+                sum(
+                    1
+                    for p in self.picks_in
+                    if p.round_number == 1 and p.is_conditional is conditional
+                )
+                - sum(
+                    1
+                    for p in self.picks_out
+                    if p.round_number == 1 and p.is_conditional is conditional
+                )
+            )
+
         gap = (
             self.win_pct - self.counterparty_win_pct
             if self.win_pct is not None and self.counterparty_win_pct is not None
@@ -291,17 +301,14 @@ class TradeSide:
             "value_out": self._package_value(self.outgoing),
             "best_in_tei": self._best(self.incoming),
             "best_out_tei": self._best(self.outgoing),
-            "firsts_net": float(
-                sum(1 for p in self.picks_in if p.round_number == 1)
-                - sum(1 for p in self.picks_out if p.round_number == 1)
-            ),
+            "firsts_net_unconditional": net_firsts(False),
+            "firsts_net_conditional": net_firsts(True),
             "seconds_net": float(
                 sum(1 for p in self.picks_in if p.round_number == 2)
                 - sum(1 for p in self.picks_out if p.round_number == 2)
             ),
             "picks_in": float(len(self.picks_in)),
             "picks_out": float(len(self.picks_out)),
-            "conditional_pick_share": conditional_share,
             "players_in": float(len(self.incoming)),
             "players_out": float(len(self.outgoing)),
             "n_teams": float(self.n_teams),
@@ -326,11 +333,11 @@ ALL_FEATURES: tuple[str, ...] = tuple(f for group in FEATURE_DIMENSIONS.values()
 #: both more interpretable and more stable: two sides one pick apart are half a unit apart,
 #: and that does not move when a seven-team trade enters the corpus.
 DECLARED_SCALES: dict[str, float] = {
-    "firsts_net": 1.0,
+    "firsts_net_unconditional": 1.0,
+    "firsts_net_conditional": 1.0,
     "seconds_net": 1.0,
     "picks_in": 1.0,
     "picks_out": 1.0,
-    "conditional_pick_share": 0.5,
     "players_in": 1.0,
     "players_out": 1.0,
     "n_teams": 1.0,
@@ -583,9 +590,9 @@ def _render(name: str, value: float | None) -> str:
         return "unavailable"
     if name in ("players_in", "players_out", "n_teams", "picks_in", "picks_out"):
         return f"{value:.0f}"
-    if name in ("firsts_net", "seconds_net"):
+    if name in ("firsts_net_unconditional", "firsts_net_conditional", "seconds_net"):
         return f"{value:+.0f}"
-    if name in ("win_pct", "conditional_pick_share"):
+    if name == "win_pct":
         return f"{value:.0%}"
     if name == "win_pct_gap":
         return f"{value:+.0%}"

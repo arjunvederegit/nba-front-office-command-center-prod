@@ -362,6 +362,17 @@ def test_query_and_corpus_sides_are_built_by_one_function(db, league_with_histor
     assert query.features() == side_a.features()
 
 
+def test_a_side_that_moves_nothing_is_refused_rather_than_answered(db, league_with_history):
+    """Without the guard an empty query matched cash-only trades at 94 % similarity —
+    honest, because both sides moved nothing of value, and useless."""
+    service = ComparableTradeService(db)
+    team_a, team_b = league_with_history["team_a"], league_with_history["team_b"]
+    result = service.find(team_a.id, [team_a.id, team_b.id], [], [], as_of=date(2026, 2, 5))
+    assert result["available"] is False
+    assert "nothing moves" in result["unavailable_reason"]
+    assert result["comparables"] == []
+
+
 def test_the_service_reports_coverage_rather_than_hiding_the_boundary(db, league_with_history):
     service = ComparableTradeService(db)
     coverage = service.coverage()
@@ -465,3 +476,26 @@ def test_multi_team_legs_reach_every_participant(db, seeded_league):
         seeded_league["roster_a"][i].full_name for i in (0, 0, 1, 1, 2, 2)
     )
     assert moved == expected
+
+
+def test_a_protected_first_is_not_the_same_asset_as_an_unconditional_one():
+    """The first construction carried one `firsts_net` and a `conditional_pick_share`,
+    and protections then made no difference at all: attaching a top-4 protection returned
+    the identical top five, because a share diluted across five features can move the
+    total distance by at most 0.033 against a corpus whose pairwise similarity spans 0.51
+    to 0.87. R5-2 refuses to price a protected pick at all, so the count is split."""
+    unconditional = make_side("u", picks_out=(PickLeg(2030, 1, "unconditional"),))
+    protected = make_side("p", picks_out=(PickLeg(2030, 1, "protected"),))
+    swap = make_side("s", picks_out=(PickLeg(2030, 1, "swap"),))
+
+    assert unconditional.features()["firsts_net_unconditional"] == -1.0
+    assert unconditional.features()["firsts_net_conditional"] == 0.0
+    assert protected.features()["firsts_net_conditional"] == -1.0
+    assert protected.features()["firsts_net_unconditional"] == 0.0
+    # A protected pick and a swap are the same class — both are "does not convey
+    # unconditionally", which is the vocabulary `draft_picks.conveyance` already uses.
+    assert protected.features() == swap.features()
+
+    scales = {"firsts_net_unconditional": 1.0, "firsts_net_conditional": 1.0}
+    assert compare(unconditional, protected, scales).distance > 0.0
+    assert compare(protected, swap, scales).distance == 0.0

@@ -123,7 +123,8 @@ def test_mirroring_reverses_every_directional_feature(corpus):
     original = next(s for s in corpus if s.key == "sell0")
     mirrored = _MirroredSide(original)
     before, after = original.features(), mirrored.features()
-    assert after["firsts_net"] == -before["firsts_net"]
+    assert after["firsts_net_unconditional"] == -before["firsts_net_unconditional"]
+    assert after["firsts_net_conditional"] == -before["firsts_net_conditional"]
     assert after["value_in"] == before["value_out"]
     assert after["picks_in"] == before["picks_out"]
     assert after["players_out"] == before["players_in"]

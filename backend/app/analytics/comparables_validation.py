@@ -140,6 +140,16 @@ def range_scales(sides: list[TradeSide]) -> dict[str, float]:
 
 # ------------------------------------------------------------------------ archetypes
 
+def _net_firsts(f: dict) -> float:
+    """Firsts moved either way, regardless of how they convey.
+
+    The archetype rules read the total on purpose: "sold value for firsts" is the same
+    decision whether the picks were protected or not, and a class defined on the same
+    split the distance uses would be measuring the split.
+    """
+    return (f.get("firsts_net_unconditional") or 0.0) + (f.get("firsts_net_conditional") or 0.0)
+
+
 #: Structural classes, defined on what a side did rather than on the distance's own
 #: arithmetic. A side belongs to at most one, and a side matching none is excluded from the
 #: archetype measurement rather than assigned a default.
@@ -147,13 +157,13 @@ ARCHETYPE_RULES: dict[str, Callable[[dict[str, float | None]], bool]] = {
     # Sends real on-court value and takes back first-round picks.
     "sold_value_for_firsts": lambda f: (
         (f.get("value_out") or 0.0) >= 0.10
-        and (f.get("firsts_net") or 0.0) >= 1
+        and _net_firsts(f) >= 1
         and (f.get("value_in") or 0.0) < (f.get("value_out") or 0.0)
     ),
     # Spends first-round picks to bring on-court value in.
     "bought_value_with_firsts": lambda f: (
         (f.get("value_in") or 0.0) >= 0.10
-        and (f.get("firsts_net") or 0.0) <= -1
+        and _net_firsts(f) <= -1
         and (f.get("value_out") or 0.0) < (f.get("value_in") or 0.0)
     ),
     # Rotation player for rotation player, no picks either way.
@@ -166,7 +176,7 @@ ARCHETYPE_RULES: dict[str, Callable[[dict[str, float | None]], bool]] = {
     ),
     # Second-round picks bought or sold with no first-round capital involved.
     "second_round_trade": lambda f: (
-        abs(f.get("seconds_net") or 0.0) >= 1 and (f.get("firsts_net") or 0.0) == 0
+        abs(f.get("seconds_net") or 0.0) >= 1 and _net_firsts(f) == 0
     ),
     # Nothing of measurable on-court value moves either way.
     "no_measurable_value": lambda f: (
@@ -330,15 +340,10 @@ def era_structure(all_sides: list[TradeSide]) -> dict[str, Any]:
                 3,
             ),
             "share_moving_a_first": round(
-                statistics.fmean(float(abs(f["firsts_net"] or 0.0) > 0) for f in features), 3
+                statistics.fmean(float(abs(_net_firsts(f)) > 0) for f in features), 3
             ),
-            "mean_conditional_pick_share": round(
-                statistics.fmean(
-                    f["conditional_pick_share"]
-                    for f in features
-                    if f["conditional_pick_share"] is not None
-                ),
-                3,
+            "share_of_moved_firsts_that_are_conditional": round(
+                _conditional_first_share(features), 3
             ),
             "share_multi_team": round(
                 statistics.fmean(float((f["n_teams"] or 2.0) > 2) for f in features), 3
@@ -351,6 +356,13 @@ def era_structure(all_sides: list[TradeSide]) -> dict[str, Any]:
             ),
         }
     return summary
+
+
+def _conditional_first_share(features: list[dict]) -> float:
+    """Of the first-round picks that moved, the share carrying a condition."""
+    conditional = sum(abs(f.get("firsts_net_conditional") or 0.0) for f in features)
+    total = conditional + sum(abs(f.get("firsts_net_unconditional") or 0.0) for f in features)
+    return conditional / total if total else 0.0
 
 
 def season_concentration(
@@ -636,7 +648,7 @@ def run_battery(
 def _is_asymmetric(side: TradeSide) -> bool:
     """A side whose reversal would be a different decision, not the same one restated."""
     features = side.features()
-    firsts = features.get("firsts_net") or 0.0
+    firsts = _net_firsts(features)
     value_in = features.get("value_in")
     value_out = features.get("value_out")
     if abs(firsts) >= 1:
@@ -724,7 +736,12 @@ class _MirroredSide:
             ("age_in", "age_out"),
         ):
             swapped[left], swapped[right] = original[right], original[left]
-        for name in ("firsts_net", "seconds_net", "win_pct_gap"):
+        for name in (
+            "firsts_net_unconditional",
+            "firsts_net_conditional",
+            "seconds_net",
+            "win_pct_gap",
+        ):
             value = original.get(name)
             swapped[name] = -value if value is not None else None
         return swapped

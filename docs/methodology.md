@@ -442,7 +442,7 @@ d_g     = mean over f in g of  |a_f − b_f| / (|a_f − b_f| + scale_f)
 | dimension | w | features |
 | --- | --- | --- |
 | `player_value` | 0.30 | value in, value out, best player in, best player out |
-| `draft_capital` | 0.25 | net firsts, net seconds, picks in, picks out, conditional share |
+| `draft_capital` | 0.25 | net **unconditional** firsts, net **conditional** firsts, net seconds, picks in, picks out |
 | `structure` | 0.20 | players in, players out, teams involved |
 | `age_profile` | 0.10 | minutes-weighted age in, age out |
 | `team_context` | 0.10 | win percentage, gap to the other side |
@@ -462,6 +462,25 @@ those columns.
 **A feature enters only when both sides state it**, and a dimension neither side states
 is dropped with its weight redistributed and its name returned.
 
+**First-round picks are split by how they convey, and that split was forced by a
+measurement.** The first construction carried one `firsts_net` plus a
+`conditional_pick_share`, and protections then made no difference at all: attaching a
+top-4 protection to a query's first-round pick returned the **identical** top five
+(overlap 1.000), because a share diluted across five features can move the total distance
+by at most 0.033 against a corpus whose pairwise similarity spans 0.51 to 0.87. A
+protected first and an unconditional one are not the same asset — R5-2 refuses to price
+the first at all — so the count itself is split. Measured after the change, on a
+one-for-one player trade with picks attached:
+
+| query change | top-5 overlap with the base query |
+| --- | --- |
+| +1 unconditional first vs no picks | 0.429 |
+| +1 second-round pick vs no picks | **0.000** |
+| +1 first vs +1 second | 0.250 |
+| 1 first: unconditional vs **protected** | **0.667** (was 1.000) |
+| 1 first: unconditional vs **swap** | 0.667 |
+| 1 first: protected vs swap | 1.000 — deliberate; both are "does not convey unconditionally" |
+
 ### What the similarity deliberately excludes
 
 - **Salary** — no source here carries a historical contract, so scoring the query's
@@ -477,19 +496,19 @@ is dropped with its weight redistributed and its name returned.
 
 | check | measured | gate | |
 | --- | --- | --- | --- |
-| Perturbation stability (±10 % of each feature's scale) | **0.674** | ≥ 0.60 | ✅ |
-| Scale form — standard deviation instead of IQR | **0.756** | ≥ 0.50 | ✅ |
-| Scale form — min-max | 0.449 | reported | null, see below |
-| Distance form — hard clip instead of saturation | **0.700** | ≥ 0.50 | ✅ |
-| Best single-dimension null | **0.094** | ≤ 0.75 | ✅ |
-| Archetype recovery, lift over a shuffled-feature corpus | **0.422** | ≥ 0.10 | ✅ |
-| Direction confusion (selling retrieved as buying) | **0.010** | ≤ 0.05 | ✅ |
+| Perturbation stability (±10 % of each feature's scale) | **0.648** | ≥ 0.60 | ✅ |
+| Scale form — standard deviation instead of IQR | **0.735** | ≥ 0.50 | ✅ |
+| Scale form — min-max | 0.471 | reported | null, see below |
+| Distance form — hard clip instead of saturation | **0.717** | ≥ 0.50 | ✅ |
+| Best single-dimension null | **0.089** | ≤ 0.75 | ✅ |
+| Archetype recovery, lift over a shuffled-feature corpus | **0.392** | ≥ 0.10 | ✅ |
+| Direction confusion (selling retrieved as buying) | **0.019** | ≤ 0.05 | ✅ |
 
-Archetype precision@5 is **0.817** against a 0.414 base rate; a random ranker scores
-0.397 and a corpus whose feature vectors have been permuted between sides scores 0.395 —
+Archetype precision@5 is **0.797** against a 0.414 base rate; a random ranker scores
+0.397 and a corpus whose feature vectors have been permuted between sides scores 0.405 —
 both land on the base rate, which is what a null must do. Leave-one-dimension-out shows
-draft capital drives the list hardest (0.291 overlap without it), then player value
-(0.364) and structure (0.396); timing barely matters (0.738). Neighbours do not cluster
+draft capital drives the list hardest (0.313 overlap without it), then player value
+(0.343) and structure (0.374); timing barely matters (0.707). Neighbours do not cluster
 in the query's own season (0.383 against a 0.348 base rate), so this is not a date
 lookup.
 
@@ -513,8 +532,8 @@ It failed, at 0.679 against 0.672 — and the failure is uninformative, because 
 *levels* on this corpus compress into p05 0.510 … p95 0.865, so 0.007 of level is not
 evidence about a list. The list is what the product shows, and by list the mirror is far
 away: injected into the corpus it is the nearest neighbour for 4 of 141 asymmetric
-sides, reaches the top five for 16, and sits at median rank 67 of 338. Direction
-confusion measured on **real** trades replaces it, at 0.010. Both figures are still
+sides, reaches the top five for 16, and sits at **median rank 89 of 338**. Direction
+confusion measured on **real** trades replaces it, at 0.019. Both figures are still
 reported.
 
 ## 14. Need-driven acquisition (R6-3)

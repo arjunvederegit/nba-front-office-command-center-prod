@@ -422,6 +422,21 @@ class ComparableTradeService:
         query = self.query_side(team_id, team_ids, player_moves, pick_moves, as_of=as_of)
         corpus = self.rankable_corpus()
         coverage = self.coverage()
+        if not (query.incoming or query.outgoing or query.picks_in or query.picks_out):
+            # Nothing moves on this side, so there is no decision to find precedent for.
+            # Without the guard the retrieval answers honestly and uselessly: an empty
+            # query matched cash-only trades at 94 % similarity, because both sides moved
+            # nothing of value, and that reads as nonsense rather than as evidence.
+            return {
+                "available": False,
+                "unavailable_reason": (
+                    f"nothing moves to or from {query.team_abbreviation} in this trade, "
+                    "so there is no decision to find a precedent for"
+                ),
+                "query": _query_payload(query),
+                "coverage": coverage,
+                "comparables": [],
+            }
         if not query.rankable:
             return {
                 "available": False,

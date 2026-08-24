@@ -107,9 +107,10 @@ that do not are almost entirely draft-rights players who never appeared in an NB
 each is filed as a data-quality warning and none is fuzzy-matched.
 
 The restriction is not purely a loss. The 2023 CBA changed how trades are built, and
-the corpus shows it: across all ten seasons the share of moved picks carrying a
-condition rose from **0.217 to 0.442** and the multi-team share from 0.163 to 0.247. A
-2019 comparable is a comparable under different rules.
+the corpus shows it: the share of moved **first-round picks** carrying a protection or a swap
+rose from **0.379 to 0.600** across the rule change, picks per side from 1.317 to 1.581,
+and the multi-team share from 0.163 to 0.247. A 2019 comparable is a comparable under
+different rules.
 
 ### Lineup-aware fit is deferred, on measurement (R6-4)
 
