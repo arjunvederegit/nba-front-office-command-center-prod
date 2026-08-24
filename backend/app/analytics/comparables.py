@@ -199,6 +199,11 @@ class TradeSide:
     n_teams: int
     team_id: str | None = None
     team_name: str | None = None
+    #: The transaction this side belongs to. Two sides of one trade are two decisions and
+    #: both belong in the corpus, but returning both in one top-five shows the reader the
+    #: same sentence twice — often as near-mirrors of each other, which is the one shape
+    #: `direction_confusion` exists to keep out of a result list.
+    group_key: str | None = None
     counterparty_abbreviations: tuple[str, ...] = ()
     incoming: tuple[PlayerLeg, ...] = ()
     outgoing: tuple[PlayerLeg, ...] = ()
@@ -231,6 +236,10 @@ class TradeSide:
                 if leg.tei is None and not leg.no_prior_nba_season
             )
         )
+
+    @property
+    def group(self) -> str:
+        return self.group_key or self.key
 
     @property
     def rankable(self) -> bool:
@@ -482,11 +491,19 @@ def rank(
     scales: dict[str, float],
     weights: dict[str, float] | None = None,
     k: int = 5,
+    one_per_trade: bool = True,
 ) -> list[Neighbour]:
     """The `k` closest rankable sides, nearest first.
 
     Ties break on the side key so the same corpus always returns the same order — the
     determinism `generate_candidates` already commits to, for the same reason.
+
+    `one_per_trade` keeps only the nearest side of any completed trade. Both sides stay in
+    the corpus and both are still ranked; what is suppressed is showing a reader the same
+    sentence twice, which happened on the live database — the Brooklyn and Denver views of
+    one 2025 trade took two of five slots, as near-mirrors of each other. The validation
+    battery sets it False, because a leave-one-out measurement over sides must see every
+    side.
     """
     scored = [
         Neighbour(side=side, comparison=compare(query, side, scales, weights))
@@ -494,7 +511,18 @@ def rank(
         if side.rankable and side.key != query.key
     ]
     scored.sort(key=lambda n: (n.comparison.distance, n.side.key))
-    return scored[:k]
+    if not one_per_trade:
+        return scored[:k]
+    seen: set[str] = set()
+    kept: list[Neighbour] = []
+    for neighbour in scored:
+        if neighbour.side.group in seen:
+            continue
+        seen.add(neighbour.side.group)
+        kept.append(neighbour)
+        if len(kept) >= k:
+            break
+    return kept
 
 
 # ------------------------------------------------------------------- explanation

@@ -343,3 +343,42 @@ class TestImpactPrimitives:
         out = recency_weighted_features(df, ["2024-25", "2025-26"], decay=0.5)
         # recent season (PIE 0.15) weighted 2x older (0.05): (0.15*1 + 0.05*0.5)/1.5
         assert out.iloc[0]["PIE"] == pytest.approx((0.15 + 0.025) / 1.5)
+
+
+def test_percentile_explanations_use_a_real_ordinal():
+    """A team in the third percentile was told it ranked "3th" — in the team-outlook
+    panel, in every acquisition explanation and in the decision memo, all of which quote
+    this string verbatim."""
+    from app.analytics.needs import ordinal
+
+    assert [ordinal(n) for n in (1, 2, 3, 4, 11, 12, 13, 21, 52, 100)] == [
+        "1st",
+        "2nd",
+        "3rd",
+        "4th",
+        "11th",
+        "12th",
+        "13th",
+        "21st",
+        "52nd",
+        "100th",
+    ]
+
+
+def test_need_explanations_render_the_ordinal(monkeypatch):
+    import pandas as pd
+
+    from app.analytics.needs import compute_team_needs
+
+    league = pd.DataFrame(
+        {
+            "team_id": [f"t{i}" for i in range(10)],
+            "base_FG3A": list(range(30, 40)),
+        }
+    )
+    # 33 sits above three of the nine peers (31, 32, 33 excluded), so the percentile is
+    # 33.3 and the string must read "33rd", not "33th".
+    results = compute_team_needs({"base": {"FG3A": 34}}, league, team_id="t0")
+    explanation = next(r.explanation for r in results if r.need_key == "three_point_volume")
+    assert "rd percentile" in explanation
+    assert "th percentile" not in explanation

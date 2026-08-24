@@ -503,3 +503,165 @@ export interface CapOutlookAvailable {
 }
 
 export type CapOutlookResponse = CapOutlookUnavailable | CapOutlookAvailable;
+
+/* ------------------------------------------------------ R6: precedent and discovery */
+
+export interface RoleShareRow {
+  role: string;
+  minutes_before: number;
+  minutes_after: number;
+  delta: number;
+  league_median: number | null;
+  league_threshold: number | null;
+  congested: boolean;
+  lost: boolean;
+}
+
+export interface RosterShapeDetail {
+  unavailable?: string;
+  roles?: RoleShareRow[];
+  arriving_roles?: string[];
+  congested_roles?: string[];
+  roles_lost?: string[];
+  congestion_percentile?: number;
+  basis?: string;
+  lineup_fit?: { available: boolean; reason: string; also: string; recheck: string };
+}
+
+export interface ComparableLeg {
+  name: string;
+  player_id: string | null;
+  tei: number | null;
+  minutes: number | null;
+  age: number | null;
+  no_prior_nba_season: boolean;
+}
+
+export interface ComparablePick {
+  draft_year: number;
+  round_number: number;
+  conveyance: string;
+}
+
+export interface ComparableSide {
+  key: string;
+  team_abbreviation: string;
+  team_name: string | null;
+  counterparties: string[];
+  season: string;
+  feature_season: string;
+  transaction_date: string | null;
+  is_in_season: boolean;
+  n_teams: number;
+  incoming: ComparableLeg[];
+  outgoing: ComparableLeg[];
+  picks_in: ComparablePick[];
+  picks_out: ComparablePick[];
+  similarity: number;
+  distance: number;
+  why: string[];
+  dimension_similarity: Record<
+    string,
+    { similarity: number; weight: number; features: Record<string, unknown> }
+  >;
+  contributions: { dimension: string; share: number }[];
+  dimensions_unavailable: string[];
+  reported_not_scored: { cash_involved: boolean; trade_exception_received: boolean };
+  source_text: string;
+  notes_text: string | null;
+  unparsed_assets: string[];
+}
+
+export interface ComparablesCoverage {
+  trades_ingested: number;
+  seasons_ingested: string[];
+  sides_total: number;
+  sides_in_modelled_window: number;
+  sides_rankable: number;
+  sides_blocked_by_unmodelled_players: number;
+  modelled_seasons: string[];
+  note: string;
+}
+
+export interface ComparablesResponse {
+  available: boolean;
+  unavailable_reason?: string;
+  unmodelled_players?: string[];
+  query: { feature_season: string; team_abbreviation: string; rankable: boolean };
+  coverage: ComparablesCoverage;
+  weights?: Record<string, number>;
+  dimensions?: Record<string, { features: string[]; label: string }>;
+  not_scored?: { field: string; reason: string }[];
+  comparables: ComparableSide[];
+}
+
+export interface AcquisitionTarget {
+  player_id: string;
+  name: string;
+  team: { id: string; abbreviation: string; name: string };
+  tei: number | null;
+  minutes: number | null;
+  age: number | null;
+  need_skill: string;
+  skill_percentile: number;
+  need_improvement: number;
+  projected_delta_wins: number | null;
+  fit_score: number | null;
+  redundancy: number;
+  acquisition_cost: {
+    package_value: number;
+    package_value_projected_wins: number;
+    salary: number | null;
+    minimum_outgoing_salary: number | null;
+    salary_note: string | null;
+    minutes_share_of_own_team: number | null;
+    rank_on_own_team_by_minutes: number | null;
+    reported_not_scored: string;
+  };
+  suggested_package: { player_id: string; name: string; tei: number | null; minutes: number | null; salary: number | null }[];
+  suggested_package_note: string;
+  trade_evaluation?: {
+    team_ids: string[];
+    player_moves: PlayerMove[];
+    legality_status: string;
+    focal_utility: number;
+    counterparty_utility: number;
+    projected_delta_wins: { focal: number | null; counterparty: number | null };
+  };
+  why: string[];
+}
+
+export interface AcquisitionDiagnosisRow {
+  need_key: string;
+  severity: number;
+  percentile: number | null;
+  explanation: string;
+  skill: string | null;
+  addressable: boolean;
+  not_addressable_reason: string | null;
+  roster_strength_percentile?: number;
+}
+
+export interface AcquisitionResponse {
+  team: { id: string; abbreviation: string; name: string };
+  available: boolean;
+  unavailable_reason?: string;
+  season?: string;
+  diagnosis: AcquisitionDiagnosisRow[];
+  target_need?: AcquisitionDiagnosisRow;
+  sort?: string;
+  sort_rule?: string;
+  filter_rule?: string;
+  untouchable_player_ids?: string[];
+  search?: Record<string, number>;
+  feasibility?: {
+    applied: boolean;
+    budget: number;
+    trades_evaluated: number;
+    rejected: Record<string, number>;
+    truncated_by_budget: boolean;
+    conditions: { both_sides_above: number; max_projected_win_loss: number; source: string };
+  };
+  targets: AcquisitionTarget[];
+  notes?: string[];
+}

@@ -133,3 +133,26 @@ describe("data health", () => {
     expect(dataHealthSchema.safeParse(bad).success).toBe(false);
   });
 });
+
+describe("share state", () => {
+  it("round-trips a builder state through a URL-safe encoding", async () => {
+    const { decodeShareState, encodeShareState, evaluatorLink } = await import(
+      "@/lib/shareState"
+    );
+    const state = {
+      teamIds: ["a", "b"],
+      moves: { p1: "b", p2: "a" },
+      picks: [],
+      name: "Deal — with a dash and an é",
+    };
+    const encoded = encodeShareState(state);
+    expect(encoded).not.toMatch(/[+/=]/);
+    expect(decodeShareState(encoded)).toEqual(state);
+    expect(evaluatorLink(state)).toBe(`/trade-evaluator?state=${encoded}`);
+  });
+
+  it("returns null rather than throwing on a corrupt link", async () => {
+    const { decodeShareState } = await import("@/lib/shareState");
+    expect(decodeShareState("not-base64!!")).toBeNull();
+  });
+});

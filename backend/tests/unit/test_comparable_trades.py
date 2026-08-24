@@ -171,6 +171,29 @@ def test_ranking_is_deterministic_and_excludes_the_query_itself():
     assert "s0" not in first
 
 
+def test_only_one_side_of_a_completed_trade_is_returned():
+    """Both sides of a trade belong in the corpus and both are ranked; showing a reader
+    the same sentence twice — often as near-mirrors of each other — does not."""
+    left = make_side("t1|AAA", group_key="t1", incoming=(player("x", 2.0),))
+    right = make_side("t1|BBB", group_key="t1", outgoing=(player("x", 2.0),))
+    other = make_side("t2|CCC", group_key="t2", incoming=(player("y", 1.9),))
+    filler = [make_side(f"t{i}|X", group_key=f"t{i}", incoming=(player("z", i * 0.4),))
+              for i in range(3, 9)]
+    corpus = [left, right, other, *filler]
+    scales = robust_scales(corpus)
+    query = make_side("query", incoming=(player("q", 2.1),))
+    groups = [n.side.group for n in rank(query, corpus, scales, k=5)]
+    assert len(groups) == len(set(groups))
+    # ...and both sides are still ranked when the caller asks for them.
+    both = [n.side.key for n in rank(query, corpus, scales, k=9, one_per_trade=False)]
+    assert "t1|AAA" in both and "t1|BBB" in both
+
+
+def test_a_side_without_a_group_key_groups_on_itself():
+    side = make_side("solo")
+    assert side.group == "solo"
+
+
 def test_an_unrankable_side_is_never_returned_as_a_comparable():
     good = [make_side(f"s{i}", incoming=(player("p", i * 0.5),)) for i in range(6)]
     blocked = make_side(

@@ -429,7 +429,8 @@ def acquisition_targets(
             "roster's own level in it"
         ),
         "filter_rule": (
-            f"only players whose {skill} percentile exceeds this roster's own "
+            f"only players whose {skill.replace('_', ' ')} percentile exceeds this "
+            f"roster's own "
             f"({strength:.0%}); a player who does not improve the thing the team is "
             "short of is not a target for it"
         ),

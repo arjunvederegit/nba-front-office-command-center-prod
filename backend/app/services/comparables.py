@@ -203,7 +203,8 @@ class ComparableTradeService:
         self,
         *,
         key: str,
-        team_id: str | None,
+        group_key: str | None = None,
+        team_id: str | None = None,
         team_abbreviation: str,
         team_name: str | None,
         season: str,
@@ -229,6 +230,7 @@ class ComparableTradeService:
         known = [w for w in others if w is not None]
         return TradeSide(
             key=key,
+            group_key=group_key,
             team_id=team_id,
             team_abbreviation=team_abbreviation,
             team_name=team_name,
@@ -299,6 +301,7 @@ class ComparableTradeService:
                 sides.append(
                     self._side(
                         key=f"{trade.source_record_id}|{abbr}",
+                        group_key=trade.source_record_id,
                         team_id=team.id if team else None,
                         team_abbreviation=abbr,
                         team_name=team.full_name if team else None,

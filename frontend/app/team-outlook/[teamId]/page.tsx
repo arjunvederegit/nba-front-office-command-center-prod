@@ -21,6 +21,7 @@ import type {
   Team,
   TeamNeedItem,
 } from "@/lib/types";
+import { AcquisitionTargetsPanel } from "@/components/acquisition";
 import { HalfCourt } from "@/components/court";
 import { PlayerPhoto, TeamCrest } from "@/components/media";
 import { useToast } from "@/components/toast";
@@ -533,6 +534,9 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
 
         </div>
       </div>
+
+      {/* ------------------------------------------- need-driven discovery */}
+      <AcquisitionTargetsPanel teamId={detail.team.id} />
 
       {/* --------------------------------------------------- money & assets */}
       <div className="grid items-start gap-3 lg:grid-cols-2">

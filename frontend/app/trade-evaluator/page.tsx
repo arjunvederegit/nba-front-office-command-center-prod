@@ -26,6 +26,7 @@ import {
 } from "react";
 import { api } from "@/lib/api";
 import { tradeDetailSchema } from "@/lib/schemas";
+import { decodeShareState, encodeShareState } from "@/lib/shareState";
 import {
   COMPONENT_EXPLAIN,
   COMPONENT_LABEL,
@@ -43,6 +44,7 @@ import {
 import { getFavoriteTeam } from "@/lib/teamTheme";
 import { teamIdentity } from "@/lib/teamIdentity";
 import type {
+  ComparablesResponse,
   LegalityResponse,
   PickMove,
   PlayerMove,
@@ -53,6 +55,7 @@ import type {
   Team,
   TeamEvaluation,
   TeamLegality,
+  RosterShapeDetail,
   TradeDetail,
 } from "@/lib/types";
 import {
@@ -62,6 +65,7 @@ import {
   UncertaintyStrip,
 } from "@/components/charts";
 import { HalfCourt, KeyFrame, TransactionLane } from "@/components/court";
+import { PrecedentPanel, RosterShapePanel } from "@/components/precedent";
 import { PlayerPhoto, TeamCrest, TeamLogo } from "@/components/media";
 import { useToast } from "@/components/toast";
 import {
@@ -222,30 +226,6 @@ interface Destination {
   id: string;
   abbr: string;
   name: string;
-}
-
-/** Serializable builder state for share links (?state=base64url json). */
-interface ShareState {
-  teamIds: string[];
-  moves: Record<string, string>;
-  picks: PickMove[];
-  name?: string;
-}
-
-function encodeShareState(state: ShareState): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(state))))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-}
-
-function decodeShareState(raw: string): ShareState | null {
-  try {
-    const b64 = raw.replaceAll("-", "+").replaceAll("_", "/");
-    return JSON.parse(decodeURIComponent(escape(atob(b64)))) as ShareState;
-  } catch {
-    return null;
-  }
 }
 
 function sectionOf<T>(detail: Record<string, Record<string, unknown>> | undefined, key: string): T {
@@ -458,6 +438,42 @@ function TradeEvaluator() {
     onError: (e) => toast("error", `Evaluation failed: ${String(e)}`),
   });
 
+  /**
+   * The memo is the artifact a front office actually circulates, and it used to be
+   * reachable only after saving a deal — which meant the document existed only for
+   * trades someone had already committed to keeping.
+   *
+   * The response is markdown; it opens in a new tab rather than downloading, because a
+   * download the browser cannot preview is a worse default for a document a person is
+   * about to read.
+   */
+  const memo = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/v1/trades/memo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: tradeName || "Untitled deal",
+          team_ids: teamIds,
+          focal_team_id: teamIds[0],
+          player_moves: playerMoves,
+          pick_moves: picks,
+          scenario_id: scenarioId,
+          strategy: scenario?.strategy ?? "custom",
+          format: "html",
+        }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.text();
+    },
+    onSuccess: (html) => {
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    },
+    onError: (e) => toast("error", `Could not build the memo: ${String(e)}`),
+  });
+
   const saveTrade = useMutation({
     mutationFn: () =>
       api.post<TradeDetail>("/trades", {
@@ -654,6 +670,8 @@ function TradeEvaluator() {
                   onEvaluate={() => evaluate.mutate()}
                   onSave={() => saveTrade.mutate()}
                   onCopy={copyShareLink}
+                  onMemo={() => memo.mutate()}
+                  memoPending={memo.isPending}
                 />
                 <DealLedger
                   teams={loaded}
@@ -668,7 +686,13 @@ function TradeEvaluator() {
         )}
 
         {evaluation && teams && (
-          <EvaluationSection evaluation={evaluation} teams={teams} teamIds={teamIds} />
+          <EvaluationSection
+            evaluation={evaluation}
+            teams={teams}
+            teamIds={teamIds}
+            playerMoves={playerMoves}
+            pickMoves={picks}
+          />
         )}
       </div>
 
@@ -1907,6 +1931,8 @@ function SaveShare({
   onEvaluate,
   onSave,
   onCopy,
+  onMemo,
+  memoPending,
 }: {
   tradeName: string;
   setTradeName: (value: string) => void;
@@ -1916,6 +1942,8 @@ function SaveShare({
   onEvaluate: () => void;
   onSave: () => void;
   onCopy: () => void;
+  onMemo: () => void;
+  memoPending: boolean;
 }) {
   return (
     <Panel title="Run it" subtitle="Evaluate now, then keep the deal for comparison." accent="var(--leather)">
@@ -1948,6 +1976,13 @@ function SaveShare({
             Copy share link
           </Button>
         </div>
+        <Button className="w-full" disabled={!canAct || memoPending} onClick={onMemo}>
+          {memoPending ? "Building memo…" : "Open decision memo"}
+        </Button>
+        <p className="text-[11px] leading-snug text-faint">
+          The memo is one page: the recommendation, what changes on the floor, fit, cost, the
+          rules, comparable completed trades, and everything the analysis could not establish.
+        </p>
         {!canAct && (
           <p className="text-[11px] leading-snug text-faint">
             Move at least one player between teams to enable these actions.
@@ -1971,10 +2006,14 @@ function EvaluationSection({
   evaluation,
   teams,
   teamIds,
+  playerMoves,
+  pickMoves,
 }: {
   evaluation: { legality: LegalityResponse; evaluations: Record<string, TeamEvaluation> };
   teams: Team[];
   teamIds: string[];
+  playerMoves: PlayerMove[];
+  pickMoves: PickMove[];
 }) {
   const [activeTeam, setActiveTeam] = useState(teamIds[0]);
   const resolvedTeam = evaluation.evaluations[activeTeam] ? activeTeam : teamIds[0];
@@ -2009,6 +2048,14 @@ function EvaluationSection({
         teamAbbreviations={Object.fromEntries(
           Object.entries(evaluation.legality.teams).map(([id, t]) => [id, t.abbreviation]),
         )}
+        precedent={
+          <PrecedentTab
+            focalTeamId={resolvedTeam}
+            teamIds={teamIds}
+            playerMoves={playerMoves}
+            pickMoves={pickMoves}
+          />
+        }
       />
     </Panel>
   );
@@ -2046,10 +2093,13 @@ function TeamEvaluationView({
   teamEval,
   identity,
   teamAbbreviations,
+  precedent,
 }: {
   teamEval: TeamEvaluation;
   identity: ReturnType<typeof teamIdentity>;
   teamAbbreviations: Record<string, string>;
+  /** Rendered only when its tab is selected, so the search runs on demand. */
+  precedent: React.ReactNode;
 }) {
   const [tab, setTab] = useState("impact");
   const verdict = fanVerdict(teamEval.composite_utility, teamEval.confidence);
@@ -2224,6 +2274,7 @@ function TeamEvaluationView({
               { id: "cap", label: "Cap" },
               { id: "timeline", label: "Timeline" },
               { id: "risk", label: "Risk & uncertainty" },
+              { id: "precedent", label: "Precedent" },
             ]}
           />
         </div>
@@ -2233,6 +2284,7 @@ function TeamEvaluationView({
           {tab === "cap" && <CapTab teamEval={teamEval} />}
           {tab === "timeline" && <TimelineTab teamEval={teamEval} />}
           {tab === "risk" && <RiskTab teamEval={teamEval} />}
+          {tab === "precedent" && precedent}
         </div>
       </div>
 
@@ -2244,7 +2296,44 @@ function TeamEvaluationView({
   );
 }
 
+/**
+ * Mounted only while its tab is selected, which is what makes the search on-demand: the
+ * retrieval reads 337 corpus sides and there is no reason to do it for a user who never
+ * opens the tab.
+ */
+function PrecedentTab({
+  focalTeamId,
+  teamIds,
+  playerMoves,
+  pickMoves,
+}: {
+  focalTeamId: string;
+  teamIds: string[];
+  playerMoves: PlayerMove[];
+  pickMoves: PickMove[];
+}) {
+  const query = useQuery({
+    queryKey: ["comparables", focalTeamId, playerMoves, pickMoves],
+    queryFn: () =>
+      api.post<ComparablesResponse>("/trades/comparables", {
+        team_ids: teamIds,
+        focal_team_id: focalTeamId,
+        player_moves: playerMoves,
+        pick_moves: pickMoves,
+        k: 5,
+      }),
+  });
+  return (
+    <PrecedentPanel
+      data={query.data}
+      loading={query.isPending}
+      error={query.error ? String(query.error) : undefined}
+    />
+  );
+}
+
 function ImpactTab({ teamEval, perf }: { teamEval: TeamEvaluation; perf: PerformanceDetail }) {
+  const shape = sectionOf<RosterShapeDetail>(teamEval.detail, "roster_shape");
   const rows = useMemo(() => {
     const before = perf.rotation_before ?? [];
     const after = perf.rotation_after ?? [];
@@ -2296,6 +2385,9 @@ function ImpactTab({ teamEval, perf }: { teamEval: TeamEvaluation; perf: Perform
             wins before uncertainty is applied.
           </p>
         )}
+        <div className="mt-4">
+          <RosterShapePanel shape={shape} />
+        </div>
       </div>
     </div>
   );

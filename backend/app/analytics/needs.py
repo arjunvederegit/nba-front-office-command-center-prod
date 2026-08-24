@@ -13,7 +13,7 @@ STAT_RULES = [
         "base",
         "FG3A",
         True,
-        "Team ranks in the {pct:.0f}th percentile for three-point attempts per game",
+        "Team ranks in the {pct} percentile for three-point attempts per game",
         None,
     ),
     (
@@ -21,7 +21,7 @@ STAT_RULES = [
         "advanced",
         "DEF_RATING",
         False,
-        "Defensive rating is in the {pct:.0f}th percentile (higher = worse defense)",
+        "Defensive rating is in the {pct} percentile (higher = worse defense)",
         None,
     ),
     (
@@ -29,7 +29,7 @@ STAT_RULES = [
         "advanced",
         "OFF_RATING",
         True,
-        "Offensive rating is in the {pct:.0f}th percentile",
+        "Offensive rating is in the {pct} percentile",
         None,
     ),
     (
@@ -37,7 +37,7 @@ STAT_RULES = [
         "advanced",
         "DREB_PCT",
         True,
-        "Defensive rebound share is in the {pct:.0f}th percentile",
+        "Defensive rebound share is in the {pct} percentile",
         None,
     ),
     (
@@ -45,7 +45,7 @@ STAT_RULES = [
         "advanced",
         "AST_PCT",
         True,
-        "Share of baskets assisted is in the {pct:.0f}th percentile",
+        "Share of baskets assisted is in the {pct} percentile",
         None,
     ),
     (
@@ -53,7 +53,7 @@ STAT_RULES = [
         "advanced",
         "TM_TOV_PCT",
         False,
-        "Turnover rate is in the {pct:.0f}th percentile (higher = more turnovers)",
+        "Turnover rate is in the {pct} percentile (higher = more turnovers)",
         None,
     ),
     (
@@ -61,7 +61,7 @@ STAT_RULES = [
         "base",
         "BLK",
         True,
-        "Blocks per game is in the {pct:.0f}th percentile",
+        "Blocks per game is in the {pct} percentile",
         "blocks are a partial proxy for rim protection",
     ),
     (
@@ -69,7 +69,7 @@ STAT_RULES = [
         "base",
         "STL",
         True,
-        "Steals per game is in the {pct:.0f}th percentile",
+        "Steals per game is in the {pct} percentile",
         "steals are a partial proxy for point-of-attack pressure",
     ),
     (
@@ -77,10 +77,24 @@ STAT_RULES = [
         "advanced",
         "TS_PCT",
         True,
-        "True-shooting percentage is in the {pct:.0f}th percentile",
+        "True-shooting percentage is in the {pct} percentile",
         None,
     ),
 ]
+
+
+def ordinal(value: float) -> str:
+    """`3` -> `3rd`, `11` -> `11th`, `52` -> `52nd`.
+
+    The templates below wrote `{pct:.0f}th` unconditionally, so a team in the third
+    percentile for rim protection was told it ranked "3th" — in the team-outlook panel,
+    in the acquisition explanations and in the decision memo, all of which quote this
+    string verbatim.
+    """
+    number = int(round(value))
+    if 10 <= number % 100 <= 20:
+        return f"{number}th"
+    return f"{number}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(number % 10, 'th') }"
 
 
 @dataclass
@@ -139,7 +153,10 @@ def compute_team_needs(
                 need_key=need_key,
                 severity=round(severity, 3),
                 percentile=round(pct, 1),
-                explanation=template.format(pct=pct) + (f" ({proxy_note})" if proxy_note else ""),
+                explanation=(
+                    template.format(pct=ordinal(pct))
+                    + (f" ({proxy_note})" if proxy_note else "")
+                ),
             )
         )
 

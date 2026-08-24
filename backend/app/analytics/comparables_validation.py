@@ -106,7 +106,9 @@ def _top_keys(
     weights: dict[str, float] | None = None,
     k: int = TOP_K,
 ) -> list[str]:
-    return [n.side.key for n in rank(query, corpus, scales, weights, k=k)]
+    # `one_per_trade=False`: a leave-one-out measurement over sides has to be able to see
+    # every side, including the other half of the query's own transaction.
+    return [n.side.key for n in rank(query, corpus, scales, weights, k=k, one_per_trade=False)]
 
 
 # ------------------------------------------------------------------ alternative scales
@@ -562,8 +564,8 @@ def run_battery(
         similarity = compare(mirrored, side, scales).similarity  # type: ignore[arg-type]
         if _is_asymmetric(side):
             asymmetric.append(similarity)
-            augmented = [*corpus, mirrored]  # type: ignore[list-item]
-            ordered = rank(side, augmented, scales, k=len(augmented))  # type: ignore[arg-type]
+            augmented: list[TradeSide] = [*corpus, mirrored]  # type: ignore[list-item]
+            ordered = rank(side, augmented, scales, k=len(augmented), one_per_trade=False)
             position = next(
                 (i + 1 for i, n in enumerate(ordered) if n.side.key == mirrored.key), None
             )
