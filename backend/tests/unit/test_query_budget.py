@@ -208,3 +208,45 @@ def test_the_batch_cost_does_not_scale_with_roster_size(db: Session, seeded_leag
 
     assert len(everyone) == 30
     assert many["n"] == one["n"], f"{one['n']} queries for 1 player, {many['n']} for 30"
+
+
+def _role_reference_queries(db: Session, teams: int) -> int:
+    """Queries `_league_role_reference` issues with `teams` rosters in the database."""
+    from app.core.cache import get_cache
+
+    get_cache().bump_data_version()
+    service = EvaluationService(db)
+    with counting(db) as counts:
+        service._league_role_reference()
+    return counts["n"]
+
+
+def test_the_league_role_reference_does_not_scale_with_the_number_of_teams(
+    db: Session, seeded_league: dict
+) -> None:
+    """R6 added a league-wide role distribution to every evaluation. Written as a loop
+    over teams it cost one round trip each — on the live database that took a cold
+    `/trades/evaluate` from 6 queries to 37, and it passed this file unnoticed because
+    the fixture holds two teams. The batch load is what this pins."""
+    from tests.conftest import make_player, make_team
+
+    two = _role_reference_queries(db, 2)
+    for index in range(3, 7):
+        team = make_team(db, 100 + index, f"T{index}")
+        for slot in range(10):
+            make_player(db, 5000 + index * 20 + slot, f"Extra {index}-{slot}", team)
+    six = _role_reference_queries(db, 6)
+    assert six == two, f"query count grew with team count: {two} -> {six}"
+    assert two <= 6
+
+
+def test_a_second_evaluation_reuses_the_role_reference(db: Session, seeded_league: dict) -> None:
+    """The reference is cached under the data-version namespace, like the skill vectors."""
+    from app.core.cache import get_cache
+
+    get_cache().bump_data_version()
+    service = EvaluationService(db)
+    service._league_role_reference()
+    with counting(db) as counts:
+        EvaluationService(db)._league_role_reference()
+    assert counts["n"] == 0

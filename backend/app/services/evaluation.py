@@ -65,7 +65,6 @@ from app.db.models import (
     PlayerImpactEstimate,
     RosterEntry,
     Standing,
-    Team,
     TeamNeed,
 )
 
@@ -321,6 +320,30 @@ class EvaluationService:
         self._roster_cache[team_id] = cards
         return cards
 
+    def _all_rosters(self) -> dict[str, list[PlayerCard]]:
+        """Every current roster in **one** query, populating the per-team cache.
+
+        `_league_role_reference` needs all thirty rotations. Calling `_roster_cards`
+        thirty times costs thirty round trips, which on the live database took a cold
+        `/trades/evaluate` from 6 queries to 37 — a real cost on Postgres, and one paid
+        by the *first* request after every ingestion. It also passed
+        `test_query_budget.py` unnoticed, because that fixture holds two teams.
+        """
+        entries = self.db.scalars(
+            select(RosterEntry)
+            .where(
+                RosterEntry.season == self.settings.current_season,
+                RosterEntry.is_current,
+            )
+            .order_by(RosterEntry.team_id, RosterEntry.player_id)
+        ).all()
+        grouped: dict[str, list[PlayerCard]] = {}
+        for entry in entries:
+            grouped.setdefault(entry.team_id, []).append(self._card(entry.player, entry.age))
+        for team_id, cards in grouped.items():
+            self._roster_cache.setdefault(team_id, cards)
+        return grouped
+
     def _team_needs(self, team_id: str) -> dict[str, float]:
         if team_id not in self._needs_cache:
             rows = self.db.scalars(
@@ -563,7 +586,7 @@ class EvaluationService:
             return cached
         roles = self._roles()
         per_team: list[dict[str, float]] = []
-        for team_id in self.db.scalars(select(Team.id)).all():
+        for cards in self._all_rosters().values():
             rotation = [
                 RotationPlayer(
                     player_id=c.player_id,
@@ -572,7 +595,7 @@ class EvaluationService:
                     baseline_minutes=c.minutes,
                     availability=1.0 if c.availability is None else c.availability,
                 )
-                for c in self._roster_cards(team_id)
+                for c in cards
                 if c.tei is not None and c.minutes is not None
             ]
             if not rotation:
