@@ -11,7 +11,7 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
         index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
         purge-fixtures import-contracts contract-coverage \
         import-draft-picks pick-ownership fetch-transactions import-transactions \
-        transaction-coverage
+        transaction-coverage comparable-validation
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -122,3 +122,6 @@ import-transactions: ## Parse the local transaction snapshots into historical_tr
 
 transaction-coverage: ## Report what the imported historical-trade corpus contains
 	cd $(BACKEND) && .venv/bin/python -m app.cli transaction-coverage
+
+comparable-validation: ## Run the comparable-trade validation battery (fails on a threshold)
+	cd $(BACKEND) && .venv/bin/python -m app.cli comparable-validation

@@ -149,6 +149,17 @@ class EvaluateRequest(ValidateRequest):
     weights: ScenarioWeightsIn | None = None
 
 
+class ComparablesRequest(ValidateRequest):
+    """A trade to find precedents for, from one team's point of view.
+
+    `focal_team_id` is required and has no default: a comparable is a *side*, and picking
+    a side for the caller would answer a question nobody asked.
+    """
+
+    focal_team_id: str
+    k: int = Field(ge=1, le=25, default=5)
+
+
 class GenerateRequest(BaseModel):
     scenario_id: str | None = None
     focal_team_id: str | None = None

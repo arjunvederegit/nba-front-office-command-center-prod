@@ -314,7 +314,15 @@ def _parse_asset(item: str) -> tuple[str, object]:
     return "unparsed", _plain(item)
 
 
-def _classify_note(note: str) -> str:
+def classify_conveyance(note: str | None) -> str:
+    """How a pick conveys, from the words attached to it.
+
+    Public because the comparable-trade engine classifies a *proposed* pick's protection
+    text with the same rules. Two definitions of "protected" would let a query and the
+    corpus disagree about the same sentence.
+    """
+    if not note:
+        return "unconditional"
     if _SWAP_RE.search(note):
         return "swap"
     if _PROTECTED_RE.search(note):
@@ -322,6 +330,10 @@ def _classify_note(note: str) -> str:
     if _CONDITIONAL_RE.search(note):
         return "conditional"
     return "unconditional"
+
+
+def _classify_note(note: str) -> str:
+    return classify_conveyance(note)
 
 
 #: A qualifier the source writes *before* the pick it qualifies — "conditional 2028 2nd-rd

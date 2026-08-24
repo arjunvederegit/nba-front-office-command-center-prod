@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
+    ComparablesRequest,
     EvaluateRequest,
     GenerateRequest,
     ReportFormat,
@@ -26,6 +27,7 @@ from app.db.models import (
     TradeTeam,
 )
 from app.services.candidates import generate_candidates
+from app.services.comparables import ComparableTradeService
 from app.services.evaluation import EvaluationService
 from app.services.reports import build_report_markdown, report_to_html
 
@@ -118,6 +120,36 @@ def generate_trades(payload: GenerateRequest, db: Session = Depends(get_db)) -> 
         preferred_outgoing_ids=preferred,
         max_candidates=payload.max_candidates,
     )
+
+
+@router.post(
+    "/comparables",
+    summary="Completed trades most like this one, from one team's side",
+    description=(
+        "Retrieval over ten seasons of Basketball-Reference transaction pages, normalized "
+        "locally. The unit is a **side**: what one team sent, received and was at the "
+        "time, because 'we trade a star for picks' and 'we trade picks for a star' are "
+        "the same transaction and different decisions.\n\n"
+        "Similarity is an interpretable grouped distance over six dimensions, each "
+        "returned with its own similarity and the feature values that produced it. "
+        "Salary is not among them — no source here carries a historical contract — and "
+        "**nothing reads what happened next**. A comparable is evidence about precedent, "
+        "not about consequence."
+    ),
+)
+def comparable_trades(payload: ComparablesRequest, db: Session = Depends(get_db)) -> dict:
+    if payload.focal_team_id not in payload.team_ids:
+        raise DomainError("focal_team_id must be one of team_ids")
+    player_moves, pick_moves = _moves_from_payload(payload)
+    return ComparableTradeService(db).find(
+        payload.focal_team_id, payload.team_ids, player_moves, pick_moves, k=payload.k
+    )
+
+
+@router.get("/comparables/coverage")
+def comparable_coverage(db: Session = Depends(get_db)) -> dict:
+    """What the historical corpus contains, and where it stops."""
+    return ComparableTradeService(db).coverage()
 
 
 @router.post("", status_code=201)
@@ -280,6 +312,21 @@ def list_trades(scenario_id: str | None = None, db: Session = Depends(get_db)) -
 @router.get("/{trade_id}")
 def get_trade(trade_id: str, db: Session = Depends(get_db)) -> dict:
     return _trade_detail(db, trade_id)
+
+
+@router.get("/{trade_id}/comparables")
+def saved_trade_comparables(
+    trade_id: str, focal_team_id: str | None = None, k: int = 5, db: Session = Depends(get_db)
+) -> dict:
+    trade = db.get(TradeProposal, trade_id)
+    if trade is None:
+        raise NotFoundError(f"trade {trade_id} not found")
+    team_ids, player_moves, pick_moves = _trade_moves(trade)
+    _, _, scenario_focal = _scenario_weights(db, trade.scenario_id)
+    focal = focal_team_id or scenario_focal or (team_ids[0] if team_ids else None)
+    if focal is None or focal not in team_ids:
+        raise DomainError("focal_team_id must be one of the trade's teams")
+    return ComparableTradeService(db).find(focal, team_ids, player_moves, pick_moves, k=k)
 
 
 @router.get("/{trade_id}/report")

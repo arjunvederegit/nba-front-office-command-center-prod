@@ -36,6 +36,12 @@ Commands
                    name is recorded as unresolved and filed as a data-quality warning.
   transaction-coverage
                    Report what the imported corpus contains without importing anything.
+  comparable-validation
+                   Run the comparable-trade validation battery: perturbation stability,
+                   scale-form and distance-form sensitivity, single-dimension and
+                   shuffled-feature nulls, leave-one-dimension-out, archetype recovery,
+                   direction confusion, era structure and season concentration. Exits
+                   non-zero when a stated threshold fails.
   contract-coverage
                    Report ROSTER-side contract coverage without importing anything:
                    how many rostered players have a salary for the cap league year,
@@ -163,6 +169,17 @@ def main() -> None:
             summary = import_transactions(db, source)
         print(json.dumps(summary, indent=2, default=str))
         if summary.get("error"):
+            sys.exit(2)
+    elif command == "comparable-validation":
+        from app.analytics.comparables_validation import run_battery
+        from app.services.comparables import ComparableTradeService
+
+        with SessionLocal() as db:
+            service = ComparableTradeService(db)
+            report = run_battery(service.rankable_corpus(), all_sides=service.corpus())
+        print(json.dumps(report, indent=2, default=str))
+        if report["failed"]:
+            print(f"\nFAILED: {', '.join(report['failed'])}")
             sys.exit(2)
     elif command == "transaction-coverage":
         from app.ingestion.transactions.importer import coverage_summary
