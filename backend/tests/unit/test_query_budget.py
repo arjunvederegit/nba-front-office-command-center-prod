@@ -29,6 +29,10 @@ from app.services.evaluation import EvaluationService
 
 EVALUATE_BUDGET = 25  # baseline 61
 GENERATE_BUDGET = 3_000  # baseline 21,326
+#: R7. Season totals, the rostered-team lookup, and one batched player load. Constant
+#: in the row count; the path it replaces was one `db.get` per row (573 on the
+#: shipped season).
+DIRECTORY_BUDGET = 6
 
 
 @contextlib.contextmanager
@@ -88,6 +92,43 @@ def test_candidate_generation_stays_within_budget(db: Session, seeded_league: di
     assert counts["n"] <= GENERATE_BUDGET, (
         f"{counts['n']} queries to generate candidates (budget {GENERATE_BUDGET}, "
         f"baseline 21,326)"
+    )
+
+
+def test_the_player_directory_does_not_query_once_per_row(
+    db: Session, seeded_league: dict
+) -> None:
+    """R7. `list_season_totals` called `db.get(Player, ...)` inside its loop.
+
+    On the shipped season that is 573 statements for one page load — the heaviest read in
+    the product, on the surface a user hits first. The budget is expressed as "constant in
+    the number of rows" rather than as a number, because the number is a property of how
+    many players were imported and the defect is not.
+    """
+    from app.api.v1.players import list_season_totals
+    from app.db.models import PlayerSeasonStats
+
+    for index, player in enumerate(seeded_league["roster_a"] + seeded_league["roster_b"]):
+        db.add(
+            PlayerSeasonStats(
+                player_id=player.id,
+                season="2025-26",
+                stat_type="totals",
+                games_played=70,
+                minutes=1800.0,
+                stats={"PTS": 700 + index, "per_game": {"PTS": 10.0}, "rates": {}},
+            )
+        )
+    db.commit()
+
+    with counting(db) as counts:
+        payload = list_season_totals("2025-26", db)
+
+    rows = len(payload["players"])
+    assert rows >= 20, "the fixture no longer exercises a directory-sized page"
+    assert counts["n"] <= DIRECTORY_BUDGET, (
+        f"{counts['n']} queries for {rows} rows (budget {DIRECTORY_BUDGET}) — the "
+        "per-row lookup has come back"
     )
 
 
