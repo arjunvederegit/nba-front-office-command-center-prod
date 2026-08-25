@@ -473,11 +473,24 @@ def _precedent_section(lines: list[str], comparables: dict | None, unknowns: lis
         for why in (row.get("why") or [])[:2]:
             lines.append(f"    - {why}")
     lines.append("")
+    # `trades_rankable`, not `trades_ingested`. 565 trades are ingested and 535 can be
+    # ranked; naming the larger number in a document a front office reviews claims coverage
+    # the retrieval does not have. The same line in the UI panel was corrected with it.
+    ingested = coverage.get("trades_ingested", 0)
+    rankable = coverage.get("trades_rankable", 0)
+    unrankable = max(0, ingested - rankable)
     lines.append(
-        f"Drawn from {coverage.get('sides_rankable', 0)} rankable sides of "
-        f"{coverage.get('trades_ingested', 0)} completed trades. **Resemblance is not "
-        "consequence**: nothing in the retrieval reads what happened after these trades, "
-        "and a historical deal that worked is not an argument that this one will."
+        f"Drawn from {coverage.get('sides_rankable', 0):,} rankable sides of {rankable:,} "
+        f"completed trades"
+        + (
+            f"; {unrankable:,} of the {ingested:,} ingested cannot be ranked, because this "
+            "database holds no production for the season that would describe them"
+            if unrankable
+            else ""
+        )
+        + ". **Resemblance is not consequence**: nothing in the retrieval reads what "
+        "happened after these trades, and a historical deal that worked is not an argument "
+        "that this one will."
     )
     not_scored = comparables.get("not_scored") or []
     if not_scored:

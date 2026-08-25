@@ -238,3 +238,52 @@ def test_the_verdict_is_monotone_in_the_composite(utility, expected):
         **_base(evaluations={"team-a": {"composite_utility": utility}})
     )
     assert expected in markdown
+
+
+def test_the_precedent_section_states_rankable_trades_not_ingested_ones() -> None:
+    """R7. The memo said "1,151 rankable sides of 565 completed trades"; 565 is what was
+    ingested and 535 can be ranked. A document a front office reviews must not claim
+    coverage the retrieval does not have, and the shortfall is the number a reader would
+    actually want."""
+    from app.services.reports import _precedent_section
+
+    lines: list[str] = []
+    _precedent_section(
+        lines,
+        {
+            "available": True,
+            "comparables": [],
+            "coverage": {
+                "sides_rankable": 1151,
+                "trades_rankable": 535,
+                "trades_ingested": 565,
+            },
+        },
+        [],
+    )
+    text = "\n".join(lines)
+    assert "1,151 rankable sides of 535 completed trades" in text
+    assert "30 of the 565 ingested cannot be ranked" in text
+    assert "Resemblance is not consequence" in text
+
+
+def test_a_fully_rankable_corpus_does_not_report_a_shortfall() -> None:
+    """The clause is a disclosure, not decoration. With nothing withheld there is nothing
+    to disclose, and a trailing "0 of 565 cannot be ranked" reads as a defect."""
+    from app.services.reports import _precedent_section
+
+    lines: list[str] = []
+    _precedent_section(
+        lines,
+        {
+            "available": True,
+            "comparables": [],
+            "coverage": {
+                "sides_rankable": 1225,
+                "trades_rankable": 565,
+                "trades_ingested": 565,
+            },
+        },
+        [],
+    )
+    assert "cannot be ranked" not in "\n".join(lines)
