@@ -22,8 +22,8 @@
 
 | Metric | Value |
 | --- | --- |
-| Backend tests | **114 passed**, 1 warning, 4.32 s (now **906 passed / 1 skipped / 0 xfailed** at `f9c8e38`) |
-| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88.45 %**, floor 85 |
+| Backend tests | **114 passed**, 1 warning, 4.32 s (now **908 passed / 1 skipped / 0 xfailed** at `a76cff3`) |
+| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88.46 %**, floor 85 |
 | Frontend unit tests | **15 passed** (2 files); now **82 passed** (9 files) |
 | `data/external/` | **does not exist** — the Kaggle `nbadb` dataset is NOT present. A copy on this machine (`~/Downloads/nbadatabase/nba.sqlite`) ends **2023-06-12**, before the first modelled season, so it cannot serve R6's lineup question either. |
 
@@ -63,8 +63,8 @@ random-hash null scores a perfect 1.0000. See "R7 — the criterion two nulls pa
 **Next:** nothing in RosterLab. The next product generation ("Pivot") starts from
 `ROSTERLAB_FINAL_R1_R7_HANDOFF.md`, whose closing section states the boundary.
 
-**Status:** working tree clean, pushed through `f9c8e38`. Backend **906 passed / 1 skipped /
-0 xfailed**, coverage **88.45 %** (floor 85). Frontend **82 passed** (9 files); eslint, `tsc`
+**Status:** working tree clean, pushed through `a76cff3`. Backend **908 passed / 1 skipped /
+0 xfailed**, coverage **88.46 %** (floor 85). Frontend **82 passed** (9 files); eslint, `tsc`
 and the production build (13 routes) clean. Migrations apply, reverse to base and re-apply on
 a fresh database, and `alembic check` reports no drift. Playwright **6 passed** (including a
 new database-identity guard); visual QA **105 shots clean** in `docs/qa/r7/`. Adversarial
@@ -186,6 +186,7 @@ test. If e2e fixtures appear in the dev database again, that guard is the thing 
 | **R7-13** — the 2,964-line page, and e2e isolation | `f589907` | 2,964 → 2,375 LOC; `make e2e` had been testing the developer's database |
 | **R7-14** — the adversarial battery, committed | `a28d7c8` | 11 scenarios; writing it found three checks that could not fail |
 | **R7-15** — cache invalidation on any ingestion | `f9c8e38` | `bump_data_version` moved into `sync_run`; every non-`sync_all` path had been serving stale skills |
+| **R7-16** — the memo claimed the corpus, not the coverage | `a76cff3` | "565 completed trades" where 535 are rankable, on the artifact a front office reviews offline |
 
 Remaining xfail pins: **0** (23 of 23 flipped)
 - QA-11 `EFF` classification flipped in R7 (`d79ceb5`), with the third field category C12
@@ -198,6 +199,8 @@ point-estimate agreement (R3-5).
 ## Commits
 
 ```
+a76cff3 fix(memo): the decision memo claimed the corpus, not the coverage
+748d572 docs: close the RosterLab generation — R7 report and the R1-R7 handoff
 f9c8e38 fix(cache): invalidate on any ingestion, not only on a full sync
 a28d7c8 test(adversarial): commit the hostile-trade battery R6 ran by hand
 f589907 refactor(trade-evaluator): lift the evaluation tabs out of a 2,964-line page
@@ -683,7 +686,7 @@ Five things R5 established that R6 must not undo:
 
 ## Push status
 
-`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`f9c8e38`** (R7) plus the
+`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`a76cff3`** (R7) plus the
 R7 report, the R1–R7 handoff and this state file. `main` untouched; no history rewritten;
 nothing force-pushed; no `git stash` used at any point.
 

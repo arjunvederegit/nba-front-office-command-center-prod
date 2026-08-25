@@ -1,7 +1,7 @@
 # RosterLab R7 — hardening, correction and close-out
 
-**Branch** `feat/rosterlab-autonomous-roadmap` · **base** `0669f42` (R6) · **head** `f9c8e38`
-15 commits
+**Branch** `feat/rosterlab-autonomous-roadmap` · **base** `0669f42` (R6) · **head** `a76cff3`
+17 commits
 
 R7 is the last RosterLab release. Its objective was not another analytical system: it was to
 finish, correct, simplify, document and comprehensively re-validate what R1–R6 built, so the
@@ -26,7 +26,7 @@ showed the threshold had never been measuring what it claimed.
 | Best single-dimension null | 0.089 | **0.060** (ceiling 0.75) |
 | `comparable-validation` runtime | ~90 s | **68 s at 3.4× the corpus** |
 | Trades described by an unplayed season | 57 of 565 | **0** |
-| Backend tests | 869 | **906** |
+| Backend tests | 869 | **908** |
 | Frontend tests | 45 | **82** |
 | Strict xfails remaining | 1 | **0** |
 | Largest frontend module | 2,964 LOC | 2,375 LOC |
@@ -240,6 +240,13 @@ against the raw string so `getSnapshot` returns a stable identity.
 trades, need-driven acquisition and the decision memo; its architecture diagram said 32
 tables (35) and omitted two integrations.
 
+**The decision memo claimed the corpus, not the coverage.** The precedent section read
+"1,151 rankable sides of 565 completed trades" — the same defect corrected in the UI panel
+earlier in R7, missed here, and this is the surface where it matters most: a memo is the
+artifact a front office reviews away from the product and cannot interrogate. It now names
+535 and states the shortfall with its cause. Found by generating a memo against the running
+product, not by reading the code.
+
 **Copy.** "1 saved deals". `count()` puts the noun in agreement at the six call sites that
 can render one.
 
@@ -374,8 +381,8 @@ inversion and was nothing of the kind.
 ## 9. Final validation
 
 ```
-backend pytest             906 passed · 1 skipped · 0 xfailed    (was 869 / 1 / 1)
-backend coverage           88.45 %, floor 85
+backend pytest             908 passed · 1 skipped · 0 xfailed    (was 869 / 1 / 1)
+backend coverage           88.46 %, floor 85
 frontend vitest             82 passed, 9 files                    (was 45 / 6)
 ruff · mypy (97 files) · eslint · tsc                 clean
 production build           13 routes, TypeScript clean
@@ -474,6 +481,8 @@ reproduced.
 ## 12. Commits and push status
 
 ```
+a76cff3 fix(memo): the decision memo claimed the corpus, not the coverage
+748d572 docs: close the RosterLab generation — R7 report and the R1-R7 handoff
 f9c8e38 fix(cache): invalidate on any ingestion, not only on a full sync
 a28d7c8 test(adversarial): commit the hostile-trade battery R6 ran by hand
 f589907 refactor(trade-evaluator): lift the evaluation tabs out of a 2,964-line page

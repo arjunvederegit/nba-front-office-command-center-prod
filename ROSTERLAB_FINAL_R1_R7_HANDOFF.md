@@ -8,7 +8,7 @@ context can understand the completed system without reading any release chat.
 | | |
 | --- | --- |
 | Branch | `feat/rosterlab-autonomous-roadmap` |
-| Head | `f9c8e38` |
+| Head | `a76cff3` |
 | Base of the generation | `f16dedc` (the audited/planned commit on `main`) |
 | Remote | `origin` → `github.com/arjunvederegit/nba-front-office-command-center-prod` |
 | `main` | untouched; nothing force-pushed, no history rewritten |
@@ -243,8 +243,8 @@ A trade produces one evaluation **per team**, never a single verdict. Each carri
 ## 9. Test and QA status at close
 
 ```
-backend pytest             906 passed · 1 skipped · 0 xfailed
-backend coverage           88.45 %, floor 85 (CI-enforced)
+backend pytest             908 passed · 1 skipped · 0 xfailed
+backend coverage           88.46 %, floor 85 (CI-enforced)
 frontend vitest             82 passed, 9 files
 ruff · mypy (97 files) · eslint · tsc                 clean
 production build           13 routes
