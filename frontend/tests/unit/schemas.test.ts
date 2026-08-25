@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { dataHealthSchema, evaluateResponseSchema, tradeDetailSchema } from "@/lib/schemas";
+import {
+  comparablesResponseSchema,
+  dataHealthSchema,
+  evaluateResponseSchema,
+  tradeDetailSchema,
+} from "@/lib/schemas";
 
 /**
  * The zod decision (R1-9): `lib/api.ts` returned `res.json() as Promise<T>` — a bare
  * cast — while the project carried an unused `zod` dependency. These schemas guard the
- * two contracts that carry decision numbers, and these tests guard the schemas.
+ * two contracts that carry decision numbers — three since R7, which added the
+ * comparable-trade coverage block — and these tests guard the schemas.
  */
 
 const scored = {
@@ -154,5 +160,64 @@ describe("share state", () => {
   it("returns null rather than throwing on a corrupt link", async () => {
     const { decodeShareState } = await import("@/lib/shareState");
     expect(decodeShareState("not-base64!!")).toBeNull();
+  });
+});
+
+describe("comparablesResponseSchema", () => {
+  const coverage = {
+    trades_ingested: 565,
+    sides_rankable: 1151,
+    trades_rankable: 535,
+    sides_blocked_by_unmodelled_players: 35,
+    seasons_ingested: ["2016-17", "2025-26"],
+    calendar_backed: true,
+    note: "…",
+  };
+
+  it("accepts the shipped shape", () => {
+    expect(
+      comparablesResponseSchema.safeParse({ available: true, coverage }).success,
+    ).toBe(true);
+  });
+
+  it("rejects a coverage block missing the fields the panel does arithmetic on", () => {
+    // The R7 failure this guards: the panel subtracts `trades_rankable` from
+    // `trades_ingested` and formats both, so a backend without the field renders
+    // "undefined of undefined trades" or throws inside the render.
+    const without: Record<string, unknown> = { ...coverage };
+    delete without.trades_rankable;
+    expect(
+      comparablesResponseSchema.safeParse({ available: true, coverage: without }).success,
+    ).toBe(false);
+  });
+
+  it("rejects more rankable trades than were ingested", () => {
+    // Sides come from trades. The other direction is a join that has gone wrong.
+    expect(
+      comparablesResponseSchema.safeParse({
+        available: true,
+        coverage: { ...coverage, trades_rankable: 600 },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("still validates an unavailable response, which carries coverage too", () => {
+    expect(
+      comparablesResponseSchema.safeParse({
+        available: false,
+        unavailable_reason: "nothing moves on this side",
+        coverage,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("lets unknown keys through, because additive fields must never fail a client", () => {
+    expect(
+      comparablesResponseSchema.safeParse({
+        available: true,
+        coverage: { ...coverage, something_new: 1 },
+        another_new_block: {},
+      }).success,
+    ).toBe(true);
   });
 });

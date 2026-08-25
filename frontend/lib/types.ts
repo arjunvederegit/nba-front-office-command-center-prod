@@ -576,10 +576,16 @@ export interface ComparablesCoverage {
   trades_ingested: number;
   seasons_ingested: string[];
   sides_total: number;
-  sides_in_modelled_window: number;
+  sides_with_production: number;
   sides_rankable: number;
+  /** Distinct completed trades at least one rankable side came from. Always <= `trades_ingested`. */
+  trades_rankable: number;
   sides_blocked_by_unmodelled_players: number;
-  modelled_seasons: string[];
+  seasons_with_production: string[];
+  /** False when no season calendar has been ingested and each feature season was decided
+   *  from the trade's calendar month instead. */
+  calendar_backed: boolean;
+  seasons_with_calendar: string[];
   note: string;
 }
 

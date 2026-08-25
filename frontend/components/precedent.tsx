@@ -165,10 +165,13 @@ export function PrecedentPanel({
       <div className="min-w-0">
         <h4 className="title-md text-foreground">Completed trades this one resembles</h4>
         <p className="mt-1 text-[12px] leading-snug text-muted">
-          Ranked over {coverage.sides_rankable} team-sides of {coverage.trades_ingested}{" "}
-          completed trades. A side is one team&apos;s view of one trade, because sending a star for
-          picks and receiving one are different decisions — at most one side of any trade appears
-          here.
+          {/* `trades_rankable`, not `trades_ingested`: 565 trades are ingested and 535 can
+              be ranked, and naming the larger number here would claim coverage the
+              retrieval does not have. The gap is stated below rather than absorbed. */}
+          Ranked over {coverage.sides_rankable.toLocaleString()} team-sides of{" "}
+          {coverage.trades_rankable.toLocaleString()} completed trades. A side is one
+          team&apos;s view of one trade, because sending a star for picks and receiving one are
+          different decisions — at most one side of any trade appears here.
         </p>
         <ul className="mt-3 space-y-3">
           {data.comparables.map((side) => (
@@ -208,8 +211,24 @@ export function PrecedentPanel({
             Seasons ingested {coverage.seasons_ingested[0]} –{" "}
             {coverage.seasons_ingested[coverage.seasons_ingested.length - 1]};{" "}
             {coverage.sides_blocked_by_unmodelled_players} sides withheld because a player in them
-            has no modelled production.
+            has no modelled production
+            {coverage.trades_ingested > coverage.trades_rankable && (
+              <>
+                ; {(coverage.trades_ingested - coverage.trades_rankable).toLocaleString()} of{" "}
+                {coverage.trades_ingested.toLocaleString()} ingested trades cannot be ranked at all
+              </>
+            )}
+            .
           </p>
+          {/* The rule that decided every feature season above. Silent when it is the
+              ingested calendar, because that is the case with nothing to disclose. */}
+          {coverage.calendar_backed === false && (
+            <p className="mt-1.5 text-conditional">
+              No season calendar has been ingested, so each trade&apos;s feature season was decided
+              from its calendar month. That mis-describes draft-night, preseason and
+              November-2020 trades. Run <code>make sync-season-calendar</code>.
+            </p>
+          )}
         </div>
       </aside>
     </div>

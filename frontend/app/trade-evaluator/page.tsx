@@ -25,7 +25,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { api } from "@/lib/api";
-import { tradeDetailSchema } from "@/lib/schemas";
+import { comparablesResponseSchema, tradeDetailSchema } from "@/lib/schemas";
 import { decodeShareState, encodeShareState } from "@/lib/shareState";
 import {
   COMPONENT_EXPLAIN,
@@ -2315,13 +2315,17 @@ function PrecedentTab({
   const query = useQuery({
     queryKey: ["comparables", focalTeamId, playerMoves, pickMoves],
     queryFn: () =>
-      api.post<ComparablesResponse>("/trades/comparables", {
-        team_ids: teamIds,
-        focal_team_id: focalTeamId,
-        player_moves: playerMoves,
-        pick_moves: pickMoves,
-        k: 5,
-      }),
+      api.post<ComparablesResponse>(
+        "/trades/comparables",
+        {
+          team_ids: teamIds,
+          focal_team_id: focalTeamId,
+          player_moves: playerMoves,
+          pick_moves: pickMoves,
+          k: 5,
+        },
+        comparablesResponseSchema,
+      ),
   });
   return (
     <PrecedentPanel

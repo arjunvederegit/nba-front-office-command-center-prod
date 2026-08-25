@@ -446,7 +446,7 @@ def test_the_service_reports_coverage_rather_than_hiding_the_boundary(db, league
     coverage = service.coverage()
     assert coverage["trades_ingested"] == 1
     assert coverage["sides_total"] == 2
-    assert coverage["modelled_seasons"]
+    assert coverage["seasons_with_production"]
     assert "not ranked" in coverage["note"]
 
 

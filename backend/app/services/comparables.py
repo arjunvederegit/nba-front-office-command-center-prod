@@ -580,11 +580,16 @@ class ComparableTradeService:
             "trades_ingested": len(trades),
             "seasons_ingested": sorted({s.season for s in corpus}),
             "sides_total": len(corpus),
-            "sides_in_modelled_window": len(in_window),
+            #: R7 renamed both of these. They were `sides_in_modelled_window` and
+            #: `modelled_seasons`, and once the corpus window and the modelling window
+            #: stopped being the same three seasons those names said the wrong thing:
+            #: these are the ten seasons the CORPUS may be described by, not the three
+            #: every served estimate is fitted on.
+            "sides_with_production": len(in_window),
             "sides_rankable": len(in_window) - len(blocked),
             "sides_blocked_by_unmodelled_players": len(blocked),
             "trades_rankable": len({s.group_key for s in in_window if s.rankable}),
-            "modelled_seasons": sorted(scored),
+            "seasons_with_production": sorted(scored),
             #: Which rule decided every feature season on this response. False means no
             #: season boundary has been ingested and the calendar month answered instead,
             #: which mis-describes draft-night, preseason and 2020-21 November trades.
@@ -593,8 +598,10 @@ class ComparableTradeService:
             "note": (
                 "A side is ranked only where this database can state the on-court value "
                 "of every player in it. Player production is held for "
-                f"{', '.join(sorted(scored))}, so trades whose feature season falls "
-                "outside that window are stored and retrievable but not ranked."
+                f"{len(scored)} seasons, {min(scored)} to {max(scored)}, so trades whose "
+                "feature season falls outside that range are stored and retrievable but "
+                "not ranked. This is the corpus window, which is wider than the "
+                "three-season window every served estimate is fitted on."
             )
             + (
                 ""

@@ -10,7 +10,10 @@ import { z } from "zod";
  *
  * Scope: the responses that carry decision numbers, and only the fields a wrong shape
  * would silently corrupt. R1 changed both of these contracts and R3/R5 change them
- * again, which is exactly when an unchecked cast bites.
+ * again, which is exactly when an unchecked cast bites. R7 adds the comparable-trade
+ * coverage block for the same reason: it changed shape in this release, and the panel
+ * arithmetics on it, so a stale backend renders `undefined of undefined trades` or
+ * throws inside the render rather than failing at the boundary.
  *
  * Deliberately **not** validated: everything else. A schema per endpoint would be a
  * second copy of the contract to keep in sync, and drift there would reject valid
@@ -96,5 +99,39 @@ export const dataHealthSchema = z
       z.string(),
       z.object({ rows: z.number(), stale: z.boolean().nullable() }).passthrough(),
     ),
+  })
+  .passthrough();
+
+/**
+ * Comparable-trade coverage. **Only the coverage block**, because it is the part the
+ * panel does arithmetic on — it subtracts `trades_rankable` from `trades_ingested` and
+ * formats both — while the neighbours themselves are rendered field by field and a
+ * missing one shows as absent rather than as a wrong number.
+ *
+ * `available: false` responses carry a coverage block too, so nothing here is optional
+ * on the unavailable path.
+ */
+export const comparablesResponseSchema = z
+  .object({
+    available: z.boolean(),
+    coverage: z
+      .object({
+        trades_ingested: z.number(),
+        sides_rankable: z.number(),
+        trades_rankable: z.number(),
+        sides_blocked_by_unmodelled_players: z.number(),
+        seasons_ingested: z.array(z.string()).min(1),
+        calendar_backed: z.boolean(),
+        note: z.string(),
+      })
+      .passthrough()
+      // R7's own invariant. Sides come from trades, so a corpus reporting more rankable
+      // trades than it ingested is a join that has gone wrong, not a bigger corpus.
+      .refine((c) => c.trades_rankable <= c.trades_ingested, {
+        message: "more trades are rankable than were ingested",
+      })
+      .refine((c) => c.sides_rankable >= c.trades_rankable, {
+        message: "fewer rankable sides than rankable trades",
+      }),
   })
   .passthrough();
