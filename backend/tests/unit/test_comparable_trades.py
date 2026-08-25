@@ -28,7 +28,12 @@ from app.analytics.comparables_validation import (
     era_structure,
 )
 from app.db.models import HistoricalTrade, HistoricalTradeAsset, Team
-from app.services.comparables import ComparableTradeService, feature_season_for
+from app.services.comparables import (
+    ComparableTradeService,
+    SeasonWindow,
+    feature_season_by_month,
+    feature_season_for,
+)
 
 
 def make_side(key: str, **overrides) -> TradeSide:
@@ -236,20 +241,83 @@ def test_package_value_is_minutes_weighted_above_replacement():
 # --------------------------------------------------------------------- feature season
 
 
+#: The ingested boundaries, verbatim from `season_calendar` on the real database. The
+#: COVID season is in here because it is the case the month rule cannot express.
+CALENDAR = [
+    SeasonWindow("2018-19", date(2018, 10, 16), date(2019, 4, 10)),
+    SeasonWindow("2019-20", date(2019, 10, 22), date(2020, 8, 14)),
+    SeasonWindow("2020-21", date(2020, 12, 22), date(2021, 5, 16)),
+    SeasonWindow("2023-24", date(2023, 10, 24), date(2024, 4, 14)),
+    SeasonWindow("2024-25", date(2024, 10, 22), date(2025, 4, 13)),
+    SeasonWindow("2025-26", date(2025, 10, 21), date(2026, 4, 12)),
+]
+
+
 @pytest.mark.parametrize(
-    ("season", "when", "expected"),
+    ("season", "when", "expected", "in_season"),
     [
-        ("2025-26", date(2025, 7, 6), "2024-25"),
-        ("2025-26", date(2025, 9, 30), "2024-25"),
-        ("2025-26", date(2025, 10, 1), "2025-26"),
-        ("2025-26", date(2026, 2, 5), "2025-26"),
-        ("2025-26", date(2026, 6, 23), "2025-26"),
+        # The cases the month rule already got right.
+        ("2025-26", date(2025, 7, 6), "2024-25", False),
+        ("2025-26", date(2025, 9, 30), "2024-25", False),
+        ("2025-26", date(2026, 2, 5), "2025-26", True),
+        # ...and the three groups it got wrong, each a look-ahead.
+        # Draft night 2024 is filed under 2024-25 by the source. The season that had
+        # been played is 2023-24.
+        ("2024-25", date(2024, 6, 27), "2023-24", False),
+        # Early October is preseason: 2025-26 does not start until the 21st.
+        ("2025-26", date(2025, 10, 1), "2024-25", False),
+        ("2025-26", date(2025, 10, 20), "2024-25", False),
+        ("2025-26", date(2025, 10, 21), "2025-26", True),
+        # November 2020 is not in-season. The 2020-21 season began 22 December 2020,
+        # and the season that had been played is the bubble year.
+        ("2020-21", date(2020, 11, 18), "2019-20", False),
+        ("2020-21", date(2020, 12, 21), "2019-20", False),
+        ("2020-21", date(2020, 12, 22), "2020-21", True),
+        # A June trade the following year: the season it belongs to is over.
+        ("2024-25", date(2025, 6, 25), "2024-25", False),
     ],
 )
 def test_the_feature_season_is_the_most_recent_production_a_team_actually_had(
-    season, when, expected
+    season, when, expected, in_season
 ):
-    assert feature_season_for(season, when) == expected
+    assert feature_season_for(season, when, CALENDAR) == (expected, in_season)
+
+
+def test_the_month_rule_is_the_fallback_and_reports_itself_as_one():
+    """With no calendar the old answer is still given — including its wrong ones. What
+    must not happen is a confident answer with nothing behind it, so `coverage()`
+    publishes `calendar_backed` and the note names the command that fixes it."""
+    assert feature_season_for("2020-21", date(2020, 11, 18), []) == ("2020-21", True)
+    assert feature_season_for("2020-21", date(2020, 11, 18), CALENDAR) == ("2019-20", False)
+
+
+def test_a_trade_before_every_ingested_season_is_not_given_one():
+    """The earliest calendar row is 2018-19. A 2015 trade has no production to be
+    described by, and naming the nearest season anyway is how a side acquires a value
+    the database cannot support."""
+    feature, in_season = feature_season_for("2015-16", date(2015, 12, 1), CALENDAR)
+    assert in_season is False
+    assert feature == "2017-18"
+    assert feature not in {w.season for w in CALENDAR}
+
+
+def test_every_trade_the_rule_changed_was_being_described_by_an_unplayed_season():
+    """The regression this replaced. For each historical shape, the month rule named a
+    season whose first game had not happened — which is the definition of look-ahead."""
+    windows = {w.season: w for w in CALENDAR}
+    cases = [
+        ("2020-21", date(2020, 11, 18)),
+        ("2024-25", date(2024, 6, 27)),
+        ("2025-26", date(2025, 10, 1)),
+    ]
+    for season, when in cases:
+        by_month = feature_season_by_month(season, when)
+        assert when < windows[by_month].first_game, (
+            f"{when} vs {by_month}: this case is only a defect because the season had "
+            "not started"
+        )
+        by_calendar, _ = feature_season_for(season, when, CALENDAR)
+        assert windows[by_calendar].last_game < when
 
 
 # ------------------------------------------------------------------------- archetypes
@@ -499,3 +567,41 @@ def test_a_protected_first_is_not_the_same_asset_as_an_unconditional_one():
     scales = {"firsts_net_unconditional": 1.0, "firsts_net_conditional": 1.0}
     assert compare(unconditional, protected, scales).distance > 0.0
     assert compare(protected, swap, scales).distance == 0.0
+
+
+# ------------------------------------------------------- the memoized feature vector
+
+
+def test_the_feature_vector_is_computed_once_and_does_not_change_identity():
+    """R7 memoized `features()`. Two things must survive it.
+
+    `compare` asks both sides for their vector, so one leave-one-out pass rebuilt every
+    corpus side's vector once per query — 1.3 million dict constructions per pass on the
+    ten-season corpus. The memo is only safe because a side is frozen and every collection
+    on it is a tuple.
+    """
+    legs = (player("in", 2.0),)
+    left = make_side("a", incoming=legs)
+    first = left.features()
+    assert left.features() is first, "the vector was rebuilt"
+
+    # Equality and hashing must not notice the memo, or a side would stop being equal to
+    # itself the moment one of the two had been compared.
+    twin = make_side("a", incoming=legs)
+    assert twin == left
+    assert hash(twin) == hash(left)
+    twin.features()
+    assert twin == left
+    assert hash(twin) == hash(left)
+    assert "_features" not in repr(left)
+
+
+def test_the_memo_returns_the_same_values_the_uncached_build_did():
+    """The optimisation must not change a single number."""
+    legs_in = (player("in", 1.4),)
+    legs_out = (player("out", 0.6),)
+    side_a = make_side("a", incoming=legs_in, outgoing=legs_out)
+    cached = side_a.features()
+    fresh = make_side("a", incoming=legs_in, outgoing=legs_out)
+    object.__setattr__(fresh, "_features", None)
+    assert fresh.features() == cached

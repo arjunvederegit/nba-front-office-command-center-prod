@@ -1,4 +1,4 @@
-"""Normalized TradeLab schema.
+"""Normalized RosterLab schema.
 
 Conventions
 - Internal primary keys are UUID strings; external provider identifiers (NBA.com team
@@ -188,6 +188,41 @@ class TeamSeasonStats(Base, ProvenanceMixin):
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
 
     team: Mapped[Team] = relationship(lazy="joined")
+
+
+class SeasonCalendar(Base, ProvenanceMixin):
+    """The dates a season was actually played, one row per season.
+
+    It exists because a trade has to be described by production that existed when it was
+    made, and the month a trade falls in does not settle that. Three cases in the ten
+    ingested seasons decide it and none of them is a corner case:
+
+    - **The 2020-21 season began 22 December 2020.** Thirty-three trades were made in
+      November 2020 — draft night and the free-agency window that followed. Reading the
+      month alone calls those in-season and describes them by 2020-21 production that had
+      not been played yet.
+    - **Draft-night trades sit on the upcoming season's page.** Basketball-Reference lists
+      the 2024 draft under 2024-25, so twelve June-2024 trades carry that season label
+      while the season they should be described by is 2023-24.
+    - **Early-October trades are preseason.** Ten of them across the corpus, the earliest
+      on 1 October, against first games that fall between 22 October and 25 October.
+
+    So the season boundary is ingested rather than assumed: `first_game_date` and
+    `last_game_date` come from `LeagueGameLog`, the same provider every other season fact
+    here comes from, and `services/comparables.feature_season_for` reads them.
+    """
+
+    __tablename__ = "season_calendar"
+    __table_args__ = (UniqueConstraint("season", name="uq_season_calendar"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
+    season: Mapped[str] = mapped_column(String(10), index=True, unique=True)
+    #: First and last REGULAR-SEASON game. The play-in and the playoffs are deliberately
+    #: outside the window: a trade cannot be made during them, so they would only widen
+    #: the in-season band without ever changing an answer.
+    first_game_date: Mapped[date] = mapped_column(Date)
+    last_game_date: Mapped[date] = mapped_column(Date)
+    game_count: Mapped[int] = mapped_column(Integer)
 
 
 class Standing(Base, ProvenanceMixin):
@@ -478,7 +513,10 @@ class PlayerImpactEstimate(Base, TimestampMixin):
     player_id: Mapped[str] = mapped_column(ForeignKey("players.id"), index=True)
     season: Mapped[str] = mapped_column(String(10), index=True)
     model_version_id: Mapped[str] = mapped_column(ForeignKey("model_versions.id"))
-    tei: Mapped[float] = mapped_column(Float)  # TradeLab Estimated Impact, per-100 scale
+    #: RosterLab Estimated Impact, per-100 scale. The acronym predates the rename from
+    #: TradeLab and is kept because it names this column and every API field built on
+    #: it; see `analytics/impact.py`.
+    tei: Mapped[float] = mapped_column(Float)
     tei_offense: Mapped[float | None] = mapped_column(Float)
     tei_defense: Mapped[float | None] = mapped_column(Float)
     tei_low: Mapped[float | None] = mapped_column(Float)  # bootstrap 10th percentile

@@ -8,30 +8,59 @@ only difference between a proposal and a completed trade is where the legs come 
 
 ## The season a trade is described by
 
-A trade made during a season is described by that season; a trade made in July, August or
-September is described by the season that just finished. The rule is "the most recent body
-of production a front office actually had", and it is named on every result — otherwise a
-July trade appears to be described by numbers that did not exist yet.
+**The most recent body of production a front office actually had.** Until R7 that was
+decided from the calendar month — July, August and September were offseason, everything
+else in-season — and the month is not enough to decide it. Three groups of trades were
+being described by production that did not exist when they were made:
+
+| what the month rule said | what had actually been played |
+| --- | --- |
+| 33 trades in **November 2020** are 2020-21 | the 2020-21 season began **22 December 2020** |
+| 12 trades on **26-28 June 2024** are 2024-25 | Basketball-Reference files draft night under the season about to start; 2023-24 is the season that finished |
+| 10 trades in **early October** are that season | first games fall 22-25 October |
+
+The June-2024 group is inside the shipped three-season window, so this was live, not
+latent.
+
+R7 replaces the month with the season boundary as **data**. `season_calendar` holds the
+first and last regular-season game of each season, ingested from `LeagueGameLog`, and the
+rule reads it:
+
+- a trade between a season's first and last game is described by **that** season, and is
+  in-season;
+- otherwise it is described by the **most recently completed** season, and is not.
+
+Every trade's feature season is named on every result. With no calendar ingested the rule
+falls back to the month, reports `calendar_backed: false`, and says so in the response.
 
 ## What limits the corpus
 
-`player_season_stats` holds 2023-24, 2024-25 and 2025-26. A trade whose feature season sits
-outside that window has no on-court value to state, so it is stored, retrievable and
-counted, but not ranked. Measured on the ten-season import:
+A trade whose feature season has no ingested player production has no on-court value to
+state, so it is stored, retrievable and counted, but **not ranked**. R6 measured this at
+three seasons of `player_season_stats`; R7 widened the corpus window to ten
+(`CORPUS_SEASONS`, separate from the modelling window) and re-measured:
 
-    trades ingested                                565
-    ...with a feature season in the window         158   (2023-24 in-season onwards)
-    sides in the window                            352
-    ...rankable                                    337
-    ...blocked by an unmodelled player              15   (16 legs, 8 distinct players)
+    trades ingested                            565      565
+    sides in the corpus                      1,225    1,225
+    seasons of player production                 3       10
+    ...sides with production for their season  352    1,188
+    ...rankable                                337    1,136
+    ...blocked by an unmodelled player          15       52
+    distinct trades rankable                   154      530
 
-The 15 blocked sides each contain a player who had played in the NBA before the trade but
+The blocked sides each contain a player who had played in the NBA before the trade but
 recorded no minutes in its feature season. He is not treated as worthless — the side is
 withheld, because pricing him at zero would understate the package by an unknown amount.
 
 A player who had recorded **no** NBA season before the trade — a draft right, a rookie
 moved on draft night — contributes zero, and that is a measurement rather than an
-imputation. 96 distinct players, 208 legs.
+imputation.
+
+**Widening the window also corrected sides that were already being ranked.** "No prior NBA
+season" is decided against the seasons this database holds, so at three seasons a veteran
+whose last season was 2022-23 looked like a player who had never played. 2023-24 loses 8
+such legs and 4 sides move from silently priced at zero to honestly withheld. The count
+going *down* is the improvement.
 """
 
 from __future__ import annotations
@@ -61,24 +90,67 @@ from app.analytics.features import build_player_season_features
 from app.analytics.impact import add_zscores, baseline_index
 from app.config import get_settings
 from app.core.errors import NotFoundError
-from app.db.models import HistoricalTrade, Player, Standing, Team
+from app.db.models import HistoricalTrade, Player, SeasonCalendar, Standing, Team
 from app.ingestion.transactions.parse import classify_conveyance
 
-#: Months in which a trade belongs to the season that just finished rather than the one
-#: about to start. The NBA's league year turns over on 1 July and the first game is in
-#: October, so a trade in this window has no games of its own season to be described by.
+#: The month rule R7 replaced, kept only as the fallback for a database with no ingested
+#: `season_calendar`. It is wrong for the 2020-21 COVID calendar, for draft-night trades
+#: filed under the season about to start, and for early-October preseason trades — see the
+#: module docstring for the counts.
 OFFSEASON_MONTHS = frozenset({7, 8, 9})
 
 DEFAULT_K = 5
 MAX_K = 25
 
 
-def feature_season_for(season: str, when: date) -> str:
-    """The season whose production describes a trade made on `when` inside `season`."""
-    if when.month in OFFSEASON_MONTHS:
-        start = int(season.split("-")[0]) - 1
-        return f"{start}-{str(start + 1)[-2:]}"
-    return season
+@dataclass(frozen=True)
+class SeasonWindow:
+    """One season's played boundary, as ingested."""
+
+    season: str
+    first_game: date
+    last_game: date
+
+
+def _previous_season(season: str) -> str:
+    start = int(season.split("-")[0]) - 1
+    return f"{start}-{str(start + 1)[-2:]}"
+
+
+def feature_season_by_month(season: str, when: date) -> str:
+    """The pre-R7 rule. Retained as the fallback, and as the thing tests compare against."""
+    return _previous_season(season) if when.month in OFFSEASON_MONTHS else season
+
+
+def feature_season_for(
+    season: str, when: date, calendar: list[SeasonWindow] | None = None
+) -> tuple[str, bool]:
+    """The season whose production describes a trade made on `when`, and whether it was
+    made during that season.
+
+    With a calendar the answer comes from what had been played: the season in progress if
+    the trade falls inside one, otherwise the most recently completed. Without one the
+    month rule answers, which is why the response reports which of the two was used.
+
+    `season` — the league year the source filed the trade under — is used only as the
+    fallback's anchor. The calendar path deliberately ignores it: Basketball-Reference
+    files draft-night trades under the season about to start, and that label is exactly
+    what was producing the look-ahead.
+    """
+    if not calendar:
+        by_month = feature_season_by_month(season, when)
+        return by_month, when.month not in OFFSEASON_MONTHS
+    for window in calendar:
+        if window.first_game <= when <= window.last_game:
+            return window.season, True
+    completed = [w for w in calendar if w.last_game < when]
+    if completed:
+        return max(completed, key=lambda w: w.last_game).season, False
+    # The trade predates every ingested season. There is no production to describe it
+    # with, and naming one anyway is how a side acquires a value it cannot support; the
+    # earliest known season is returned so the side sorts out of the scored window and is
+    # counted as unrankable rather than silently priced.
+    return _previous_season(min(calendar, key=lambda w: w.first_game).season), False
 
 
 @dataclass
@@ -97,6 +169,7 @@ class ComparableTradeService:
         self._season_rows: dict[tuple[str, str], PlayerSeasonRow] | None = None
         self._seasons_by_player: dict[str, set[str]] | None = None
         self._win_pct: dict[tuple[str, str], float] | None = None
+        self._calendar: list[SeasonWindow] | None = None
         self._corpus: list[TradeSide] | None = None
         self._scales: dict[str, float] | None = None
         self._teams: dict[str, Team] | None = None
@@ -157,6 +230,20 @@ class ComparableTradeService:
             self._teams = {t.id: t for t in self.db.scalars(select(Team)).all()}
         return self._teams
 
+    def calendar(self) -> list[SeasonWindow]:
+        """Ingested season boundaries, newest last. Empty where none has been synced."""
+        if self._calendar is None:
+            self._calendar = [
+                SeasonWindow(row.season, row.first_game_date, row.last_game_date)
+                for row in self.db.scalars(
+                    select(SeasonCalendar).order_by(SeasonCalendar.first_game_date)
+                ).all()
+            ]
+        return self._calendar
+
+    def feature_season(self, season: str, when: date) -> tuple[str, bool]:
+        return feature_season_for(season, when, self.calendar())
+
     # ----------------------------------------------------------------- leg building
 
     def _player_leg(
@@ -210,6 +297,7 @@ class ComparableTradeService:
         season: str,
         feature_season: str,
         when: date | None,
+        is_in_season: bool,
         n_teams: int,
         counterparties: list[str],
         incoming: list[PlayerLeg],
@@ -237,7 +325,7 @@ class ComparableTradeService:
             season=season,
             feature_season=feature_season,
             transaction_date=when,
-            is_in_season=bool(when and when.month not in OFFSEASON_MONTHS),
+            is_in_season=is_in_season,
             n_teams=n_teams,
             counterparty_abbreviations=tuple(counterparties),
             incoming=tuple(incoming),
@@ -268,7 +356,9 @@ class ComparableTradeService:
         by_abbr = {t.abbreviation.upper(): t for t in teams.values()}
         sides: list[TradeSide] = []
         for trade in trades:
-            feature_season = feature_season_for(trade.season, trade.transaction_date)
+            feature_season, in_season = self.feature_season(
+                trade.season, trade.transaction_date
+            )
             participants: list[str] = []
             for asset in trade.assets:
                 for abbr in (asset.from_abbreviation, asset.to_abbreviation):
@@ -308,6 +398,7 @@ class ComparableTradeService:
                         season=trade.season,
                         feature_season=feature_season,
                         when=trade.transaction_date,
+                        is_in_season=in_season,
                         n_teams=trade.n_teams,
                         counterparties=counterparties,
                         incoming=incoming,
@@ -353,7 +444,7 @@ class ComparableTradeService:
             raise NotFoundError(f"team {team_id} not found")
         when = as_of or date.today()
         season = self.settings.current_season
-        feature_season = feature_season_for(season, when)
+        feature_season, in_season = self.feature_season(season, when)
         players = {
             p.id: p
             for p in self.db.scalars(
@@ -395,6 +486,7 @@ class ComparableTradeService:
             season=season,
             feature_season=feature_season,
             when=when,
+            is_in_season=in_season,
             n_teams=len(team_ids),
             counterparties=[
                 teams[t].abbreviation for t in counterparty_ids if t in teams
@@ -483,6 +575,7 @@ class ComparableTradeService:
         in_window = [s for s in corpus if s.feature_season in scored]
         blocked = [s for s in in_window if not s.rankable]
         trades = {s.key.split("|")[0] for s in corpus}
+        calendar = self.calendar()
         return {
             "trades_ingested": len(trades),
             "seasons_ingested": sorted({s.season for s in corpus}),
@@ -490,12 +583,25 @@ class ComparableTradeService:
             "sides_in_modelled_window": len(in_window),
             "sides_rankable": len(in_window) - len(blocked),
             "sides_blocked_by_unmodelled_players": len(blocked),
+            "trades_rankable": len({s.group_key for s in in_window if s.rankable}),
             "modelled_seasons": sorted(scored),
+            #: Which rule decided every feature season on this response. False means no
+            #: season boundary has been ingested and the calendar month answered instead,
+            #: which mis-describes draft-night, preseason and 2020-21 November trades.
+            "calendar_backed": bool(calendar),
+            "seasons_with_calendar": [w.season for w in calendar],
             "note": (
                 "A side is ranked only where this database can state the on-court value "
                 "of every player in it. Player production is held for "
                 f"{', '.join(sorted(scored))}, so trades whose feature season falls "
                 "outside that window are stored and retrievable but not ranked."
+            )
+            + (
+                ""
+                if calendar
+                else " No season calendar has been ingested, so each trade's feature "
+                "season was decided from its calendar month; run "
+                "`make sync-season-calendar`."
             ),
         }
 

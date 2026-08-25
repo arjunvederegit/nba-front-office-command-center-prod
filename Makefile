@@ -9,6 +9,7 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
         sync-data build-features train score seed-config migrate e2e help \
         index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
+        sync-corpus-stats sync-season-calendar \
         purge-fixtures import-contracts contract-coverage \
         import-draft-picks pick-ownership fetch-transactions import-transactions \
         transaction-coverage comparable-validation acquisition-validation lineup-availability
@@ -53,6 +54,12 @@ test-backend:
 
 test-frontend:
 	cd $(FRONTEND) && npm run test -- --run
+
+sync-corpus-stats: ## Ingest player stats + standings + calendar for every CORPUS_SEASONS season
+	cd $(BACKEND) && .venv/bin/python -m app.cli sync-corpus-stats
+
+sync-season-calendar: ## Ingest each season's first and last regular-season game date
+	cd $(BACKEND) && .venv/bin/python -m app.cli sync-season-calendar
 
 import-contracts: ## Import contracts from the configured provider and report ROSTER-side coverage
 	cd $(BACKEND) && .venv/bin/python -m app.cli sync-contracts

@@ -23,6 +23,7 @@ from app.db.models import (
     PlayerSeasonStats,
     PlayerTeamHistory,
     RosterEntry,
+    SeasonCalendar,
     Standing,
     Team,
     TeamSeasonStats,
@@ -325,6 +326,55 @@ def sync_games(db: Session, season: str | None = None, provider=None) -> int:
         return run.rows_written
 
 
+def sync_season_calendar(db: Session, seasons: list[str] | None = None, provider=None) -> int:
+    """Record when each season was actually played, from the same game log `sync_games` reads.
+
+    Only the boundary is stored, not the games. The question this answers is "had this
+    season been played when the trade was made?", which needs two dates per season; the
+    1,230 rows behind them would be 12,000 rows across the corpus, and nothing else here
+    asks a question of a historical game.
+
+    The two dates are the first and last REGULAR-SEASON game. `LeagueGameLog` is queried
+    for the regular season only, so the play-in and the playoffs are outside the window by
+    construction — and they should be, because no trade can be made during them.
+    """
+    settings = get_settings()
+    seasons = seasons or settings.corpus_season_list
+    provider = provider or get_provider()
+    with sync_run(db, "sync_season_calendar") as run:
+        for season in seasons:
+            rows = asyncio.run(provider.fetch_games(season))
+            dates = sorted(r["game_date"] for r in rows if r.get("game_date"))
+            if not dates:
+                # A season with no game log is not a season with no games; it is a
+                # provider answer this job cannot interpret, so nothing is written and
+                # `feature_season_for` keeps saying it does not know.
+                record_quality_issue(
+                    db,
+                    "season_calendar_empty",
+                    f"{season}: the game log returned no dated games; "
+                    "season boundary not recorded",
+                )
+                continue
+            values = {
+                "first_game_date": dates[0],
+                "last_game_date": dates[-1],
+                "game_count": len(dates),
+                "source_provider": rows[0].get("source_provider", "nba_api"),
+                "source_record_id": f"leaguegamelog:{season}",
+                "source_retrieved_at": rows[0].get("source_retrieved_at"),
+                "ingestion_run_id": run.id,
+            }
+            entry = db.scalar(select(SeasonCalendar).where(SeasonCalendar.season == season))
+            if entry is None:
+                db.add(SeasonCalendar(season=season, **values))
+            else:
+                _apply(entry, values)
+            run.rows_written += 1
+        db.commit()
+        return run.rows_written
+
+
 def sync_contracts(db: Session) -> int:
     """Ingest contracts from the configured secondary provider. With no provider this
     records an explicit no-op run — salary features stay honestly unavailable."""
@@ -474,6 +524,7 @@ def sync_all(db: Session) -> dict[str, Any]:
         ("sync_team_stats", lambda: sync_team_stats(db)),
         ("sync_player_stats", lambda: sync_player_stats(db)),
         ("sync_games", lambda: sync_games(db)),
+        ("sync_season_calendar", lambda: sync_season_calendar(db)),
         ("sync_contracts", lambda: sync_contracts(db)),
     ]
     for name, step in steps:

@@ -1,11 +1,17 @@
-"""TradeLab operational CLI.
+"""RosterLab operational CLI.
 
 Usage: python -m app.cli <command>
 
 Commands
   sync-all         Full provider-backed refresh (teams, players, rosters, standings,
                    stats, games, contracts) + data quality validation
-  sync-<job>       Run one job (teams|players|rosters|standings|player-stats|team-stats|games|contracts)
+  sync-<job>       Run one job (teams|players|rosters|standings|player-stats|team-stats|
+                   games|season-calendar|contracts)
+  sync-corpus-stats
+                   Ingest player season stats and standings for every season in
+                   CORPUS_SEASONS, plus the season calendar. This widens what the
+                   historical-trade corpus can be described by; it does NOT widen the
+                   modelling window, which stays HISTORY_SEASONS.
   seed-config      Load cap-parameter YAML files into league_cap_parameters
   build-features   Build modeling features from ingested data
   train            Train impact model + archetypes; persist model versions
@@ -155,6 +161,7 @@ def main() -> None:
         "sync-player-stats": jobs.sync_player_stats,
         "sync-team-stats": jobs.sync_team_stats,
         "sync-games": jobs.sync_games,
+        "sync-season-calendar": jobs.sync_season_calendar,
         "sync-contracts": jobs.sync_contracts,
     }
 
@@ -265,6 +272,17 @@ def main() -> None:
             print(f"seed-demo refused: {exc}")
             sys.exit(2)
         print(json.dumps(summary, indent=2, default=str))
+    elif command == "sync-corpus-stats":
+        from app.config import get_settings as _settings
+
+        seasons = _settings().corpus_season_list
+        with SessionLocal() as db:
+            written = {
+                "player_stats": jobs.sync_player_stats(db, seasons),
+                "standings": sum(jobs.sync_standings(db, season) for season in seasons),
+                "season_calendar": jobs.sync_season_calendar(db, seasons),
+            }
+        print(json.dumps({"seasons": seasons, "rows_written": written}, indent=2))
     elif command == "sync-all":
         with SessionLocal() as db:
             results = jobs.sync_all(db)
