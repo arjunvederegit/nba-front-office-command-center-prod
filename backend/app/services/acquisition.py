@@ -84,6 +84,7 @@ from app.cba.rules.roster import MAX_WITH_TWO_WAYS
 from app.cba.rules.salary import max_incoming_below_first_apron
 from app.config import get_settings
 from app.core.errors import DomainError, NotFoundError
+from app.core.logging import get_logger
 from app.db.models import Scenario, Team, TeamNeed
 from app.services.candidates import (
     MAX_PROJECTED_WIN_LOSS,
@@ -95,6 +96,13 @@ from app.services.evaluation import EvaluationService, PlayerCard
 #: Targets returned by default. Bounded so the response stays readable; the count of
 #: candidates that survived each filter is reported either way.
 DEFAULT_LIMIT = 10
+
+logger = get_logger(__name__)
+
+#: Context failures quoted verbatim in the response. Enough to name the cause, bounded
+#: so a systemic failure does not return one line per candidate.
+_ERROR_SAMPLE = 5
+
 MAX_LIMIT = 50
 #: Outgoing packages considered when suggesting how to balance the deal.
 MAX_OUTGOING_PACKAGE = 3
@@ -372,6 +380,8 @@ def acquisition_targets(
     }
     evaluated = 0
     truncated = False
+    context_error_types: dict[str, int] = {}
+    context_error_samples: list[str] = []
     feasibility: dict[str, Any] = {
         "applied": feasible_only,
         "budget": FEASIBILITY_BUDGET if feasible_only else 0,
@@ -409,11 +419,22 @@ def acquisition_targets(
         reason = verdict["reason"]
         if reason is not None:
             rejected[reason] += 1
+            if reason == "context_error":
+                error_type = verdict.get("error_type") or "Exception"
+                context_error_types[error_type] = context_error_types.get(error_type, 0) + 1
+                if len(context_error_samples) < _ERROR_SAMPLE:
+                    context_error_samples.append(str(verdict.get("error")))
             continue
         entry["trade_evaluation"] = verdict["evaluation"]
         payload.append(entry)
     feasibility["trades_evaluated"] = evaluated
     feasibility["truncated_by_budget"] = truncated
+    # A count with no cause cannot be acted on. Non-zero here with a single repeated type
+    # is schema drift, not a league with no feasible trades in it.
+    feasibility["context_errors"] = {
+        "types": dict(sorted(context_error_types.items())),
+        "sample": context_error_samples,
+    }
     return {
         "team": {"id": team.id, "abbreviation": team.abbreviation, "name": team.full_name},
         "available": True,
@@ -478,11 +499,24 @@ def _evaluate_feasibility(
     try:
         context = build_trade_context(db, team_ids, moves)
         legality = TradeLegalityEngine().evaluate(context)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — counted, typed and logged; see below
         # Surfaced as a count rather than swallowed: R5.5 recorded that a bare `except`
         # around context building turned schema drift into an empty result set that read
-        # as a modelling outcome.
-        return {"reason": "context_error", "evaluation": None}
+        # as a modelling outcome. R7 adds the exception's **type** to the count, because a
+        # bare tally still cannot tell a genuinely unbuildable trade apart from a database
+        # one migration behind — which is the case that produced the R5.5 incident.
+        logger.warning(
+            "acquisition feasibility could not build a trade context: %s: %s",
+            type(exc).__name__,
+            exc,
+            extra={"team_id": team_id, "counterparty": candidate.team.abbreviation},
+        )
+        return {
+            "reason": "context_error",
+            "evaluation": None,
+            "error_type": type(exc).__name__,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     if legality["overall_status"] == "verified_illegal":
         return {"reason": "verified_illegal", "evaluation": None}
     focal = service.evaluate_for_team(

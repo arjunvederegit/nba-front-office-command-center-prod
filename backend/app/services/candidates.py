@@ -64,10 +64,16 @@ from app.cba.rules.salary import (
     max_incoming_below_first_apron,
 )
 from app.config import get_settings
+from app.core.logging import get_logger
 from app.db.models import Team
 from app.services.evaluation import DEFAULT_WEIGHTS, EvaluationService, PlayerCard
 
+logger = get_logger(__name__)
+
 MAX_PLAYERS_PER_SIDE = 3
+#: Construction failures quoted verbatim in the response. Enough to name the cause,
+#: bounded so a systemic failure does not return one line per pair.
+_ERROR_SAMPLE = 5
 #: Packages enumerated per side before ranking. Bounded so the pair space stays finite;
 #: the response reports how many were enumerated and how many survived.
 MAX_OUTGOING_PACKAGES = 24
@@ -273,6 +279,9 @@ def generate_candidates(
                 "focal_utility": 0, "counterparty_utility": 0, "projected_win_loss": 0}
     salary_matching_applied = 0
     salary_matching_skipped = 0
+    construction_errors = 0
+    error_types: dict[str, int] = {}
+    error_samples: list[str] = []
 
     for other in teams:
         other_roster = service._roster_cards(other.id)
@@ -339,7 +348,31 @@ def generate_candidates(
             try:
                 context = build_trade_context(db, team_ids, moves)
                 legality = engine.evaluate(context)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — counted and reported, see below
+                # R7. This used to be a bare `continue`, and the failure mode is the whole
+                # reason it is not one now: at R5.5 the dev database sat one migration
+                # behind, `build_trade_context` raised on the missing column for every
+                # pair, and the generator returned **0 candidates on all 30 teams** with
+                # 406 pairs silently discarded. That reads as a modelling outcome — "no
+                # trade improves this roster" — when it is schema drift.
+                #
+                # It is still caught, because one unbuildable pair must not abort a
+                # league-wide search. What changed is that it is counted, its type is
+                # named, and `coverage.construction_errors` puts it in the response, so a
+                # generator returning nothing can be told apart from one that broke.
+                construction_errors += 1
+                error_types[type(exc).__name__] = error_types.get(type(exc).__name__, 0) + 1
+                if construction_errors <= _ERROR_SAMPLE:
+                    error_samples.append(
+                        f"{focal_team_id[:8]}/{other.abbreviation}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                logger.warning(
+                    "candidate pair could not be built: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                    extra={"focal_team_id": focal_team_id, "counterparty": other.abbreviation},
+                )
                 continue
             if legality["overall_status"] == "verified_illegal":
                 filtered["illegal"] += 1
@@ -447,6 +480,18 @@ def generate_candidates(
             "evaluations_per_counterparty": EVALUATIONS_PER_COUNTERPARTY,
             "per_counterparty": per_counterparty,
             "pairs_rejected_by_constraint": filtered,
+            #: Pairs the legality context could not be built for at all. Distinct from
+            #: every entry in `pairs_rejected_by_constraint`, which are decisions; this is
+            #: the search failing to run. Non-zero here means an empty candidate list is
+            #: not a modelling result — check `alembic current` before the ranking.
+            "construction_errors": {
+                "pairs": construction_errors,
+                "share_of_evaluated": (
+                    round(construction_errors / evaluated_total, 4) if evaluated_total else None
+                ),
+                "types": dict(sorted(error_types.items())),
+                "sample": error_samples,
+            },
             "salary_matching": {
                 "pairs_checked": salary_matching_applied,
                 "pairs_skipped_unknown_salaries": salary_matching_skipped,
