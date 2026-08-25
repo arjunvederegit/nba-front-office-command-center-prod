@@ -441,3 +441,51 @@ class TestSyncContracts:
         assert run.status == "succeeded"
         assert run.detail.get("provider") is None
         assert "no contract provider configured" in run.detail.get("note", "")
+
+
+# ------------------------------------------- R7: ingesting anything invalidates the cache
+
+
+def test_a_successful_ingestion_bumps_the_data_version(db: Session) -> None:
+    """`bump_data_version` used to live only at the end of `sync_all`, so every other
+    route into an ingestion — the single-job CLI commands, the CSV, transaction and
+    draft-pick imports, and R7's `sync-corpus-stats` — wrote rows and left the previous
+    snapshot's derived values cached under the old namespace. `EvaluationService._skills()`
+    is keyed on the data version, so a refresh of the modelling seasons through any of
+    those paths served stale skill vectors."""
+    from app.core.cache import get_cache
+    from app.ingestion.runs import sync_run
+
+    cache = get_cache()
+    before = cache.get_data_version()
+    with sync_run(db, "test_job") as run:
+        run.rows_written = 5
+    assert cache.get_data_version() != before
+
+
+def test_a_no_op_ingestion_does_not_churn_the_namespace(db: Session) -> None:
+    """A contracts sync with no provider configured writes nothing. Bumping on it would
+    discard every cached derivation for a run that changed no data."""
+    from app.core.cache import get_cache
+    from app.ingestion.runs import sync_run
+
+    cache = get_cache()
+    cache.bump_data_version()
+    before = cache.get_data_version()
+    with sync_run(db, "test_job_empty") as run:
+        run.rows_written = 0
+    assert cache.get_data_version() == before
+
+
+def test_a_failed_ingestion_does_not_bump(db: Session) -> None:
+    """A job that raised did not produce a new snapshot to invalidate against."""
+    from app.core.cache import get_cache
+    from app.ingestion.runs import sync_run
+
+    cache = get_cache()
+    cache.bump_data_version()
+    before = cache.get_data_version()
+    with pytest.raises(RuntimeError), sync_run(db, "test_job_failed") as run:
+        run.rows_written = 9
+        raise RuntimeError("boom")
+    assert cache.get_data_version() == before

@@ -535,5 +535,7 @@ def sync_all(db: Session) -> dict[str, Any]:
     from app.ingestion.quality import validate_data
 
     results["validate_data"] = {"status": "succeeded", "issues": validate_data(db)}
+    # Each job already bumped on success (see `ingestion/runs.sync_run`). This final bump
+    # covers `validate_data`, which writes issue rows outside a sync run.
     get_cache().bump_data_version()
     return results
