@@ -218,6 +218,12 @@ class TradeSide:
     source_text: str = ""
     notes_text: str | None = None
     unparsed_assets: tuple[str, ...] = ()
+    #: Memo for `features()`. Not a field: `compare=False, repr=False` keeps it out of
+    #: equality, hashing and the repr, so two sides are still the same side whether or not
+    #: either has been asked for its vector.
+    _features: dict[str, float | None] | None = field(
+        default=None, compare=False, repr=False, hash=False
+    )
 
     @property
     def unmodelled_players(self) -> tuple[str, ...]:
@@ -276,7 +282,20 @@ class TradeSide:
         return sum(a * w for (a, _), w in zip(pairs, weights, strict=True)) / total
 
     def features(self) -> dict[str, float | None]:
-        """The feature vector. `None` means the side does not state the feature."""
+        """The feature vector. `None` means the side does not state the feature.
+
+        Memoized. A side is frozen and every collection on it is a tuple, so the vector is
+        a pure function of the instance and computing it twice is computing it twice.
+
+        It was being recomputed on **every** distance: `compare` asks both sides for their
+        vector, so one leave-one-out pass over the corpus rebuilt each corpus side's
+        vector once per query — 1.3 million dict constructions per pass on the ten-season
+        corpus, against the roughly ten passes the validation battery makes. This is the
+        difference between a gate that finishes and one that is never run.
+        """
+        if self._features is not None:
+            return self._features
+
         def net_firsts(conditional: bool) -> float:
             return float(
                 sum(
@@ -296,7 +315,7 @@ class TradeSide:
             if self.win_pct is not None and self.counterparty_win_pct is not None
             else None
         )
-        return {
+        vector: dict[str, float | None] = {
             "value_in": self._package_value(self.incoming),
             "value_out": self._package_value(self.outgoing),
             "best_in_tei": self._best(self.incoming),
@@ -318,6 +337,10 @@ class TradeSide:
             "win_pct_gap": gap,
             "is_in_season": 1.0 if self.is_in_season else 0.0,
         }
+        # `object.__setattr__` because the dataclass is frozen. Freezing is about the
+        # side's *identity* — nothing here changes a field that identity is defined on.
+        object.__setattr__(self, "_features", vector)
+        return vector
 
 
 ALL_FEATURES: tuple[str, ...] = tuple(f for group in FEATURE_DIMENSIONS.values() for f in group)
@@ -482,6 +505,98 @@ def compare(
     )
 
 
+def dimension_distances(
+    query_features: dict[str, float | None],
+    other_features: dict[str, float | None],
+    scales: dict[str, float],
+) -> dict[str, float]:
+    """Per-dimension distance, before any weighting is applied.
+
+    The weighting is the last step of the distance and the only thing that differs between
+    the thirteen alternative weightings the validation battery measures — seven weightings
+    plus six leave-one-dimension-out. Computing this once per (query, side) pair and
+    re-weighting it thirteen times is thirteen passes collapsed into one.
+
+    A dimension no feature is stated on is absent from the result, which is how
+    `distance_between` decides to redistribute its weight.
+    """
+    result: dict[str, float] = {}
+    for dimension, names in FEATURE_DIMENSIONS.items():
+        distances: list[float] = []
+        for name in names:
+            left = query_features.get(name)
+            right = other_features.get(name)
+            scale = scales.get(name)
+            if left is None or right is None or scale is None:
+                continue
+            distances.append(feature_distance(left, right, scale))
+        if distances:
+            result[dimension] = math.fsum(distances) / len(distances)
+    return result
+
+
+def weighted_distance(
+    per_dimension: dict[str, float], weights: dict[str, float] | None = None
+) -> float:
+    """Combine `dimension_distances` under a weighting. The tail of the same arithmetic."""
+    weights = weights or DIMENSION_WEIGHTS
+    total_weight = 0.0
+    weighted = 0.0
+    for dimension in FEATURE_DIMENSIONS:
+        if dimension not in per_dimension:
+            continue
+        weight = weights.get(dimension, 0.0)
+        total_weight += weight
+        weighted += weight * per_dimension[dimension]
+    return weighted / total_weight if total_weight > 0 else 1.0
+
+
+def distance_between(
+    query_features: dict[str, float | None],
+    other_features: dict[str, float | None],
+    scales: dict[str, float],
+    weights: dict[str, float] | None = None,
+) -> float:
+    """`compare(...).distance`, without building the decomposition that explains it.
+
+    The same arithmetic, term for term — `test_the_fast_distance_equals_the_full_one`
+    asserts exact equality over the real corpus — with no `DimensionResult`, no
+    per-feature dict and no unavailable lists.
+
+    It exists because ranking asks for the distance and nothing else. `rank` scores the
+    whole corpus and returns five, so the full decomposition was being built 1,151 times
+    per query and discarded 1,146 times; the validation battery makes roughly twenty-five
+    such passes. The explanation is still built — for the five sides a caller actually
+    receives.
+    """
+    weights = weights or DIMENSION_WEIGHTS
+    total_weight = 0.0
+    weighted = 0.0
+    for dimension, names in FEATURE_DIMENSIONS.items():
+        distances: list[float] = []
+        for name in names:
+            left = query_features.get(name)
+            right = other_features.get(name)
+            scale = scales.get(name)
+            if left is None or right is None or scale is None:
+                continue
+            # Called by name, not inlined. `_clipped_top_keys` in the validation battery
+            # measures the distance FORM by rebinding this module global, and an inlined
+            # `delta / (delta + scale)` here silently ignores the rebinding — the check
+            # would then compare the shipped ranking against itself and report a perfect
+            # 1.0. `test_the_distance_form_seam_is_reachable_from_rank` pins it.
+            distances.append(feature_distance(left, right, scale))
+        if not distances:
+            continue
+        weight = weights.get(dimension, 0.0)
+        total_weight += weight
+        # `math.fsum(...) / n` is exactly what `statistics.fmean` computes, and the two
+        # summations must agree term for term or the fast path is an approximation rather
+        # than the same number — see `test_the_fast_distance_equals_the_full_one`.
+        weighted += weight * (math.fsum(distances) / len(distances))
+    return weighted / total_weight if total_weight > 0 else 1.0
+
+
 @dataclass
 class Neighbour:
     side: TradeSide
@@ -512,24 +627,31 @@ def rank(
     battery sets it False, because a leave-one-out measurement over sides must see every
     side.
     """
+    query_features = query.features()
     scored = [
-        Neighbour(side=side, comparison=compare(query, side, scales, weights))
+        (distance_between(query_features, side.features(), scales, weights), side.key, side)
         for side in corpus
         if side.rankable and side.key != query.key
     ]
-    scored.sort(key=lambda n: (n.comparison.distance, n.side.key))
+    scored.sort(key=lambda row: (row[0], row[1]))
     if not one_per_trade:
-        return scored[:k]
-    seen: set[str] = set()
-    kept: list[Neighbour] = []
-    for neighbour in scored:
-        if neighbour.side.group in seen:
-            continue
-        seen.add(neighbour.side.group)
-        kept.append(neighbour)
-        if len(kept) >= k:
-            break
-    return kept
+        chosen = [side for _, _, side in scored[:k]]
+    else:
+        seen: set[str] = set()
+        chosen = []
+        for _, _, side in scored:
+            if side.group in seen:
+                continue
+            seen.add(side.group)
+            chosen.append(side)
+            if len(chosen) >= k:
+                break
+    # The decomposition is built only for the sides the caller receives. `compare` is the
+    # same function the scoring above agrees with exactly, so this cannot reorder anything.
+    return [
+        Neighbour(side=side, comparison=compare(query, side, scales, weights))
+        for side in chosen
+    ]
 
 
 # ------------------------------------------------------------------- explanation
