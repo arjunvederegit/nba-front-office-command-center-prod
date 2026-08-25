@@ -13,18 +13,7 @@ import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
 import { tradeDetailSchema } from "@/lib/schemas";
-import {
-  COMPONENT_EXPLAIN,
-  COMPONENT_LABEL,
-  LEGALITY_EXPLAIN,
-  LEGALITY_LABEL,
-  VERDICT_LABEL,
-  VERDICT_STATUS,
-  fanVerdict,
-  formatDate,
-  money,
-  tei,
-} from "@/lib/format";
+import { COMPONENT_EXPLAIN, COMPONENT_LABEL, LEGALITY_EXPLAIN, LEGALITY_LABEL, VERDICT_LABEL, VERDICT_STATUS, count, fanVerdict, formatDate, money, tei } from "@/lib/format";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type { TeamEvaluation, TradeDetail } from "@/lib/types";
 import { ComponentBars, TornadoChart, UncertaintyStrip } from "@/components/charts";
@@ -153,7 +142,7 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
 
       {/* ------------------------------------------------------------- assets */}
       <section>
-        <SectionRail title="What moves" aside={`${trade.assets.length} assets across ${trade.teams.length} teams`} />
+        <SectionRail title="What moves" aside={`${count(trade.assets.length, "asset")} across ${count(trade.teams.length, "team")}`} />
         <div
           className={`grid gap-3 ${
             trade.teams.length >= 3 ? "lg:grid-cols-3" : "md:grid-cols-2"

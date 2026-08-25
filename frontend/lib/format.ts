@@ -222,3 +222,14 @@ export function ordinal(value: number | null | undefined): string {
             : "th";
   return `${n}${suffix}`;
 }
+
+/**
+ * "1 deal" / "2 deals" — a count with a noun that agrees with it.
+ *
+ * A count rendered from `array.length` reaches 1 far more often than it looks like it
+ * will, and "1 saved deals" is the kind of thing that reads as a product nobody
+ * proofread. Irregular plurals pass an explicit `plural`.
+ */
+export function count(n: number, singular: string, plural?: string): string {
+  return `${n.toLocaleString()} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+}

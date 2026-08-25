@@ -93,7 +93,7 @@ export default function MethodologyPage() {
             <em>not</em> labelled &ldquo;points per 100 possessions&rdquo;: the index is a weighted
             z-score, and the fitted conversion from a team&apos;s minutes-weighted index to
             net-rating points is <strong className="text-foreground">≈15</strong>, not 1. Full name:
-            TradeLab/RosterLab Estimated Impact, TEI), built from three seasons of real box-score
+            RosterLab Estimated Impact, TEI), built from three seasons of real box-score
             data, and it is <em>not</em> RAPTOR, EPM, LEBRON or BPM. Because it only sees box
             scores, defense is under-measured — treat small differences as noise; the uncertainty
             band on player pages is there for a reason.

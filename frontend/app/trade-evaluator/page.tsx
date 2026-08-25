@@ -41,7 +41,7 @@ import {
   payrollDisclosure,
   tei,
 } from "@/lib/format";
-import { getFavoriteTeam } from "@/lib/teamTheme";
+import { getFavoriteTeam } from "@/lib/favoriteTeam";
 import { teamIdentity } from "@/lib/teamIdentity";
 import type {
   ComparablesResponse,

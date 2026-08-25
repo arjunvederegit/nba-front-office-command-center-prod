@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { height, money, pct, tei } from "@/lib/format";
+import { count, height, money, pct, tei } from "@/lib/format";
 
 describe("money", () => {
   it("formats millions", () => {
@@ -32,5 +32,22 @@ describe("height", () => {
   it("converts inches to feet notation", () => {
     expect(height(80)).toBe(`6'8"`);
     expect(height(null)).toBe("—");
+  });
+});
+
+describe("count", () => {
+  it("agrees with the number", () => {
+    // "1 saved deals" is the kind of thing that reads as a product nobody proofread,
+    // and `array.length` reaches 1 far more often than it looks like it will.
+    expect(count(1, "saved deal")).toBe("1 saved deal");
+    expect(count(2, "saved deal")).toBe("2 saved deals");
+    expect(count(0, "saved deal")).toBe("0 saved deals");
+  });
+  it("takes an explicit plural for irregular nouns", () => {
+    expect(count(1, "franchise", "franchises")).toBe("1 franchise");
+    expect(count(30, "franchise", "franchises")).toBe("30 franchises");
+  });
+  it("groups large counts", () => {
+    expect(count(1151, "team-side")).toBe("1,151 team-sides");
   });
 });

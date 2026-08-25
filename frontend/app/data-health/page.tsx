@@ -11,7 +11,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { dataHealthSchema } from "@/lib/schemas";
-import { formatDate } from "@/lib/format";
+import { count, formatDate } from "@/lib/format";
 import type { DataHealth, SourceCard } from "@/lib/types";
 import {
   Badge,
@@ -216,7 +216,7 @@ export default function DataHealthPage() {
             nextSteps.length > 0
               ? nextSteps.length === 1
                 ? "1 source carries a next step"
-                : `${nextSteps.length} sources carry a next step`
+                : `${count(nextSteps.length, "source")} carr${nextSteps.length === 1 ? "ies" : "y"} a next step`
               : "No action required"
           }
         />

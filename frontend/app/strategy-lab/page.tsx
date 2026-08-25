@@ -19,18 +19,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { dataHealthSchema, tradeDetailSchema } from "@/lib/schemas";
-import {
-  COMPONENT_EXPLAIN,
-  COMPONENT_LABEL,
-  LEGALITY_EXPLAIN,
-  LEGALITY_LABEL,
-  VERDICT_LABEL,
-  VERDICT_STATUS,
-  fanVerdict,
-  formatDate,
-  money,
-  pct,
-} from "@/lib/format";
+import { COMPONENT_EXPLAIN, COMPONENT_LABEL, LEGALITY_EXPLAIN, LEGALITY_LABEL, VERDICT_LABEL, VERDICT_STATUS, count, fanVerdict, formatDate, money, pct } from "@/lib/format";
+import { scenarioOptionLabels } from "@/lib/scenarioLabels";
 import { teamIdentity } from "@/lib/teamIdentity";
 import type {
   ComparisonAlternative,
@@ -152,21 +142,6 @@ function missingComponents(alt: ComparisonAlternative): ComponentKey[] {
   );
 }
 
-/**
- * A scenario's display identity. `name` is user-supplied and not unique — Team Outlook
- * generates "BOS — Contend now" every time the button is pressed — so the option text
- * carries the team, the strategy and the save date.
- */
-function scenarioOptionLabel(scenario: Scenario): string {
-  const saved = new Date(scenario.created_at);
-  const stamp = Number.isNaN(saved.getTime())
-    ? ""
-    : ` · ${saved.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-  const team = scenario.focal_team?.abbreviation;
-  const prefix = team && !scenario.name.includes(team) ? `${team} — ` : "";
-  return `${prefix}${scenario.name} (${scenario.strategy.replaceAll("_", " ")})${stamp}`;
-}
-
 /* --------------------------------------------------------------- deal shape */
 
 interface DealAsset {
@@ -213,6 +188,11 @@ export default function StrategyLabPage() {
     queryKey: ["scenarios"],
     queryFn: () => api.get<Scenario[]>("/scenarios"),
   });
+  // Built for the whole list at once — see `lib/scenarioLabels.ts`.
+  const scenarioLabels = useMemo(
+    () => scenarioOptionLabels(scenarios ?? []),
+    [scenarios],
+  );
   const { data: health } = useQuery({
     queryKey: ["data-health"],
     queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
@@ -375,7 +355,9 @@ export default function StrategyLabPage() {
         lede="Line up two to five saved deals, weight them by what your front office actually cares about, and see which one survives the priorities you set."
         meta={
           <>
-            <Badge status="info">{trades ? `${trades.length} saved deals` : "loading deals"}</Badge>
+            <Badge status="info">
+              {trades ? count(trades.length, "saved deal") : "loading deals"}
+            </Badge>
             <Badge status={contractsConfigured ? "pass" : "unavailable"}>
               contracts {contractsConfigured ? "imported" : "not imported"}
             </Badge>
@@ -480,13 +462,13 @@ export default function StrategyLabPage() {
                     className="min-w-0 flex-1 rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-[13px] text-foreground sm:max-w-64"
                   >
                     <option value="">League default weights</option>
-                    {/* Name alone is not an identity: saving a strategy for the same
-                        team twice produces two rows with the same name, and the list
-                        rendered them as indistinguishable duplicates. Team, strategy
-                        and save date disambiguate them. */}
-                    {scenarios?.map((scenario) => (
+                    {/* Name alone is not an identity: Team Outlook generates
+                        "BOS — Contend now" every time the button is pressed. Labels are
+                        built for the whole list at once so uniqueness is a property of
+                        the output rather than a hope about the timestamps. */}
+                    {(scenarios ?? []).map((scenario, index) => (
                       <option key={scenario.id} value={scenario.id}>
-                        {scenarioOptionLabel(scenario)}
+                        {scenarioLabels[index]}
                       </option>
                     ))}
                   </select>

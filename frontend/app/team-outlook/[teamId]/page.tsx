@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import { NEED_LABEL, height, money, ordinal, payrollDisclosure, pct, tei } from "@/lib/format";
+import { NEED_LABEL, count, height, money, ordinal, payrollDisclosure, pct, tei } from "@/lib/format";
 import { selectStrengths, selectWeaknesses } from "@/lib/needs";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type {
@@ -288,7 +288,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
         <TeamStat
           label="Average age"
           value={avgAge ?? undefined}
-          note={`${rosterPlayers.length} players on the roster`}
+          note={`${count(rosterPlayers.length, "player")} on the roster`}
           accent={identity.bright}
         />
       </section>
@@ -673,7 +673,7 @@ function PartialPayroll({ payroll, teamId }: { payroll: PayrollResponse; teamId:
       {payroll.players_missing_salary.length > 0 && (
         <details className="text-[12px] text-muted">
           <summary className="cursor-pointer text-signal">
-            {payroll.players_missing_salary.length} players with no salary on file
+            {count(payroll.players_missing_salary.length, "player")} with no salary on file
           </summary>
           <ul className="mt-1.5 space-y-0.5 pl-4">
             {payroll.players_missing_salary.map((name) => (
