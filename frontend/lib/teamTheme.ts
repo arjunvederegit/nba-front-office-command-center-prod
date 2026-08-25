@@ -1,11 +1,11 @@
 /**
  * Compatibility shim.
  *
- * Team identity now lives in one place — `lib/teamIdentity.ts`. This module
- * re-exports the pieces older pages import, plus the favorite-team store.
+ * Team identity now lives in `lib/teamIdentity.ts` and the favourite-team store in
+ * `lib/favoriteTeam.ts`. This module only re-exports what older pages still import from
+ * here; nothing is defined in it. Import from the two modules above in new code.
  */
 
-import { useSyncExternalStore } from "react";
 import { TEAMS, teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type { TeamIdentity } from "@/lib/teamIdentity";
 
@@ -22,38 +22,13 @@ export const teamThemeVars = teamVars;
 
 /* ------------------------------------------------------- favorite team store */
 
-const FAVORITE_KEY = "rosterlab.favoriteTeam";
-const listeners = new Set<() => void>();
-
-function subscribe(callback: () => void): () => void {
-  listeners.add(callback);
-  return () => listeners.delete(callback);
-}
-
-function snapshot(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(FAVORITE_KEY);
-}
-
-function parse(raw: string | null): { id: string; abbreviation: string } | null {
-  try {
-    return raw ? (JSON.parse(raw) as { id: string; abbreviation: string }) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function getFavoriteTeam(): { id: string; abbreviation: string } | null {
-  return parse(snapshot());
-}
-
-export function useFavoriteTeam(): { id: string; abbreviation: string } | null {
-  return parse(useSyncExternalStore(subscribe, snapshot, () => null));
-}
-
-export function setFavoriteTeam(team: { id: string; abbreviation: string } | null): void {
-  if (typeof window === "undefined") return;
-  if (team === null) window.localStorage.removeItem(FAVORITE_KEY);
-  else window.localStorage.setItem(FAVORITE_KEY, JSON.stringify(team));
-  for (const listener of listeners) listener();
-}
+// R7: the store moved to its own module. It was never part of the shim — it has its own
+// storage key, its own cross-tab listener and its own lifecycle — and leaving it here
+// meant every page that wanted a favourite imported a file whose docstring says it only
+// exists for backwards compatibility.
+export {
+  getFavoriteTeam,
+  setFavoriteTeam,
+  useFavoriteTeam,
+} from "@/lib/favoriteTeam";
+export type { FavoriteTeam } from "@/lib/favoriteTeam";
