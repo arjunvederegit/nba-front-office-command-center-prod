@@ -14,12 +14,14 @@ from app.db.models import (
     DataQualityIssue,
     DataSyncRun,
     Game,
+    HistoricalTrade,
     LeagueCapParameters,
     ModelVersion,
     Player,
     PlayerImpactEstimate,
     PlayerSeasonStats,
     RosterEntry,
+    SeasonCalendar,
     Standing,
     Team,
     TeamNeed,
@@ -72,6 +74,8 @@ def data_health(db: Session) -> dict:
         (Contract, "contracts"),
         (PlayerImpactEstimate, "player_impact_estimates"),
         (TeamNeed, "team_needs"),
+        (HistoricalTrade, "historical_trades"),
+        (SeasonCalendar, "season_calendar"),
     ]:
         count = db.scalar(select(func.count()).select_from(model)) or 0
         last_retrieved = None
@@ -211,6 +215,10 @@ def data_health(db: Session) -> dict:
     assets_run = latest_run("index_assets")
     contracts_run = latest_run("sync_contracts")
     contracts_rows = int(tables.get("contracts", {}).get("rows") or 0)
+    trades_run = latest_run("import_transactions")
+    calendar_sync = latest_run("sync_season_calendar")
+    trade_rows = int(tables.get("historical_trades", {}).get("rows") or 0)
+    calendar_rows = int(tables.get("season_calendar", {}).get("rows") or 0)
 
     # Fan-readable source cards: status ∈ fresh|stale|derived|incomplete|unavailable|failed
     source_cards = [
@@ -293,6 +301,52 @@ def data_health(db: Session) -> dict:
             + (" + current-season totals CSV" if csv_run else ""),
             "source": "Kaggle wyattowalsh/basketball + user CSV import",
             "action": None if kaggle_run else "Run `make import-kaggle` (multi-GB download).",
+        },
+        {
+            # R7. The page's first sentence is "every screen traces to one of these
+            # sources", and since R6 the Precedent panel has traced to one that was not
+            # listed. A provenance surface that omits a source is worse than one that
+            # admits a gap.
+            "key": "historical_trades",
+            "title": "Completed trades",
+            "status": (
+                "derived"
+                if trade_rows > 0 and calendar_rows > 0
+                # Trades without a season calendar still rank, but each one's feature
+                # season falls back to its calendar month — which mis-describes
+                # draft-night, preseason and November-2020 trades. That is a partial
+                # source, not a working one.
+                else ("incomplete" if trade_rows > 0 else "unavailable")
+            ),
+            # Whichever half of this source was refreshed last. The two are ingested by
+            # different commands and either can be the stale one.
+            "last_update": max(
+                (r["finished_at"] for r in (trades_run, calendar_sync) if r and r["finished_at"]),
+                default=None,
+            ),
+            "coverage": (
+                f"{trade_rows} trades"
+                + (
+                    f" · {calendar_rows} season calendars"
+                    if calendar_rows
+                    else " · no season calendar"
+                )
+                if trade_rows
+                else "no completed trades imported"
+            ),
+            "source": "Basketball-Reference season transaction pages (local snapshots)",
+            "action": (
+                None
+                if trade_rows > 0 and calendar_rows > 0
+                else (
+                    "Run `make sync-season-calendar`; without it each trade's feature "
+                    "season is guessed from its calendar month."
+                    if trade_rows > 0
+                    else "Run `make fetch-transactions FROM=2017 TO=2026` then "
+                    "`make import-transactions`. Comparable trades stay unavailable "
+                    "until then."
+                )
+            ),
         },
         {
             "key": "models",

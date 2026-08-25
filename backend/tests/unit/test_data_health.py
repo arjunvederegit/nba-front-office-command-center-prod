@@ -180,3 +180,75 @@ def test_open_issue_totals_report_the_real_backlog(db: Session, stale_nba_data: 
     assert health["open_quality_issue_total"] == 60
     assert health["open_quality_issues_truncated"] is True
     assert health["open_quality_issue_counts"] == {"duplicate_name": 30, "future_dates": 30}
+
+
+# ------------------------------------------------- R7: every screen names its source
+
+
+def _card(health: dict, key: str) -> dict:
+    return next(c for c in health["source_cards"] if c["key"] == key)
+
+
+def test_the_completed_trade_corpus_is_a_listed_source(db: Session) -> None:
+    """The page's first sentence is "every screen traces to one of these sources", and
+    since R6 the Precedent panel has traced to one that was not listed. A provenance
+    surface that omits a source is worse than one that admits a gap."""
+    card = _card(data_health(db), "historical_trades")
+    assert card["title"] == "Completed trades"
+    assert "Basketball-Reference" in card["source"]
+
+
+def test_an_unimported_corpus_reports_unavailable_with_the_command_that_fixes_it(
+    db: Session,
+) -> None:
+    card = _card(data_health(db), "historical_trades")
+    assert card["status"] == "unavailable"
+    assert card["action"] is not None
+    assert "make fetch-transactions" in card["action"]
+
+
+def test_trades_without_a_season_calendar_are_incomplete_rather_than_derived(
+    db: Session,
+) -> None:
+    """Trades still rank without a calendar, but each one's feature season falls back to
+    its calendar month — which mis-describes draft-night, preseason and November-2020
+    trades. That is a partial source, and reporting it as working is the failure this
+    card exists to prevent."""
+    from datetime import date
+
+    from app.db.models import HistoricalTrade, SeasonCalendar
+
+    db.add(
+        HistoricalTrade(
+            season="2025-26",
+            transaction_date=date(2026, 2, 5),
+            n_teams=2,
+            source_text="fixture",
+            unparsed_assets=[],
+            trade_exception_team_ids=[],
+            trade_exception_unresolved=[],
+            source_provider="test_fixture",
+            source_record_id="fixture:1",
+        )
+    )
+    db.commit()
+
+    card = _card(data_health(db), "historical_trades")
+    assert card["status"] == "incomplete"
+    assert "no season calendar" in card["coverage"]
+    assert "make sync-season-calendar" in (card["action"] or "")
+
+    db.add(
+        SeasonCalendar(
+            season="2025-26",
+            first_game_date=date(2025, 10, 21),
+            last_game_date=date(2026, 4, 12),
+            game_count=1230,
+            source_provider="test_fixture",
+        )
+    )
+    db.commit()
+
+    card = _card(data_health(db), "historical_trades")
+    assert card["status"] == "derived"
+    assert card["action"] is None
