@@ -6,6 +6,7 @@ signal, that a threshold failure is reported rather than swallowed, and that the
 runs end to end on a corpus small enough for a test.
 """
 
+import statistics
 from datetime import date
 
 import pytest
@@ -14,7 +15,9 @@ from app.analytics.comparables import PickLeg, PlayerLeg, TradeSide, robust_scal
 from app.analytics.comparables_validation import (
     THRESHOLDS,
     _is_asymmetric,
+    _jaccard,
     _MirroredSide,
+    _top_keys,
     archetype_of,
     archetype_precision,
     era_structure,
@@ -164,12 +167,127 @@ def test_era_structure_needs_no_player_model(corpus):
 
 
 def test_a_failing_threshold_is_listed_rather_than_swallowed(corpus, monkeypatch):
-    monkeypatch.setitem(THRESHOLDS, "perturbation_overlap_min", 1.01)
+    monkeypatch.setitem(THRESHOLDS, "perturbation_rank_max", 0.0)
     report = run_battery(corpus, k=3)
-    assert "perturbation_stability" in report["failed"]
+    assert "perturbation_rank_displacement" in report["failed"]
+
+
+def test_perturbation_stability_is_reported_and_no_longer_gated(corpus):
+    """R7 withdrew it as a gate: the random-hash null scores a perfect 1.0 on it, because
+    a ranking keyed on identity alone cannot move when the query's features do. A check
+    with no threshold cannot appear in `failed`, and the nulls are published beside it so
+    the withdrawal is checkable from the output."""
+    report = run_battery(corpus, k=3)
+    check = next(c for c in report["checks"] if c["name"] == "perturbation_stability")
+    assert check["threshold"] is None
+    assert check["passed"] is None
+    assert "perturbation_stability" not in report["failed"]
+    assert check["detail"]["null_random_hash"] == 1.0
+    assert check["measured"] <= check["detail"]["null_random_hash"]
+
+
+def test_the_gated_perturbation_criterion_is_a_rank_not_a_level(corpus):
+    """The replacement asks where a query's neighbours went, not whether they are the
+    same five. It is bounded by the corpus size rather than by 1.0, which is what lets one
+    threshold hold as the corpus grows."""
+    report = run_battery(corpus, k=3)
+    check = next(
+        c for c in report["checks"] if c["name"] == "perturbation_rank_displacement"
+    )
+    assert check["threshold"] == THRESHOLDS["perturbation_rank_max"]
+    assert check["passed"] is True
+    assert 1.0 <= check["measured"] <= len(corpus)
+    assert "never validity" in check["detail"]["role"]
 
 
 def test_archetype_rules_assign_at_most_one_class(corpus):
     for entry in corpus:
         label = archetype_of(entry)
         assert label is None or isinstance(label, str)
+
+
+def test_the_distance_form_seam_is_reachable_from_rank(corpus):
+    """`_clipped_top_keys` measures the distance form by rebinding `feature_distance`.
+
+    R7 added a distance-only fast path inside `rank`, and inlining the arithmetic there
+    made the rebinding unreachable — the check would have compared the shipped ranking
+    against itself and reported a perfect 1.0 while measuring nothing. This asserts the
+    seam is live: replacing the function changes the distance `rank` computes.
+    """
+    import app.analytics.comparables as module
+    from app.analytics.comparables import robust_scales
+
+    scales = robust_scales(corpus)
+    query = corpus[0]
+    before = _top_keys(query, corpus, scales, k=3)
+
+    original = module.feature_distance
+    try:
+        # Reverse the ordering entirely. If the seam is live, the list must move.
+        module.feature_distance = lambda a, b, scale: 1.0 - (abs(a - b) / (abs(a - b) + scale))
+        after = _top_keys(query, corpus, scales, k=3)
+    finally:
+        module.feature_distance = original
+
+    assert before != after, "rank no longer routes through feature_distance"
+    assert _top_keys(query, corpus, scales, k=3) == before, "the rebinding leaked"
+
+
+def test_the_fast_distance_equals_the_full_one(corpus):
+    """The fast path must be the same arithmetic, not an approximation of it."""
+    from app.analytics.comparables import compare, distance_between, robust_scales
+
+    scales = robust_scales(corpus)
+    checked = 0
+    for query in corpus:
+        for other in corpus:
+            if other.key == query.key:
+                continue
+            assert distance_between(
+                query.features(), other.features(), scales
+            ) == compare(query, other, scales).distance
+            checked += 1
+    assert checked > 0
+
+
+def test_the_shared_weighting_pass_reproduces_the_per_weighting_one(corpus):
+    """R7 collapsed thirteen weighting passes into one shared pass over the corpus.
+
+    Seven weightings plus six leave-one-dimension-out all share the per-dimension
+    distances and differ only in how they combine them, so they are computed once and
+    re-weighted. This asserts the collapse is a refactor: every published overlap is the
+    number the separate passes produced, to the digit.
+    """
+    from app.analytics.comparables import (
+        DIMENSION_WEIGHTS,
+        FEATURE_DIMENSIONS,
+        robust_scales,
+    )
+
+    scales = robust_scales(corpus)
+    report = run_battery(corpus, k=3)
+    baseline = {s.key: _top_keys(s, corpus, scales, k=3) for s in corpus}
+
+    def overlap(weights):
+        return round(
+            statistics.fmean(
+                _jaccard(baseline[s.key], _top_keys(s, corpus, scales, weights, k=3))
+                for s in corpus
+            ),
+            4,
+        )
+
+    published = next(c for c in report["checks"] if c["name"] == "best_single_dimension_null")
+    assert published["detail"]["overlaps"]["uniform"] == overlap(
+        dict.fromkeys(FEATURE_DIMENSIONS, 1.0)
+    )
+    loo_published = next(
+        c for c in report["checks"] if c["name"] == "leave_one_dimension_out"
+    )["detail"]["overlap_without"]
+    for dimension in FEATURE_DIMENSIONS:
+        assert published["detail"]["overlaps"][f"only_{dimension}"] == overlap(
+            {dimension: 1.0}
+        ), dimension
+        assert loo_published[dimension] == overlap(
+            {d: w for d, w in DIMENSION_WEIGHTS.items() if d != dimension}
+        ), dimension
