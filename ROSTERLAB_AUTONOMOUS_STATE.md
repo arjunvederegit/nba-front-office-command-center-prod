@@ -22,9 +22,9 @@
 
 | Metric | Value |
 | --- | --- |
-| Backend tests | **114 passed**, 1 warning, 4.32 s (now **869 passed / 1 skipped / 1 xfailed** at `623134f`) |
-| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88.43 %**, floor 85 |
-| Frontend unit tests | **15 passed** (2 files); now **45 passed** (6 files) |
+| Backend tests | **114 passed**, 1 warning, 4.32 s (now **906 passed / 1 skipped / 0 xfailed** at `f9c8e38`) |
+| Backend coverage (`--cov=app`) | **68 %** (4263 statements, 1375 missed); now **88.45 %**, floor 85 |
+| Frontend unit tests | **15 passed** (2 files); now **82 passed** (9 files) |
 | `data/external/` | **does not exist** — the Kaggle `nbadb` dataset is NOT present. A copy on this machine (`~/Downloads/nbadatabase/nba.sqlite`) ends **2023-06-12**, before the first modelled season, so it cannot serve R6's lineup question either. |
 
 ## Datasets present (inspected)
@@ -38,73 +38,89 @@
 | `data/imports/transactions/NBA_<year>_transactions.html` | ~3.9 M (10 files) | Basketball-Reference season transaction pages, 2016-17 … 2025-26, fetched by `make fetch-transactions` (3.5 s apart, honouring the source's published `Crawl-delay: 3`). Gitignored. **Consumed by `make import-transactions` since R6**: 565 trades, 2,568 asset legs, 1,341/1,500 player legs resolved, 0 unparsed trades, 0 unresolved franchise abbreviations. `provenance.json` beside them records URL + SHA-256 + retrieval time per page. |
 | `data/external/` | — | **absent — Kaggle `nbadb` unavailable** |
 
+**Since R7, `player_season_stats` holds ten seasons** (2016-17 … 2025-26), ingested by
+`make sync-corpus-stats` — 11,307 rows, **0 unresolved identities**, plus standings and ten
+`season_calendar` rows. This is the **corpus** window (`CORPUS_SEASONS`), not the modelling
+window (`HISTORY_SEASONS`), which is still 2023-24 … 2025-26.
+
 ---
 
 ## Current position
 
 **Releases complete:** R0, R1, R2a, **R2c**, **R2b** (feasible scope), **R3**, **R4**, **R5**,
-**R5.5** (the rotation allocator), **R6** (differentiation).
+**R5.5** (the rotation allocator), **R6** (differentiation), **R7** (hardening and close-out).
+**The RosterLab generation is complete.** See `ROSTERLAB_FINAL_R1_R7_HANDOFF.md` for the
+canonical closing document and `ROSTERLAB_R7_IMPLEMENTATION_REPORT.md` for this release.
+
 **R2b's original gate was invalid and has been replaced** — see "R2b gate, reassessed".
 **Three of R4-2's four acceptance criteria were also invalid and have been replaced** —
 see "R4-2 gate, reassessed".
 **One R6 comparable-trade criterion was replaced too** — see "R6 mirror criterion,
 reassessed".
-**Next:** R7 — start by **widening the comparable corpus behind the R3 gate**, then the
-plan's visual/product cleanup. See "Exact next step".
-**Status:** working tree clean, pushed through `623134f`. Backend **869 passed / 1 skipped /
-1 xfailed**, coverage **88.43 %** (floor **85**). Frontend 45 passed; eslint, `tsc` and the
-production build (13 routes) clean. Migrations apply, reverse to base and re-apply on a
-fresh database, and `alembic check` reports no drift. R3 gate re-run on the post-R6 path:
-every calibration figure **bit-identical**. Playwright **5 passed**; visual QA **98 shots
-clean** in `docs/qa/r6/`. Adversarial scenario battery **20 of 20**. Both R6 validation
-batteries pass (`make comparable-validation`, `make acquisition-validation`).
+**R7 withdrew `perturbation_stability` as a gate** — both nulls pass it, and the
+random-hash null scores a perfect 1.0000. See "R7 — the criterion two nulls passed".
 
-**Browser QA is complete and clean.** R5: the Risk and Cap tabs driven live at 375 / 768 /
-1280, two copy defects found and fixed (`57c3edd`). R5.5: the trade evaluator driven live —
-`/trades/evaluate` 200, no console errors, and the rotation chart shows incumbents moving by
-**≤ 0.1 minutes** when a player leaves, which is the fix visible in the product.
+**Next:** nothing in RosterLab. The next product generation ("Pivot") starts from
+`ROSTERLAB_FINAL_R1_R7_HANDOFF.md`, whose closing section states the boundary.
 
-### The dev database was a migration behind, and it looked like a regression
+**Status:** working tree clean, pushed through `f9c8e38`. Backend **906 passed / 1 skipped /
+0 xfailed**, coverage **88.45 %** (floor 85). Frontend **82 passed** (9 files); eslint, `tsc`
+and the production build (13 routes) clean. Migrations apply, reverse to base and re-apply on
+a fresh database, and `alembic check` reports no drift. Playwright **6 passed** (including a
+new database-identity guard); visual QA **105 shots clean** in `docs/qa/r7/`. Adversarial
+battery **11 of 11**; both R6 batteries pass. **All 23 QA findings are closed and no strict
+xfail remains.**
 
-`backend/tradelab.db` sat at `d3e5a71b9c02`, missing R5's `e5c81f4a7b30`
-(`draft_picks.conveyance`). `generate_candidates` wraps `build_trade_context` in a bare
-`except Exception: continue`, so **the generator returned 0 candidates on all 30 teams**
-with nothing surfaced — 406 pairs evaluated, 406 silently discarded. This was mistaken for
-an R5.5 regression until the exception was surfaced deliberately.
+### The R3 gate survived a full retrain on ten seasons, bit-for-bit
 
-```bash
-cd backend && .venv/bin/alembic current   # d3e5a71b9c02, not head
-.venv/bin/alembic upgrade head
-```
+R7 widened `player_season_stats` from three seasons to ten for the comparable-trade corpus.
+The served window frame is byte-identical (632 rows x 33 columns, same hash) on a season frame
+that grows from 1,714 rows to 5,483. A full `make train` reproduced **every model's content
+hash** — `0c89cb6a46a8`, `c621d2abcc85`, `131594164c5d`, `7f98efcb3a6e` — so the registered
+artifacts are byte-identical, not merely equivalent. (A fifth model, `pick_value_curve`, is
+newly active because the RealGM snapshot had never been imported here; `make
+import-draft-picks` reproduces R5's figures exactly at 92 verified of 394.)
 
-If the generator returns nothing, check `alembic current` before concluding anything about
-the ranking. Narrowing that `except` is worth a later release: it turns schema drift into an
-empty result set that reads as a modelling outcome.
+`CORPUS_SEASONS` and `HISTORY_SEASONS` are separate settings, and
+`test_corpus_window_isolation.py` pins the three structural reasons rather than the numbers.
 
-### The frontend toolchain looked broken, and it was iCloud
+### R7 found a live look-ahead in the comparable corpus
 
-Worth as much as the R4 `.next` note. At the start of this session `vitest` timed out
-waiting for its worker on every test file, and `tsc --noEmit` sat at **0 % CPU for ten
-minutes**. Neither was caused by the release, and neither was a sandbox restriction.
+`feature_season_for` decided a trade's feature season from the calendar **month**, and was
+wrong for **57 of 565 trades (10.1 %)** — November 2020 (the season began 22 December),
+draft-night June 2024 (filed under the season about to start), and early-October preseason.
+`is_in_season`, a scored feature, was wrong on 163. The June-2024 group was inside the
+three-season window R6 shipped, so this was live rather than latent.
 
-**`node_modules` had been evicted to iCloud.**
+`season_calendar` now holds each season's first and last regular-season game, from
+`LeagueGameLog`. With no calendar ingested the month rule still answers and
+`coverage.calendar_backed` reports `false`.
 
-```
-find frontend/node_modules -type f -flags +dataless | wc -l   # 16,410
-fileproviderd                                                  # 96 % CPU
-cat 50 jest-dom files                                          # 21.7 s at 0 % CPU
-node -e "import('jsdom')"                                      # 659,821 ms
-```
+### R7 — the criterion two nulls passed
 
-`brctl download` reported success and materialised nothing. **Reading the files is what
-works:**
+Widening the corpus took `perturbation_stability` from 0.6479 to 0.5949 against a 0.60 gate.
+Investigating condemned the criterion, not the release:
 
-```bash
-find node_modules -type f -flags +dataless -print0 | xargs -0 -P 32 -n 30 cat > /dev/null
-```
+- **It is a statistic about corpus size.** 0.707 / 0.676 / 0.651 / 0.611 at n = 200 / 337 /
+  600 / 1,151 on random subsamples of one corpus. Subsampling the ten-season corpus back to
+  337 sides reproduces the three-season number (0.651 vs 0.648).
+- **Both nulls pass it.** Random-hash null **1.0000**, shuffled-feature null 0.6181, shipped
+  distance 0.6110. A ranking keyed only on identity cannot move when its features do.
 
-After that, `vitest` runs in 1.05 s and `tsc` completes. If the frontend toolchain hangs at
-0 % CPU, check for dataless files before concluding anything about the toolchain.
+Replaced by the same wobble read by **rank**: the unperturbed top five must still average
+inside the top ten of the perturbed ranking. Measured **4.33** against a ceiling of 10, and
+stable in n (4.72 at 200 vs 5.32 at 1,151).
+
+R7 also separated **validity** criteria (which the nulls must fail) from **robustness**
+criteria (which a zero-information ranking trivially passes). Applying R4-2's rule literally
+to every check would have deleted half the battery.
+
+### `make e2e` was testing the wrong database
+
+Playwright's `reuseExistingServer` defaulted to true, so the target seeded a dedicated demo
+database and then attached to whatever uvicorn a developer had running. Every test passed
+while this happened. Reuse is now opt-in and `guards.spec.ts` measures which database is under
+test. If e2e fixtures appear in the dev database again, that guard is the thing that broke.
 
 ## Completed work
 
@@ -155,8 +171,26 @@ After that, `vitest` runs in 1.05 s and `tsc` completes. If the frontend toolcha
 | **R6-UI** — precedent, rotation consequences, targets, memo | `553d0d0` | 98 visual-QA shots clean; three defects found by driving it (duplicate sides, "3th percentile", a deep link built to a private encoding) |
 | **R6-perf** — the league role reference batched | `e6a0d00` | cold `/trades/evaluate` **37 → 8** queries for one team; the budget file now asserts the shape, not a number |
 
-Remaining xfail pins: **1** (22 of 23 flipped)
-- QA-11 `EFF` classification → R7 (needs a third field category; C12)
+| **R7-1** — a trade is described by a season that had been played | `313d7a9` | 57 of 565 trades were look-ahead; `season_calendar` from `LeagueGameLog`, 10 rows |
+| **R7-2** — the corpus widened to ten seasons | `6a2d3d6` | 337 → **1,151** rankable sides, 154 → **535** trades; R3 bit-identical, served window byte-identical |
+| **R7-3** — a criterion two nulls passed, withdrawn | `ff2bdbd` | random-hash null **1.0000** vs the shipped 0.6110; replaced by rank displacement 4.33 (ceiling 10) |
+| **R7-4** — the battery made runnable again | `6d12bd6` | >10 min (killed) → **68 s** at 3.4× the corpus; caught a seam that would have measured nothing |
+| **R7-5** — QA-11, the last strict xfail | `d79ceb5` | `EFF` moved to a third field category; the pin itself queried a `stat_type` that never existed |
+| **R7-6** — percentiles over a population that supports them | `f09cf97` | 67 players at exactly 0 %/100 % from three were pinning both ends of the scale |
+| **R7-7** — cross-tab favourite team | `fcb64ce` | `storage` listener, guarded storage access, stable snapshot identity |
+| **R7-8** — a failed search no longer reads as an empty one | `7041894` | `construction_errors` typed, counted and published |
+| **R7-9** — precedent states the coverage it has | `8508445` | `trades_rankable` 535, not `trades_ingested` 565; `calendar_backed` surfaced |
+| **R7-10** — the seventh data-health source | `2d9ad5c` | the Precedent panel traced to a source the provenance page did not list |
+| **R7-11** — unambiguous scenario labels, agreeing counts | `a38691b` | 16 identical dropdown options; `lib/teamTheme.ts` deleted as dead |
+| **R7-12** — documentation and the rename | `90743ce` | 11 docs; About missing 3 shipped tools; demo script rewritten against the running product |
+| **R7-13** — the 2,964-line page, and e2e isolation | `f589907` | 2,964 → 2,375 LOC; `make e2e` had been testing the developer's database |
+| **R7-14** — the adversarial battery, committed | `a28d7c8` | 11 scenarios; writing it found three checks that could not fail |
+| **R7-15** — cache invalidation on any ingestion | `f9c8e38` | `bump_data_version` moved into `sync_run`; every non-`sync_all` path had been serving stale skills |
+
+Remaining xfail pins: **0** (23 of 23 flipped)
+- QA-11 `EFF` classification flipped in R7 (`d79ceb5`), with the third field category C12
+  required. The pin itself was also wrong — it queried `stat_type == "csv_totals"`, which the
+  importer has never written.
 
 Flipped in R3: QA-1 roster-gut `performance < 25` (R3-3) and C2/R3-5 Monte-Carlo /
 point-estimate agreement (R3-5).
@@ -164,6 +198,22 @@ point-estimate agreement (R3-5).
 ## Commits
 
 ```
+f9c8e38 fix(cache): invalidate on any ingestion, not only on a full sync
+a28d7c8 test(adversarial): commit the hostile-trade battery R6 ran by hand
+f589907 refactor(trade-evaluator): lift the evaluation tabs out of a 2,964-line page
+90743ce docs: rename the product, and correct what R5-R7 made false
+a38691b fix(ui): make a scenario option unambiguous, and a count agree with its noun
+2d9ad5c fix(data-health): list the completed-trade corpus, which a screen already traces to
+8508445 fix(precedent): state the coverage the retrieval has, not the corpus it was given
+7041894 fix(search): a search that could not run must not read as a search that found nothing
+fcb64ce fix(favorites): a team chosen in one tab reaches the others
+f09cf97 fix(player-explorer): a percentile needs a population that can support it
+d79ceb5 fix(stats): EFF is a season total, not a rate — QA-11, the last strict xfail
+6d12bd6 perf(comparables): rank on the distance alone, and compute a side's vector once
+ff2bdbd fix(validation): withdraw a criterion two nulls pass, and gate the rank instead
+6a2d3d6 feat(comparables): widen the corpus to ten seasons, behind the R3 gate
+313d7a9 fix(comparables): describe a trade by the season that had actually been played
+0669f42 docs: record R6 — differentiation, and the two claims it refused to make
 623134f fix(comparables): a protected first is not the same asset as an unconditional one
 ae9e1cb docs: record what R6 measured, and what it refused
 e6a0d00 perf(evaluation): load the league's rosters once, not once per team
@@ -554,51 +604,26 @@ do, run that command first — the deferral is falsifiable by design.
 
 ## Exact next step
 
-**R7 — start by widening the comparable corpus behind the R3 gate**, then the plan's
-visual/product cleanup.
+**None in RosterLab. The generation is complete.**
 
-```bash
-git checkout feat/rosterlab-autonomous-roadmap
-cd "nba front office command center prod"
-cd backend && .venv/bin/alembic current   # must be 7a7a8e16cd96, or the generator returns nothing
-make test                      # 869 backend + 45 frontend
-make comparable-validation     # exits non-zero on a stated threshold
-make acquisition-validation
-make e2e
-make visual-qa OUT=docs/qa/r7
-```
+`ROSTERLAB_FINAL_R1_R7_HANDOFF.md` is the canonical closing document: final architecture,
+data sources, analytical systems, workflows, CBA coverage, methodology, test status,
+performance, limitations, deferred external dependencies, the lessons, what to preserve, what
+to replace, and the exact repository state. Its closing section, "Foundation for Pivot",
+states which systems are ready to be inputs to the next product generation **without designing
+that generation**.
 
-**If the comparable corpus is empty**, the pages are gitignored and were fetched, not
-committed:
+To verify this state from a clean checkout, follow §16 of the handoff.
 
-```bash
-make fetch-transactions FROM=2017 TO=2026   # ~40 s, 3.5 s between requests
-make import-transactions
-make transaction-coverage                    # expect 565 trades / 1,225 sides / 337 rankable
-```
+Two items were deliberately **not** taken in R7 and are documented rather than dropped:
 
-In order:
-
-1. **Widen the corpus, behind the R3 gate.** 407 of 565 ingested trades are unrankable only
-   because their feature season sits outside 2023-24 … 2025-26. Sync
-   `LeagueDashPlayerStats` (Base, Advanced) + `PlayerEstimatedMetrics` for 2016-17 … 2022-23
-   into a **scratch copy**; do **not** add them to `history_seasons`. Then re-run the R3
-   gate: `add_zscores` standardizes within season and `_team_tei_transitions` filters to
-   `history_season_list`, so every figure *should* be bit-identical — and if one is not,
-   stop, because the window filtering has a leak and finding it is the release. Then re-run
-   both R6 batteries; if archetype precision falls, that is evidence the current numbers
-   were partly a small-corpus artifact and belongs in the report.
-2. **Let a suggested acquisition package include picks.** Draft capital cannot currently
-   constrain the acquisition path because it proposes players only. The valuation it needs
-   already exists (R5-2), including its refusals.
-3. **Narrow the bare `except Exception`** in `generate_candidates` and now also in
-   `acquisition._evaluate_feasibility`. Both count and report rather than swallow, which is
-   already better than R5.5 found — but a schema drift still reads as a modelling outcome.
-4. Then the plan's own R7: `EFF` reclassification with a third field category (C12, the last
-   strict xfail); the minimum-GP filter and percentile-population fix in Player Explorer;
-   favourite-team persistence with a `storage` listener; component extraction from the
-   trade-evaluator page, which R6 grew rather than shrank; TradeLab → RosterLab in the stale
-   docs; rewrite or delete `docs/demo-script.md`.
+1. **Draft picks in a suggested acquisition package.** The valuation exists (R5-2) including
+   its refusals; adding them is a feature change to a validated production path, and R7's
+   objective was to finish rather than to add. This is the cleanest single piece of deferred
+   work in the repository.
+2. **The trade-evaluator board region** (~900 lines, coupled to the builder's drag state).
+   The tab panels came out cleanly; this did not, and a close-out release is the wrong place
+   to take that regression risk.
 
 **Do not re-open the rotation allocator's level model without new data.** R5.5 measured
 three alternatives out of sample over 60 team-season transitions and every one lost:
@@ -658,11 +683,11 @@ Five things R5 established that R6 must not undo:
 
 ## Push status
 
-`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`623134f`** (R6) plus the
-R6 report and this state file. `main` untouched; no history rewritten; nothing force-pushed;
-no `git stash` used at any point.
+`origin/feat/rosterlab-autonomous-roadmap` is up to date through **`f9c8e38`** (R7) plus the
+R7 report, the R1–R7 handoff and this state file. `main` untouched; no history rewritten;
+nothing force-pushed; no `git stash` used at any point.
 
-**No raw dataset is committed.** The only data-adjacent files in the R6 diff are a
-hand-written synthetic test fixture (`backend/tests/fixtures/bbref_transactions_sample.html`,
-marked as such in its own HTML comment), `data/imports/README.md`, and
-`data/imports/transactions/.gitkeep`.
+**No raw dataset is committed.** The R7 diff adds one migration, one ingestion job, one
+validation module, one component module, three small lib modules, tests and documentation.
+Transaction snapshots, contract snapshots, databases and QA screenshots remain gitignored,
+and `git ls-files` matches no `.db`, `.sqlite`, `.csv` or backup path.
