@@ -12,7 +12,8 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
         sync-corpus-stats sync-season-calendar \
         purge-fixtures import-contracts contract-coverage \
         import-draft-picks pick-ownership fetch-transactions import-transactions \
-        transaction-coverage comparable-validation acquisition-validation lineup-availability
+        transaction-coverage comparable-validation acquisition-validation lineup-availability \
+        adversarial-validation
 
 # `[a-z-]+` missed targets containing a digit or ending the alternation early, so
 # `e2e` never appeared. Match the full target token instead.
@@ -129,6 +130,9 @@ import-transactions: ## Parse the local transaction snapshots into historical_tr
 
 transaction-coverage: ## Report what the imported historical-trade corpus contains
 	cd $(BACKEND) && .venv/bin/python -m app.cli transaction-coverage
+
+adversarial-validation: ## Run the adversarial trade battery (fails on any honesty violation)
+	cd $(BACKEND) && .venv/bin/python -m app.cli adversarial-validation
 
 comparable-validation: ## Run the comparable-trade validation battery (fails on a threshold)
 	cd $(BACKEND) && .venv/bin/python -m app.cli comparable-validation

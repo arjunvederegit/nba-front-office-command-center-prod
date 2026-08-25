@@ -51,6 +51,13 @@ Commands
                    model: group counts, minutes distributions and the implied standard
                    error of a net-rating estimate at each group size. Network required;
                    nothing is stored.
+  adversarial-validation
+                   Run the adversarial trade battery against the ingested league: does
+                   the product refuse well? Empty trades score exactly neutral, verified-
+                   illegal trades carry no decision score and name their rule, giving away
+                   the best three never reads as a gain, an unpriced player is disclosed
+                   rather than defaulted, and an impossible trade is refused at
+                   construction. Exits non-zero on any failure.
   comparable-validation
                    Run the comparable-trade validation battery: perturbation stability,
                    scale-form and distance-form sensitivity, single-dimension and
@@ -272,6 +279,15 @@ def main() -> None:
             print(f"seed-demo refused: {exc}")
             sys.exit(2)
         print(json.dumps(summary, indent=2, default=str))
+    elif command == "adversarial-validation":
+        from app.services.adversarial_validation import run_battery as adversarial_battery
+
+        with SessionLocal() as db:
+            report = adversarial_battery(db)
+        print(json.dumps(report, indent=2, default=str))
+        if report.get("failed"):
+            print(f"\nFAILED: {', '.join(report['failed'])}")
+            sys.exit(1)
     elif command == "sync-corpus-stats":
         from app.config import get_settings as _settings
 
