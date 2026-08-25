@@ -8,7 +8,7 @@ context can understand the completed system without reading any release chat.
 | | |
 | --- | --- |
 | Branch | `feat/rosterlab-autonomous-roadmap` |
-| Head | `a76cff3` |
+| Head | the tip of the branch; last **code** commit `9b994d5`, followed only by these closing documents |
 | Base of the generation | `f16dedc` (the audited/planned commit on `main`) |
 | Remote | `origin` → `github.com/arjunvederegit/nba-front-office-command-center-prod` |
 | `main` | untouched; nothing force-pushed, no history rewritten |

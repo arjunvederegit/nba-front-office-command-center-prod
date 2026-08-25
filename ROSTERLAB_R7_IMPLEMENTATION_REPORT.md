@@ -1,7 +1,7 @@
 # RosterLab R7 — hardening, correction and close-out
 
-**Branch** `feat/rosterlab-autonomous-roadmap` · **base** `0669f42` (R6) · **head** `a76cff3`
-17 commits
+**Branch** `feat/rosterlab-autonomous-roadmap` · **base** `0669f42` (R6) · **last code commit** `9b994d5`
+19 commits, the final two being these closing documents
 
 R7 is the last RosterLab release. Its objective was not another analytical system: it was to
 finish, correct, simplify, document and comprehensively re-validate what R1–R6 built, so the
@@ -481,6 +481,8 @@ reproduced.
 ## 12. Commits and push status
 
 ```
+9b994d5 fix(e2e): explain the refusal, so the fix is not undone by the next person to hit it
+98f7d34 docs: bring the closing documents to the final commit
 a76cff3 fix(memo): the decision memo claimed the corpus, not the coverage
 748d572 docs: close the RosterLab generation — R7 report and the R1-R7 handoff
 f9c8e38 fix(cache): invalidate on any ingestion, not only on a full sync
