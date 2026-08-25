@@ -1,4 +1,10 @@
-"""TradeLab Estimated Impact (TEI).
+"""RosterLab Estimated Impact (TEI).
+
+**The acronym is historical and kept on purpose.** It was coined when this product was
+called TradeLab, and it names the `player_impact_estimates.tei` column, the `tei` field on
+every API response, and every `ModelVersion` registered against it. Renaming it would be a
+migration and a breaking API change in exchange for nothing a reader gains, so the
+expansion is corrected everywhere it is written out and the three letters stay.
 
 TEI is this project's own portfolio-model estimate of per-100-possession player impact.
 It is NOT RAPTOR, EPM, LEBRON, BPM, or any proprietary metric, and it is documented as

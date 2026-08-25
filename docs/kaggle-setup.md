@@ -1,6 +1,6 @@
 # Kaggle Historical NBA Database Setup
 
-TradeLab can enrich player records from the public Kaggle dataset
+RosterLab can enrich player records from the public Kaggle dataset
 [`wyattowalsh/basketball`](https://www.kaggle.com/datasets/wyattowalsh/basketball),
 a SQLite snapshot (`nba.sqlite`) of NBA history: game-level results back to 1946,
 team/player identity tables, `draft_history`, and `common_player_info`.

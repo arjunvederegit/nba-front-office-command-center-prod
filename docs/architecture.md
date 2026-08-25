@@ -83,7 +83,7 @@ historical_trades / historical_trade_assets
 | `integrations/contracts/` | `ContractProvider` protocol + file provider; `None` = honest default |
 | `ingestion/jobs.py` | `sync_*` jobs; failures never destroy the last valid snapshot |
 | `ingestion/quality.py` | 12 data-quality checks, flag/resolve lifecycle |
-| `db/models.py` | 31 tables; UUID PKs; ProvenanceMixin (`source_provider`, `source_record_id`, `source_retrieved_at`, `valid_from/to`, `ingestion_run_id`) |
+| `db/models.py` | 35 tables; UUID PKs; ProvenanceMixin (`source_provider`, `source_record_id`, `source_retrieved_at`, `valid_from/to`, `ingestion_run_id`) |
 | `cba/` | `TradeContext` builder, rule registry, four-state engine |
 | `analytics/` | TEI training/scoring, archetypes, needs, fit, projection, MC, sensitivity |
 | `services/` | evaluation orchestration, candidate search, reports, payroll, data health |

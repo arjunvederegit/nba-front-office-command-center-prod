@@ -61,7 +61,7 @@ players (306 of 487 sit below zero), so a player with no data was scored above t
 median — a silent default considerably more favourable than the −0.293 league mean
 suggests, and one that contradicted this document's own model card.
 
-## 2. TEI — TradeLab Estimated Impact
+## 2. TEI — RosterLab Estimated Impact
 
 TEI is this project's original per-100-possession impact estimate. It is **not**
 RAPTOR, EPM, LEBRON, BPM, or any proprietary metric, and it is documented as a
@@ -239,7 +239,7 @@ Availability_i = Σₛ λ^(s−1)·GPᵢ,ₛ / Σₛ λ^(s−1)·82
 ```
 
 over the seasons the player was in the league. This is historical availability, not
-a medical prediction — TradeLab does not model injuries.
+a medical prediction — RosterLab does not model injuries.
 
 ### The risk component is availability exposure, and only that (R5-1b)
 
@@ -428,6 +428,31 @@ retrieval unit is therefore **one team's view of one trade**, and a three-team t
 contributes three of them. At most one side of any transaction is returned in a result
 list; both remain in the corpus and both are ranked.
 
+### The season a trade is described by
+
+A comparable is only evidence if the numbers describing it existed when the trade was
+made. Until R7 the feature season came from the calendar **month** — July, August and
+September were offseason, everything else in-season — and the month is not enough to
+decide it. Three groups of trades were being described by a season that had not started:
+
+| the month rule said | what had actually been played |
+| --- | --- |
+| 33 trades in November 2020 are 2020-21 | the 2020-21 season began **22 December 2020** |
+| 12 trades on 26–28 June 2024 are 2024-25 | Basketball-Reference files draft night under the season about to start; 2023-24 is the season that finished |
+| 10 trades in early October are that season | first games fall 22–25 October |
+
+**57 of 565 trades, 10.1 %.** The June-2024 group sits inside the three-season window R6
+shipped, so this was live rather than latent. `is_in_season` — a scored feature in the
+`timing` dimension — was wrong on 163 trades for the same reason: no games are played in
+June or in early October.
+
+R7 replaces the month with the boundary as **data**. `season_calendar` holds the first and
+last regular-season game of each season, ingested from `LeagueGameLog`, and the rule reads
+it: a trade between a season's first and last game is described by that season and is
+in-season; otherwise it is described by the most recently completed one and is not. With
+no calendar ingested the month rule still answers, and the response reports
+`calendar_backed: false` rather than giving a confident answer with nothing behind it.
+
 ### The distance
 
 Sixteen features in six dimensions. Each dimension's distance is the mean over the
@@ -454,7 +479,7 @@ finding applied again; a hard clip at one scale unit put 41 % of corpus pairs on
 
 **Counts get a declared unit; continuous quantities get the corpus's interquartile
 range.** One pick is one pick. Estimating the pick scales was tried first and
-degenerates: 295 of 337 rankable sides receive no first-round pick, so the interquartile
+degenerates: 71 % of rankable sides receive no first-round pick, so the interquartile
 range is zero, the median absolute deviation is zero, and the chain falls through to the
 standard deviation — the tail-driven statistic this construction rejects for exactly
 those columns.
@@ -492,34 +517,76 @@ one-for-one player trade with picks attached:
 
 ### Validation
 
-`make comparable-validation`, leave-one-out over 337 sides at k = 5:
+`make comparable-validation`, leave-one-out over **1,151 sides** at k = 5, about 70 s:
 
 | check | measured | gate | |
 | --- | --- | --- | --- |
-| Perturbation stability (±10 % of each feature's scale) | **0.648** | ≥ 0.60 | ✅ |
-| Scale form — standard deviation instead of IQR | **0.735** | ≥ 0.50 | ✅ |
-| Scale form — min-max | 0.471 | reported | null, see below |
+| Perturbation rank displacement (±10 % of each feature's scale) | **4.33** | ≤ 10 | ✅ |
+| Scale form — standard deviation instead of IQR | **0.761** | ≥ 0.50 | ✅ |
+| Scale form — min-max | 0.448 | reported | null, see below |
 | Distance form — hard clip instead of saturation | **0.717** | ≥ 0.50 | ✅ |
-| Best single-dimension null | **0.089** | ≤ 0.75 | ✅ |
-| Archetype recovery, lift over a shuffled-feature corpus | **0.392** | ≥ 0.10 | ✅ |
-| Direction confusion (selling retrieved as buying) | **0.019** | ≤ 0.05 | ✅ |
+| Best single-dimension null | **0.060** | ≤ 0.75 | ✅ |
+| Archetype recovery, lift over a shuffled-feature corpus | **0.493** | ≥ 0.10 | ✅ |
+| Direction confusion (selling retrieved as buying) | **0.025** | ≤ 0.05 | ✅ |
+| Perturbation stability (top-5 overlap) | 0.611 | reported | withdrawn as a gate, see below |
 
-Archetype precision@5 is **0.797** against a 0.414 base rate; a random ranker scores
-0.397 and a corpus whose feature vectors have been permuted between sides scores 0.405 —
+Archetype precision@5 is **0.917** against a 0.433 base rate; a random ranker scores
+0.444 and a corpus whose feature vectors have been permuted between sides scores 0.424 —
 both land on the base rate, which is what a null must do. Leave-one-dimension-out shows
-draft capital drives the list hardest (0.313 overlap without it), then player value
-(0.343) and structure (0.374); timing barely matters (0.707). Neighbours do not cluster
-in the query's own season (0.383 against a 0.348 base rate), so this is not a date
-lookup.
+draft capital drives the list hardest (0.254 overlap without it), then structure (0.317)
+and player value (0.325); timing barely matters (0.707). Neighbours do not cluster in the
+query's own season (0.123 against a 0.102 base rate), so this is not a date lookup.
+
+**R7 widened the corpus and every one of these improved**, which is the evidence that the
+R6 figures were partly a small-corpus artifact rather than a ceiling: precision@5
+0.797 → 0.917, lift 0.392 → 0.493, best single-dimension null 0.089 → 0.060.
+
+### Perturbation stability was withdrawn as a gate, and not because it failed
+
+It measured the mean top-5 Jaccard overlap when the query is wobbled by 10 % of each
+feature's scale, gated at 0.60. Widening the corpus took it to 0.595, and investigating
+that condemned the criterion rather than the release. Two independent reasons:
+
+**It is a statistic about corpus size.** Random subsamples of one corpus score 0.707 at
+n = 200, 0.676 at n = 337, 0.651 at n = 600 and 0.611 at n = 1,151. Subsampling the
+ten-season corpus back to the three-season corpus's 337 sides reproduces the three-season
+number — 0.651 against 0.648 — so retrieval was unchanged and only the statistic moved. A
+top-k overlap asks "are the same five still the five", which gets harder purely because a
+larger corpus puts more candidates at a similar distance.
+
+**Both nulls pass it**, which is disqualifying under the rule R4-2 established:
+
+| ranking | perturbation stability |
+| --- | --- |
+| random-hash null (no information about any trade) | **1.0000** |
+| shuffled-feature null | 0.6181 |
+| the shipped distance | 0.6110 |
+
+The random null scores *perfectly*, because a ranking keyed only on a side's identity
+cannot move when its features do. A gate that a zero-information ranking wins by the
+maximum possible margin is not a gate.
+
+**What replaced it** is the same wobble read by **rank**: the five neighbours the
+unperturbed query returned must still average inside the top ten of the perturbed one.
+Measured 4.33, median 4.0, p95 7.0. It holds as the corpus grows — 4.72 at n = 200 against
+5.32 at n = 1,151 — which is what the level could not do.
+
+**Robustness is not validity, and R7 stopped conflating them.** R4-2's rule was written
+about claims that a metric measures something. Applied literally to every check here it
+would delete half of them, because a ranking that ignores the trades entirely is trivially
+insensitive to how the scales were estimated. The battery now says which kind each check
+is: `archetype_recovery` and `direction_confusion` are **validity** criteria and the nulls
+fail both decisively; the form-sensitivity checks are **robustness** criteria — necessary,
+not sufficient, and never evidence of validity.
 
 **Min-max scaling is a null, not an alternative.** It takes every feature's unit from the
 single most extreme trade in the corpus — a seven-team deal moving six first-round picks
-— which is the failure the declared scales exist to avoid. Its 0.449 overlap is
+— which is the failure the declared scales exist to avoid. Its 0.448 overlap is
 reported, never gated: agreement with a scaling that is known to be wrong would be the
 bad outcome.
 
-**The weights are chosen by construct and they matter.** Uniform weights change 55 % of
-the returned list (0.445 overlap). Nothing in this repository labels two trades as
+**The weights are chosen by construct and they matter.** Uniform weights change 56 % of
+the returned list (0.443 overlap). Nothing in this repository labels two trades as
 similar, so there is no target to fit them against; what is established is that no
 single dimension reproduces the shipped ranking and that the per-dimension decomposition
 is returned with every result, so the choice is inspectable rather than hidden.
@@ -538,9 +605,10 @@ conveyance, a change made for an unrelated reason. A criterion that flips on a c
 elsewhere is not measuring what it claims to.
 
 By list, the mirror is far away: injected into the corpus it is the nearest neighbour for
-2 of 141 asymmetric sides, reaches the top five for 11, and sits at **median rank 89 of
-338**. Direction confusion measured on **real** trades replaces it, at 0.019. Both figures
-are still reported.
+5 of 515 asymmetric sides, reaches the top five for 10, and sits at **median rank 386 of
+1,152**. Direction confusion measured on **real** trades replaces it, at 0.025 against a
+0.05 ceiling. Both figures are still reported. (The R6 figures, on the 337-side corpus,
+were 2 of 141, top-five for 11, median rank 89 of 338, and 0.019.)
 
 ## 14. Need-driven acquisition (R6-3)
 

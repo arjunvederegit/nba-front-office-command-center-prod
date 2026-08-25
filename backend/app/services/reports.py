@@ -199,7 +199,7 @@ def build_report_markdown(
     lines.append("## Assumptions and provenance")
     lines.append("")
     lines.append(
-        "- Player impact uses TradeLab Estimated Impact (TEI), this project's own "
+        "- Player impact uses RosterLab Estimated Impact (TEI), this project's own "
         "portfolio-model estimate with documented validation — not a proprietary metric."
     )
     lines.append(

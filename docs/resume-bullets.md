@@ -5,7 +5,7 @@ placeholders remain until measured — do not fill them with estimates.
 
 ## Full-stack / product
 
-- Built **TradeLab**, a full-stack NBA trade decision-support platform (Next.js 16,
+- Built **RosterLab**, a full-stack NBA trade decision-support platform (Next.js 16,
   FastAPI, SQLAlchemy 2/PostgreSQL, Redis, scikit-learn) on live provider-backed
   NBA data via the open-source `nba_api` client, with provenance and freshness
   tracking on every record and screen.

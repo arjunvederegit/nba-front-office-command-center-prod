@@ -16,10 +16,10 @@ data the product displays.
 | `stats.static.teams` / `players` | identity records (package-bundled, no network) | each sync |
 | `CommonTeamRoster` | current rosters + bio enrichment | 6 h (worker) |
 | `LeagueStandingsV3` | standings (current + history seasons) | 6 h |
-| `LeagueDashPlayerStats` (Base, Advanced) | player season stats, 3 seasons | daily |
+| `LeagueDashPlayerStats` (Base, Advanced) | player season stats — 3 modelled seasons, 10 for the comparable-trade corpus (R7) | daily |
 | `PlayerEstimatedMetrics` | optional enrichment (documented fallback) | daily |
 | `LeagueDashTeamStats` (Base, Advanced) | team season stats | daily |
-| `LeagueGameLog` (team) | completed games | daily |
+| `LeagueGameLog` (team) | completed games; also the first and last regular-season game of each season, stored in `season_calendar` so a trade is described by a season that had actually been played (R7) | daily |
 | `live.scoreboard/boxscore/playbyplay` | live data — **disabled by default** (`LIVE_DATA_ENABLED`); this build's network is edge-blocked by cdn.nba.com, which surfaces as a classified `blocked` provider error, honestly shown | in-season only |
 
 Every ingested record stores: provider, upstream, endpoint class, source record ID,

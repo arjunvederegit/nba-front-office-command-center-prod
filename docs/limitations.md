@@ -81,26 +81,40 @@ itself, not fine print.
   a deal, and with that coverage they are not evidence of anything league-wide either.
   R5 rebuilds the search salary-matched and deterministic.
 
-### Comparable trades stop where the player model does (R6-2)
+### Comparable trades stop where the player model does (R6-2, widened in R7-2)
 
 Ten seasons of Basketball-Reference transaction pages are ingested — **565 trades,
-2,568 asset legs, 69 of them involving three or more teams**. Only some can be
-*ranked*, because ranking needs the on-court value of every player in a trade and
-`player_season_stats` holds 2023-24, 2024-25 and 2025-26:
+2,568 asset legs, 69 of them involving three or more teams**. Ranking a side needs the
+on-court value of every player in it, so how much of the corpus is *rankable* is set by
+how many seasons of `player_season_stats` are held. R6 held three; R7 ingests ten:
 
-| | |
-| --- | --- |
-| trades ingested | 565 (2016-17 … 2025-26) |
-| team-sides | 1,225 |
-| sides whose feature season is inside the modelled window | 352 |
-| ...rankable | **337** |
-| ...withheld because a player in them has no modelled production | 15 |
+| | R6 | R7 |
+| --- | --- | --- |
+| trades ingested | 565 | 565 |
+| team-sides | 1,225 | 1,225 |
+| seasons of player production | 3 | 10 |
+| sides whose feature season has production | 352 | 1,186 |
+| ...rankable | **337** | **1,151** |
+| ...withheld because a player in them has no modelled production | 15 | 35 |
+| distinct trades rankable | 154 | **535** |
 
-The 15 are withheld rather than priced at zero: each contains a player who had played
-in the NBA before the trade but recorded no minutes in its feature season, and pricing
-him at zero would understate the package by an unknown amount. A player who had
+The withheld sides are withheld rather than priced at zero: each contains a player who
+had played in the NBA before the trade but recorded no minutes in its feature season, and
+pricing him at zero would understate the package by an unknown amount. A player who had
 recorded **no** NBA season before the trade — a draft right, a rookie moved on draft
 night — contributes zero, which is a measurement rather than an imputation.
+
+**Thirty trades still cannot be ranked at all**, and the reason has moved. It is no longer
+the modelled window: it is that their feature season falls before 2016-17, or that a
+player in every side of them has no production in a season the database holds.
+
+The widening is **not** a widening of the modelling window. `HISTORY_SEASONS` is still
+2023-24 … 2025-26, and every served estimate — player impact, skills, the rotation
+allocation, the R3 conversion coefficient — is fitted and served on exactly those three.
+The two windows are separate settings for that reason, and the isolation is measured: the
+served window frame is byte-identical at 632 rows × 33 columns and every R3 calibration
+figure reproduces to full float precision on a season frame that grows from 1,714 rows to
+5,483.
 
 **1,341 of 1,500 player legs (89.4 %) resolve to a player in this database.** The 159
 that do not are almost entirely draft-rights players who never appeared in an NBA game;
@@ -173,7 +187,7 @@ A documented subset (see [cba-rule-coverage.md](cba-rule-coverage.md)): no
 sign-and-trades, trade exceptions, cash, BYC/poison-pill, or hard-cap triggers;
 trade salary equals contract salary (no incentive/guarantee adjustments); roster
 counts can't distinguish two-ways without contract data (handled with widened
-honest bounds). **TradeLab is not an official cap-management product.**
+honest bounds). **RosterLab is not an official cap-management product.**
 
 ## Engineering
 

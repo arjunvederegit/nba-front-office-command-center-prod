@@ -1,7 +1,7 @@
 # User-imported contract data (optional)
 
 `nba_api` provides NBA.com basketball data but **not** contract or salary detail.
-TradeLab therefore treats contracts as an optional, separately-provided dataset behind
+RosterLab therefore treats contracts as an optional, separately-provided dataset behind
 the `ContractProvider` interface.
 
 Without contract data the application still works: rosters, statistics, impact models,

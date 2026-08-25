@@ -1,4 +1,4 @@
-"""TradeLab API application."""
+"""RosterLab API application."""
 
 import time
 import uuid
@@ -25,7 +25,7 @@ configure_logging()
 settings = get_settings()
 
 app = FastAPI(
-    title="TradeLab: NBA Trade Deadline Decision Room",
+    title="RosterLab: NBA Front Office Simulator",
     version=__version__,
     description=(
         "Decision-support API for exploratory NBA trade analysis. Basketball data: "
@@ -110,7 +110,7 @@ app.include_router(assets.router, prefix=API)
 @app.get("/")
 def root() -> dict:
     return {
-        "name": "TradeLab API",
+        "name": "RosterLab API",
         "version": __version__,
         "docs": "/docs",
         "data_health": f"{API}/data-health",

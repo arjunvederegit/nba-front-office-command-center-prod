@@ -16,9 +16,10 @@ External NBA identifiers are separate columns (`nba_team_id`, `nba_player_id`,
 | `rosters` | roster snapshot row | team, player, season, jersey, position, age, `is_current` (previous snapshots keep `valid_to`) |
 | `games` | completed game | `nba_game_id`, season, date, home/away team + scores, status |
 | `player_game_stats` | player-game (reserved; populated when game-log-P ingestion is enabled) | game, player, minutes, `stats` JSON |
-| `player_season_stats` | player-season-stattype | `stat_type` ∈ base/advanced/estimated; GP, minutes, full `stats` JSON |
+| `player_season_stats` | player-season-stattype | `stat_type` ∈ base/advanced/estimated/totals; GP, minutes, full `stats` JSON. Held for **ten** seasons since R7 — three of them the modelling window (`HISTORY_SEASONS`), all ten the comparable-trade corpus window (`CORPUS_SEASONS`). The `totals` rows come from the user CSV import, not from nba_api |
 | `team_season_stats` | team-season-stattype | `stat_type`, `stats` JSON (OFF/DEF/NET_RATING, four factors, …) |
 | `standings` | team-season | W/L, win%, conference, playoff_rank, `details` JSON |
+| `season_calendar` | one season | first and last **regular-season** game date and the game count, from `LeagueGameLog`. It decides which season a completed trade is described by, so a trade is never priced against a season that had not been played — the play-in and playoffs are outside the window on purpose, because no trade can be made during them |
 
 ## Contracts & league finance (optional providers)
 

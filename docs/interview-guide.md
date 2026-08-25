@@ -1,6 +1,6 @@
 # Interview guide
 
-How to discuss TradeLab in strategy/product/quant interviews — with the honest
+How to discuss RosterLab in strategy/product/quant interviews — with the honest
 answers to the hard follow-ups.
 
 ## The ambiguous problem and how it was structured

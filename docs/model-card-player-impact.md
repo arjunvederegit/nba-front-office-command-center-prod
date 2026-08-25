@@ -1,4 +1,4 @@
-# Model card — TradeLab Estimated Impact (TEI)
+# Model card — RosterLab Estimated Impact (TEI)
 
 **Model:** a transparent weighted z-score index with documented fixed weights
 (`impact.py::INDEX_WEIGHTS`). Version metadata in `model_versions` (algorithm, features,

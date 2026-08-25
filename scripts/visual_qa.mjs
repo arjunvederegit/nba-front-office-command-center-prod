@@ -54,6 +54,9 @@ const ROUTES = [
   { name: "salary-cap-center", path: `/salary-cap-center?team=${team.id}` },
   { name: "methodology", path: "/methodology" },
   { name: "data-health", path: "/data-health" },
+  // R7: `/about` is in the global nav and was not in this list, so a route a user can
+  // reach in one click had never been screenshotted or checked for console errors.
+  { name: "about", path: "/about" },
   ...(player ? [{ name: "player-detail", path: `/players/${player.id}` }] : []),
   // Error paths are part of the product surface: an unknown id must render a designed
   // not-found state, not an unstyled crash.
