@@ -671,3 +671,101 @@ export interface AcquisitionResponse {
   targets: AcquisitionTarget[];
   notes?: string[];
 }
+
+/* ------------------------------------------------- evaluation detail sections
+ *
+ * The typed shapes behind `TeamEvaluation.detail`, moved here from the trade-evaluator
+ * page in R7. They were declared as "local types" in a page module while describing an
+ * API contract three modules read, and `components/evaluation-tabs.tsx` could not be
+ * extracted without them.
+ *
+ * Every field is optional on purpose: a section the backend could not compute is absent
+ * rather than null-filled, and each panel renders its own unavailable state from what it
+ * finds missing. */
+
+export interface RotationRow {
+  player_id: string;
+  name: string;
+  minutes: number;
+  tei: number;
+  availability: number;
+}
+
+export interface PerformanceDetail {
+  delta_wins?: number;
+  delta_net_rating?: number;
+  rotation_before?: RotationRow[];
+  rotation_after?: RotationRow[];
+}
+
+export interface FitDetail {
+  unavailable?: string;
+  needs?: Record<string, number>;
+  needs_addressed?: Record<string, number>;
+  redundancies?: Record<string, number>;
+  skill_delta?: Record<string, number>;
+  /** Needs the model measures but declines to claim any player skill addresses (R4-2). */
+  needs_not_addressable?: Record<string, string>;
+}
+
+export interface TimelineDetail {
+  unavailable?: string;
+  strategy?: string;
+  incoming_alignment?: number;
+  outgoing_alignment?: number;
+}
+
+export interface PickValuation {
+  pick: string;
+  direction: "in" | "out";
+  low: number;
+  point: number | null;
+  high: number;
+  /** interval = priced; range = protected/swapped; unknown = ownership unverified. */
+  precision: "interval" | "range" | "unknown";
+  caveats: string[];
+  slot_support: { min_slot: number; max_slot: number; central_slot: number | null };
+}
+
+export interface AssetsDetail {
+  picks_in?: number;
+  picks_out?: number;
+  roster_spots_delta?: number;
+  picks_priced?: PickValuation[];
+  picks_not_priced?: PickValuation[];
+  pick_units_net?: number;
+  pick_reference?: string;
+  payroll_delta?: number;
+  payroll_basis?: string;
+  payroll_note?: string;
+  /** Reported here, scored by the contract component — see `payroll_scored_note`. */
+  payroll_scored?: boolean;
+  payroll_scored_note?: string;
+  precision_note?: string;
+  unavailable?: string;
+}
+
+export interface RiskDetail {
+  /** null when no arriving player has a known availability history. */
+  incoming_availability?: number | null;
+  incoming_availability_players?: number;
+  /** null when no departing player has a known availability history. */
+  outgoing_availability?: number | null;
+  outgoing_availability_players?: number;
+  /** The measured fallback for a side with no priced package: who actually plays those minutes. */
+  roster_availability?: number | null;
+  roster_availability_players?: number;
+  availability_delta?: number;
+  baseline_note?: string;
+  method?: string;
+  /** Reported, never scored — see `scored: false`. */
+  legality_verification?: {
+    rules_evaluated: number;
+    rules_with_a_definite_verdict: number;
+    share: number | null;
+    scored: boolean;
+    note: string;
+  };
+  unavailable?: string;
+}
+
