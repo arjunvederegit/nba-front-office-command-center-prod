@@ -19,6 +19,11 @@ from app.db.models import (
     Team,
 )
 
+#: How long a resolved finding is kept before `prune_resolved_issues` deletes it.
+#: Findings are **re-derived on every run**, so a resolved row records that a problem once
+#: existed and has since gone away. That is worth a month, not forever.
+RESOLVED_RETENTION_DAYS = 30
+
 
 def _record(
     db: Session, check: str, message: str, severity: str = "warning", entity: str | None = None
@@ -26,6 +31,69 @@ def _record(
     issue = DataQualityIssue(check_name=check, severity=severity, message=message, entity=entity)
     db.add(issue)
     return {"check": check, "severity": severity, "message": message}
+
+
+def upsert_issue(
+    db: Session,
+    check_name: str,
+    message: str,
+    severity: str = "warning",
+    entity: str | None = None,
+) -> DataQualityIssue:
+    """Record a finding **once per (check, entity)**, updating it rather than duplicating.
+
+    Every re-derived check resolves its previous rows and writes new ones, so a job that
+    runs twice leaves two rows per finding and a job that runs weekly leaves fifty-two.
+    Measured on the development database: `asset_unmatched_player_dir` held **560 rows for
+    280 findings** after two `index-assets` runs, and nothing ever removed the resolved
+    half.
+
+    Requires a stable `entity` — the folder name, the pick's team-year-round — because
+    that is what makes two runs' findings the *same* finding. Callers with nothing stable
+    to key on fall back to an insert, and `prune_resolved_issues` bounds those instead.
+    """
+    if entity is None:
+        # Still recorded — a finding with nothing stable to key on is a finding, not a
+        # no-op. It is bounded by `prune_resolved_issues` instead of by upserting.
+        issue = DataQualityIssue(
+            check_name=check_name, severity=severity, message=message, entity=entity
+        )
+        db.add(issue)
+        return issue
+    existing = db.scalar(
+        select(DataQualityIssue).where(
+            DataQualityIssue.check_name == check_name, DataQualityIssue.entity == entity
+        )
+    )
+    if existing is None:
+        existing = DataQualityIssue(
+            check_name=check_name, severity=severity, message=message, entity=entity
+        )
+        db.add(existing)
+        return existing
+    existing.severity = severity
+    existing.message = message
+    # Still open: the check produced it again on this run.
+    existing.resolved_at = None
+    return existing
+
+
+def prune_resolved_issues(db: Session, older_than_days: int = RESOLVED_RETENTION_DAYS) -> int:
+    """Delete findings resolved longer ago than the retention window.
+
+    The other half of the growth fix, for the checks with no stable entity to key on.
+    Open findings are never touched — this only removes rows that already say "this is no
+    longer a problem".
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    stale = db.scalars(
+        select(DataQualityIssue).where(
+            DataQualityIssue.resolved_at.is_not(None), DataQualityIssue.resolved_at < cutoff
+        )
+    ).all()
+    for issue in stale:
+        db.delete(issue)
+    return len(stale)
 
 
 def validate_data(db: Session) -> list[dict]:
@@ -191,6 +259,19 @@ def validate_data(db: Session) -> list[dict]:
                 f"{malformed_seasons} stat rows with malformed season strings",
                 "error",
             )
+        )
+
+    pruned = prune_resolved_issues(db)
+    if pruned:
+        issues.append(
+            {
+                "check": "issue_retention",
+                "severity": "info",
+                "message": (
+                    f"pruned {pruned} finding(s) resolved more than "
+                    f"{RESOLVED_RETENTION_DAYS} days ago"
+                ),
+            }
         )
 
     db.commit()

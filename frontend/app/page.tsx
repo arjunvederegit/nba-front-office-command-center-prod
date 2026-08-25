@@ -3,8 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { dataHealthSchema } from "@/lib/schemas";
 import { formatDate } from "@/lib/format";
-import { setFavoriteTeam, useFavoriteTeam } from "@/lib/teamTheme";
+import { setFavoriteTeam, useFavoriteTeam } from "@/lib/favoriteTeam";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type { DataHealth, Scenario, Team, TradeSummary } from "@/lib/types";
 import { BallGlyph, HalfCourt, ShotChartMotif, TransactionLane } from "@/components/court";
@@ -100,7 +101,7 @@ export default function OverviewPage() {
   const { data: teams } = useQuery({ queryKey: ["teams"], queryFn: () => api.get<Team[]>("/teams") });
   const { data: health } = useQuery({
     queryKey: ["data-health"],
-    queryFn: () => api.get<DataHealth>("/data-health"),
+    queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
   });
   const { data: trades } = useQuery({
     queryKey: ["trades"],

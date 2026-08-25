@@ -28,7 +28,9 @@
 1. **Routers** never touch `nba_api` or raw provider payloads — they read normalized repository data and call services.
 2. **All NBA.com traffic** flows through `integrations/nba_api/client.py::fetch_dataframe`: rate limiting (min-interval + concurrency semaphore), bounded retries with exponential backoff + jitter, per-endpoint circuit breaker, response caching, schema validation, classified errors, and health metrics live in exactly one place.
 3. **The frontend never decides legality.** It renders `POST /trades/validate` results; the CBA engine is backend-authoritative.
-4. **Analytics are pure** given a DataFrame — feature building, models, and simulations don't import FastAPI or the ORM session beyond loading rows, which makes them unit-testable with fixtures.
+4. **Analytics are pure** given a DataFrame — feature building, models, and simulations don't import FastAPI or the ORM session beyond loading rows, which makes them unit-testable with fixtures. `analytics/comparables.py` holds the distance and knows nothing about the database; `services/comparables.py` owns the join and is the only place a `TradeSide` is built.
+5. **A validation battery is a command, not a paragraph.** `make comparable-validation`, `make acquisition-validation` and `make lineup-availability` re-run the measurements the R6 claims rest on and exit non-zero on a stated threshold, so a claim can be falsified by running it.
+6. **No test reaches a third party.** `ROSTERLAB_OFFLINE=1` — set by the test suite — makes the two fetching commands refuse.
 
 ## Data flow
 
@@ -44,9 +46,31 @@ nba_api endpoints ──normalizers──► normalized dicts (+provenance)
                                 → score (needs) → model_versions + estimates
                                           │
                      services/evaluation: rotation → Δnet → Δwins → components
+                                                 → roster_shape (roles × minutes)
                      cba/engine: TradeContext → RuleResults → 4-state status
                                           │
-                                   api/v1 + generated reports
+                                   api/v1 + the decision memo
+```
+
+R6 adds a second ingest and two read paths that never touch NBA.com:
+
+```
+data/imports/transactions/*.html  (gitignored, fetched once per season)
+     │  ingestion/transactions/parse.py   pure, no DB, no network
+     ▼  ingestion/transactions/importer.py  identity + provenance + warnings
+historical_trades / historical_trade_assets
+     │
+     ├─► services/comparables.py   one constructor for BOTH the query side and
+     │        │                    every corpus side — a retrieval engine whose two
+     │        │                    halves are built differently measures the
+     │        ▼                    construction, not the trades
+     │   analytics/comparables.py  grouped distance, no DB
+     │   analytics/comparables_validation.py  the battery + its nulls
+     │
+     └─► services/acquisition.py   diagnosis → need → candidates → fit → cost →
+              │                    a trade run through EvaluationService
+              ▼
+         services/acquisition_validation.py  team-type battery
 ```
 
 ## Key backend modules
@@ -59,7 +83,7 @@ nba_api endpoints ──normalizers──► normalized dicts (+provenance)
 | `integrations/contracts/` | `ContractProvider` protocol + file provider; `None` = honest default |
 | `ingestion/jobs.py` | `sync_*` jobs; failures never destroy the last valid snapshot |
 | `ingestion/quality.py` | 12 data-quality checks, flag/resolve lifecycle |
-| `db/models.py` | 31 tables; UUID PKs; ProvenanceMixin (`source_provider`, `source_record_id`, `source_retrieved_at`, `valid_from/to`, `ingestion_run_id`) |
+| `db/models.py` | 35 tables; UUID PKs; ProvenanceMixin (`source_provider`, `source_record_id`, `source_retrieved_at`, `valid_from/to`, `ingestion_run_id`) |
 | `cba/` | `TradeContext` builder, rule registry, four-state engine |
 | `analytics/` | TEI training/scoring, archetypes, needs, fit, projection, MC, sensitivity |
 | `services/` | evaluation orchestration, candidate search, reports, payroll, data health |

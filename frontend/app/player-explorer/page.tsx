@@ -15,6 +15,17 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { ordinal, pct } from "@/lib/format";
+import {
+  ALL_COLUMNS,
+  COUNTING_COLUMNS,
+  QUALIFY_MIN,
+  formatStat,
+  numOrNull,
+  percentileOf,
+  qualifies,
+  statValue,
+} from "@/lib/playerStats";
+import type { Mode } from "@/lib/playerStats";
 import { teamIdentity } from "@/lib/teamIdentity";
 import type { SeasonTotalsPlayer, SeasonTotalsResponse, Team } from "@/lib/types";
 import { PlayerPhoto, TeamLogo } from "@/components/media";
@@ -36,62 +47,7 @@ import {
 
 const SEASON = "2025-26";
 
-type Mode = "per_game" | "totals";
 type PositionGroup = "all" | "Guards" | "Wings" | "Bigs";
-
-/** Columns shown in the directory; `kind` decides which stat bag a value reads from. */
-interface StatColumn {
-  key: string;
-  label: string;
-  kind: "counting" | "rate";
-  digits?: number;
-}
-
-const COUNTING_COLUMNS: StatColumn[] = [
-  { key: "PTS", label: "PTS", kind: "counting" },
-  { key: "REB", label: "REB", kind: "counting" },
-  { key: "AST", label: "AST", kind: "counting" },
-  { key: "STL", label: "STL", kind: "counting" },
-  { key: "BLK", label: "BLK", kind: "counting" },
-];
-
-const RATE_COLUMNS: StatColumn[] = [
-  { key: "FG_PCT", label: "FG%", kind: "rate" },
-  { key: "FG3_PCT", label: "3P%", kind: "rate" },
-  { key: "FT_PCT", label: "FT%", kind: "rate" },
-  { key: "EFF", label: "EFF", kind: "rate", digits: 1 },
-];
-
-const ALL_COLUMNS = [...COUNTING_COLUMNS, ...RATE_COLUMNS];
-
-function statValue(player: SeasonTotalsPlayer, column: StatColumn, mode: Mode): number | null {
-  const bag =
-    column.kind === "rate" ? player.rates : mode === "per_game" ? player.per_game : player.totals;
-  const value = bag?.[column.key];
-  return typeof value === "number" ? value : null;
-}
-
-function formatStat(value: number | null, column: StatColumn, mode: Mode): string {
-  if (value === null) return "—";
-  if (column.kind === "rate") {
-    if (column.key.endsWith("_PCT")) return pct(value, 1);
-    return value.toFixed(column.digits ?? 1);
-  }
-  return mode === "per_game" ? value.toFixed(1) : String(Math.round(value));
-}
-
-/** Share of loaded players at or below this value (0-100). */
-function percentileOf(sortedValues: number[], value: number): number {
-  if (sortedValues.length === 0) return 0;
-  let lo = 0;
-  let hi = sortedValues.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sortedValues[mid] <= value) lo = mid + 1;
-    else hi = mid;
-  }
-  return (lo / sortedValues.length) * 100;
-}
 
 function positionGroup(position: string | null): PositionGroup {
   const p = (position ?? "").toUpperCase();
@@ -123,12 +79,8 @@ const COMPARE_ROWS: {
   { label: "3P%", get: (p) => numOrNull(p.rates.FG3_PCT), fmt: (v) => pct(v, 1), better: "high" },
   { label: "FT%", get: (p) => numOrNull(p.rates.FT_PCT), fmt: (v) => pct(v, 1), better: "high" },
   { label: "AST/TOV", get: (p) => numOrNull(p.rates.AST_TOV), fmt: (v) => v.toFixed(2), better: "high" },
-  { label: "EFF", get: (p) => numOrNull(p.rates.EFF), fmt: (v) => v.toFixed(1), better: "high" },
+  { label: "EFF/g", get: (p) => numOrNull(p.per_game.EFF), fmt: (v) => v.toFixed(1), better: "high" },
 ];
-
-function numOrNull(value: number | null | undefined): number | null {
-  return typeof value === "number" ? value : null;
-}
 
 export default function PlayerExplorerPage() {
   return (
@@ -156,6 +108,7 @@ function PlayerExplorer() {
   const [search, setSearch] = useState("");
   const [teamAbbr, setTeamAbbr] = useState<string>("all");
   const [position, setPosition] = useState<PositionGroup>("all");
+  const [minGames, setMinGames] = useState(0);
   const [mode, setMode] = useState<Mode>("per_game");
   const [sortKey, setSortKey] = useState<string>("PTS");
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
@@ -174,10 +127,21 @@ function PlayerExplorer() {
   const players = useMemo(() => data?.players ?? [], [data]);
   const sortColumn = ALL_COLUMNS.find((c) => c.key === sortKey) ?? COUNTING_COLUMNS[0];
 
-  /** Sorted values of the active sort stat across ALL loaded players (league context). */
+  /**
+   * The population a percentile on the sorted stat is a percentile *of*.
+   *
+   * Deliberately not every loaded player. A percentile answers "how many of the league
+   * is this player above", and a player with two three-point attempts is not evidence
+   * about the league — 67 such players sat at exactly 0 % or 100 % from three, pinning
+   * both ends of the scale that everyone else was read against. The population is the
+   * players whose sample reaches `QUALIFY_MIN` of the column's own denominator, and it
+   * ignores the team/position/search filters on purpose: narrowing the *view* must not
+   * silently redefine what "league percentile" means.
+   */
   const leagueValues = useMemo(() => {
     const values: number[] = [];
     for (const player of players) {
+      if (!qualifies(player, sortColumn)) continue;
       const value = statValue(player, sortColumn, mode);
       if (value !== null) values.push(value);
     }
@@ -185,12 +149,18 @@ function PlayerExplorer() {
     return values;
   }, [players, sortColumn, mode]);
 
+  const belowQualifier = useMemo(
+    () => players.filter((p) => !qualifies(p, sortColumn)).length,
+    [players, sortColumn],
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const rows = players.filter(
       (p) =>
         (teamAbbr === "all" || p.team_abbr === teamAbbr) &&
         (position === "all" || positionGroup(p.position) === position) &&
+        (p.gp ?? 0) >= minGames &&
         (q.length === 0 || p.name.toLowerCase().includes(q)),
     );
     rows.sort((a, b) => {
@@ -202,7 +172,7 @@ function PlayerExplorer() {
       return sortDir === "desc" ? bv - av : av - bv;
     });
     return rows;
-  }, [players, search, teamAbbr, position, sortColumn, sortDir, mode]);
+  }, [players, search, teamAbbr, position, minGames, sortColumn, sortDir, mode]);
 
   const selectedPlayers = useMemo(
     () =>
@@ -237,12 +207,14 @@ function PlayerExplorer() {
     setSearch("");
     setTeamAbbr("all");
     setPosition("all");
+    setMinGames(0);
     setVisibleCount(PAGE_SIZE);
   }
 
   const modeSuffix = mode === "per_game" ? "/g" : " tot";
   const visible = filtered.slice(0, visibleCount);
-  const filtersActive = search.trim() !== "" || teamAbbr !== "all" || position !== "all";
+  const filtersActive =
+    search.trim() !== "" || teamAbbr !== "all" || position !== "all" || minGames > 0;
 
   if (isLoading) return <ExplorerSkeleton />;
 
@@ -337,6 +309,24 @@ function PlayerExplorer() {
                 </select>
               </Field>
 
+              <Field label="Minimum games" htmlFor="explorer-min-games">
+                <select
+                  id="explorer-min-games"
+                  value={String(minGames)}
+                  onChange={(event) => {
+                    setMinGames(Number(event.target.value));
+                    setVisibleCount(PAGE_SIZE);
+                  }}
+                  className="w-full rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-sm text-foreground focus:border-signal/60"
+                >
+                  <option value="0">All players</option>
+                  <option value="5">5+ games</option>
+                  <option value="15">15+ games</option>
+                  <option value="30">30+ games</option>
+                  <option value="58">58+ games (league-leader rule)</option>
+                </select>
+              </Field>
+
               <Field label="Sort by" htmlFor="explorer-sort">
                 <div className="flex gap-1.5">
                   <select
@@ -397,8 +387,8 @@ function PlayerExplorer() {
                   imported.
                 </>
               )}{" "}
-              The two scales are never mixed in one view. Shooting rates and EFF are
-              scale-independent.
+              The two scales are never mixed in one view. Shooting percentages are
+              scale-independent and show the same value in both.
             </p>
           </Panel>
 
@@ -437,10 +427,20 @@ function PlayerExplorer() {
                   players · sorted by {sortColumn.label}
                   {sortColumn.kind === "counting" ? modeSuffix : ""} (
                   {sortDir === "desc" ? "high → low" : "low → high"})
+                  {belowQualifier > 0 && (
+                    <>
+                      {" · "}
+                      <span className="text-faint">
+                        {belowQualifier.toLocaleString()} listed without a percentile (under{" "}
+                        {QUALIFY_MIN} {sortColumn.kind === "rate" ? "attempts" : "games"})
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
-              <span className="eyebrow whitespace-nowrap">
-                bar = league percentile on the sorted stat
+              <span className="eyebrow text-right">
+                bar = percentile among the {leagueValues.length.toLocaleString()} players with{" "}
+                {QUALIFY_MIN}+ {sortColumn.kind === "rate" ? "attempts" : "games"}
               </span>
             </header>
 
@@ -467,9 +467,16 @@ function PlayerExplorer() {
                         mode={mode}
                         sortKey={sortKey}
                         percentile={(() => {
+                          if (!qualifies(player, sortColumn)) return null;
                           const value = statValue(player, sortColumn, mode);
                           return value === null ? null : percentileOf(leagueValues, value);
                         })()}
+                        qualified={qualifies(player, sortColumn)}
+                        qualifierLabel={
+                          sortColumn.kind === "rate"
+                            ? `${QUALIFY_MIN} attempts`
+                            : `${QUALIFY_MIN} games`
+                        }
                         selected={selected.includes(player.player_id)}
                         selectionFull={selected.length >= COMPARE_MAX}
                         onToggle={() => toggleSelected(player.player_id)}
@@ -553,7 +560,10 @@ function ExplorerHeader({ count, season }: { count: number | null; season: strin
         <>
           <Badge status="info">{season}</Badge>
           {count !== null && <span className="eyebrow">{count.toLocaleString()} players loaded</span>}
-          <span className="eyebrow">league percentiles from this same set</span>
+          {/* R7: "league percentiles from this same set" used to sit here and is now
+              false — the percentile population is the qualified subset, not everyone
+              loaded. It also said in a page header what the directory header says with
+              the live count in it, so it is deleted rather than reworded. */}
         </>
       }
     />
@@ -637,6 +647,8 @@ function PlayerRow({
   mode,
   sortKey,
   percentile,
+  qualified,
+  qualifierLabel,
   selected,
   selectionFull,
   onToggle,
@@ -646,6 +658,9 @@ function PlayerRow({
   mode: Mode;
   sortKey: string;
   percentile: number | null;
+  /** Whether this player's sample reaches `QUALIFY_MIN` on the sorted column. */
+  qualified: boolean;
+  qualifierLabel: string;
   selected: boolean;
   selectionFull: boolean;
   onToggle: () => void;
@@ -713,10 +728,17 @@ function PlayerRow({
               value={formatStat(value, column, mode)}
               emphasized={isSorted}
               meter={isSorted ? percentile : null}
+              // No bar rather than a bar with nothing behind it. The tooltip says which
+              // it is, so an absent meter reads as "not enough of a sample" rather than
+              // as a rendering failure.
               meterLabel={
-                isSorted && percentile !== null
-                  ? `${ordinal(percentile)} percentile among loaded players`
-                  : undefined
+                !isSorted
+                  ? undefined
+                  : percentile !== null
+                    ? `${ordinal(percentile)} percentile among qualified players`
+                    : qualified
+                      ? "no value for this stat"
+                      : `fewer than ${qualifierLabel} — too small a sample for a percentile`
               }
             />
           );
@@ -775,7 +797,7 @@ function ComparePanel({
     <Panel
       accent="var(--signal)"
       title={`Comparing ${players.length} players`}
-      subtitle="Per-game line (derived using GP), shooting rates and EFF · best value in each row is highlighted"
+      subtitle="Per-game line (derived using GP) and shooting percentages · best value in each row is highlighted"
       actions={
         <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close comparison">
           Close

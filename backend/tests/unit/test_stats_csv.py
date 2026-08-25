@@ -123,6 +123,8 @@ def test_per_game_derivation(db: Session, tmp_path: Path) -> None:
         "FG3A": 2.5,
         "FG3M": 1.0,
         "FTA": 2.0,
+        # R7: a season total the source may omit is divided by GP like any other total.
+        "EFF": 15.0,
     }
 
 
@@ -215,3 +217,60 @@ def test_idempotent_rerun_updates_in_place(db: Session, tmp_path: Path) -> None:
     assert rows[0].minutes == 120.0
     assert rows[0].stats["PTS"] == 60
     assert rows[0].stats["per_game"]["PTS"] == 12.0
+
+
+# ------------------------------------------------------------------ QA-11 pin (R0-1)
+
+
+def test_eff_is_scale_dependent_and_belongs_with_totals(db: Session, tmp_path: Path) -> None:
+    """QA-11, fixed in R7. `EFF` is a season *total*: 60 over 4 games is 15.0 per game.
+
+    It sat in `_RATE_FIELDS`, so it was copied into `stats["rates"]` and rendered beside
+    FG% and 3P% — where every other value is scale-independent — and the per-game view
+    showed the season total unchanged.
+
+    Per C12 the move needed a third field category rather than a move into
+    `_TOTAL_FIELDS`: those are parsed with `_required_float`, so a blank `EFF` would have
+    started rejecting the whole row, which `_RATE_FIELDS`'s `_optional_float` tolerated.
+    """
+    make_team(db, 1, "AAA")
+    make_player(db, 900001, "Fixture Player A")
+    path = _write_csv(tmp_path, [_row()])
+    import_stats_csv(db, path, season="2025-26")
+    stat = db.scalar(select(PlayerSeasonStats).where(PlayerSeasonStats.stat_type == "totals"))
+    assert stat is not None
+    assert "EFF" not in stat.stats["rates"], "EFF is not scale-independent"
+    assert stat.stats["EFF"] == 60, "the season total is kept where the other totals are"
+    assert stat.stats["per_game"]["EFF"] == 15.0
+
+
+def test_a_blank_eff_does_not_reject_the_row(db: Session, tmp_path: Path) -> None:
+    """The reason the third category exists. `EFF` is optional in the source, and a stat
+    the source may omit must not become a reason to drop a player's whole season."""
+    make_team(db, 1, "AAA")
+    make_player(db, 900001, "Fixture Player A")
+    path = _write_csv(tmp_path, [_row(EFF="")])
+    result = import_stats_csv(db, path, season="2025-26")
+
+    assert result == {**result, "imported": 1, "rejected": 0}
+    stat = db.scalar(select(PlayerSeasonStats).where(PlayerSeasonStats.stat_type == "totals"))
+    assert stat is not None
+    assert stat.stats["PTS"] == 50, "the rest of the row imported"
+    # Absent in the source, absent here — in neither bag, and never zero.
+    assert "EFF" not in stat.stats
+    assert "EFF" not in stat.stats["per_game"]
+    assert "EFF" not in stat.stats["rates"]
+
+
+def test_the_three_field_categories_do_not_overlap() -> None:
+    """Each column is classified exactly once. An `EFF` in two categories is how it came
+    to be a rate and a total at the same time."""
+    from app.ingestion.stats_csv import (
+        _OPTIONAL_TOTAL_FIELDS,
+        _RATE_FIELDS,
+        _TOTAL_FIELDS,
+    )
+
+    assert set(_TOTAL_FIELDS) & set(_RATE_FIELDS) == set()
+    assert set(_TOTAL_FIELDS) & set(_OPTIONAL_TOTAL_FIELDS) == set()
+    assert set(_RATE_FIELDS) & set(_OPTIONAL_TOTAL_FIELDS) == set()

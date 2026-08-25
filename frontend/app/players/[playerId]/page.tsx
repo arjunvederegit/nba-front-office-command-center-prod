@@ -14,7 +14,7 @@ import { use, useState } from "react";
 import { api } from "@/lib/api";
 import { height, money, pct, tei } from "@/lib/format";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
-import type { Team } from "@/lib/types";
+import type { ArchetypeAssignment, ComparablePlayer, Team } from "@/lib/types";
 import { TeamLogo, PlayerPhoto } from "@/components/media";
 import {
   Badge,
@@ -54,13 +54,8 @@ interface PlayerDetail {
     model?: string | null;
     note: string;
   };
-  archetype: { label: string; cluster_id: number } | null;
-  comparables: {
-    player_id: string;
-    name: string;
-    tei: number;
-    archetype: string;
-  }[];
+  archetype: ArchetypeAssignment | null;
+  comparables: ComparablePlayer[];
 }
 
 interface PlayerStats {
@@ -330,28 +325,29 @@ export default function PlayerPage({ params }: { params: Promise<{ playerId: str
         </div>
 
         <div className="min-w-0 space-y-3">
-          <Panel title="Archetype" accent="var(--signal)">
+          <Panel title="Role" accent="var(--signal)">
             {data.archetype ? (
               <div>
-                <div className="display text-xl leading-tight text-foreground">
+                <div className="display text-xl leading-tight text-balance text-foreground">
                   {data.archetype.label}
                 </div>
                 <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
-                  Assigned by clustering box-score profiles across the league — a role label, not a
-                  quality rating.
+                  Assigned by a fixed rule chain over league percentiles — size first, then role
+                  within that size. A role label, not a quality rating, and the same profile always
+                  produces the same label.
                 </p>
               </div>
             ) : (
-              <UnavailableNotice reason="No archetype cluster has been assigned to this player yet." />
+              <UnavailableNotice reason="No role has been assigned to this player yet." />
             )}
           </Panel>
 
           <Panel
             title="Comparable players"
-            subtitle="Same archetype cluster, nearest impact estimate"
+            subtitle="Same role, nearest impact estimate"
           >
             {data.comparables.length === 0 ? (
-              <UnavailableNotice reason="Comparables need an archetype cluster, which hasn't been assigned to this player." />
+              <UnavailableNotice reason="Comparables need a role, which hasn't been assigned to this player." />
             ) : (
               <ul className="divide-y divide-hairline">
                 {data.comparables.map((comparable) => (

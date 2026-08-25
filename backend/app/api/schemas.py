@@ -5,6 +5,17 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+# One definition of the strategy vocabulary. It was previously inlined in
+# `ScenarioIn` only, so `EvaluateRequest.strategy` and `GenerateRequest.strategy`
+# were bare `str` and silently fell back to different weights on a typo (QA-7).
+Strategy = Literal[
+    "contend", "improve", "retool", "rebuild", "youth", "cap_relief", "custom"
+]
+
+# The report renderer only produces these two; anything else used to be accepted,
+# recorded as the requested format, and then answered with markdown anyway.
+ReportFormat = Literal["markdown", "html"]
+
 
 class Provenance(BaseModel):
     source_provider: str = "nba_api"
@@ -36,6 +47,13 @@ class RosterPlayerOut(BaseModel):
     tei: float | None = None
     archetype: str | None = None
     availability: float | None = None
+    # Contract facts for the cap league year. All three are None when unknown — the
+    # trade-evaluator roster cell rendered a hardcoded "salary — · years —" before R2b,
+    # so importing contract data changed nothing on screen and the bug would have become
+    # invisible the moment someone marked the import done.
+    salary: int | None = None
+    contract_years_remaining: int | None = None
+    contract_type: str | None = None
 
 
 class PlayerOut(BaseModel):
@@ -64,9 +82,7 @@ class ScenarioWeightsIn(BaseModel):
 class ScenarioIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     focal_team_id: str
-    strategy: Literal[
-        "contend", "improve", "retool", "rebuild", "youth", "cap_relief", "custom"
-    ] = "custom"
+    strategy: Strategy = "custom"
     horizon_years: int = Field(ge=1, le=5, default=1)
     risk_tolerance: Literal["conservative", "balanced", "aggressive"] = "balanced"
     max_added_payroll: int | None = None
@@ -81,7 +97,7 @@ class ScenarioIn(BaseModel):
 
 class ScenarioPatch(BaseModel):
     name: str | None = None
-    strategy: str | None = None
+    strategy: Strategy | None = None
     horizon_years: int | None = None
     risk_tolerance: str | None = None
     untouchable_player_ids: list[str] | None = None
@@ -129,14 +145,42 @@ class TradeIn(ValidateRequest):
 
 class EvaluateRequest(ValidateRequest):
     scenario_id: str | None = None
-    strategy: str = "custom"
+    strategy: Strategy = "custom"
     weights: ScenarioWeightsIn | None = None
+
+
+class ComparablesRequest(ValidateRequest):
+    """A trade to find precedents for, from one team's point of view.
+
+    `focal_team_id` is required and has no default: a comparable is a *side*, and picking
+    a side for the caller would answer a question nobody asked.
+    """
+
+    focal_team_id: str
+    k: int = Field(ge=1, le=25, default=5)
+
+
+class MemoRequest(ValidateRequest):
+    """A decision memo for a deal that has not been saved.
+
+    `format` is a closed set here for the same reason it is on the saved-trade report: a
+    format that is accepted and then answered with something else is a lie in the
+    response headers. `json` returns the markdown plus its section list, for a client
+    that renders its own.
+    """
+
+    name: str = Field(min_length=1, max_length=120, default="Untitled trade")
+    focal_team_id: str
+    scenario_id: str | None = None
+    strategy: Strategy = "custom"
+    format: Literal["markdown", "html", "json"] = "markdown"
+    include_comparables: bool = True
 
 
 class GenerateRequest(BaseModel):
     scenario_id: str | None = None
     focal_team_id: str | None = None
-    strategy: str = "custom"
+    strategy: Strategy = "custom"
     max_candidates: int = Field(ge=1, le=12, default=8)
 
 

@@ -20,9 +20,16 @@ make train         # build features, train impact model, compute archetypes/need
 
 ## Subdirectories
 
+- `cba/` — **committed**. League-wide published cap/tax/apron/exception figures with an
+  explicit `confirmed` / `nba_estimate` / `projected` status per season. League-wide
+  money, not per-player contract data; see `cba/README.md`.
 - `contracts/` — optional user-imported contract/salary file. `nba_api` does not provide
   contract data; see `contracts/README.md` for the expected schema and legal notes.
   Files placed here are gitignored and never redistributed.
+- `imports/` — raw provider pages you download yourself (Basketball-Reference contracts,
+  RealGM future drafts, stats CSVs). **Gitignored in full.** They are third-party pages
+  whose redistribution terms are not clear, so they stay on the machine that fetched
+  them; only normalized, attributable data derived from them is ever committed.
 - `snapshots/` — local database snapshots (gitignored).
 
 ## Test fixtures are not data
@@ -30,3 +37,27 @@ make train         # build features, train impact model, compute archetypes/need
 `backend/tests/fixtures/` contains small, sanitized, recorded response excerpts used only
 by deterministic tests. They are clearly marked as fixtures, are never loaded by
 production configuration, and are not presented in the application.
+
+### Your development database may still hold test entities
+
+The end-to-end suite saves real scenarios, trade proposals and comparison sets through
+the API. It now runs against its **own** database (`make e2e`, which builds one via
+`make seed-demo`), but a database used before that change — or used for manual
+exploration — can hold rows like `E2E RosterLab deal` or `Smoke test deal`. They are
+indistinguishable from your own saved work in the UI, which is the point of this note.
+
+```bash
+make purge-fixtures            # list what looks automated
+make purge-fixtures APPLY=1    # delete it
+```
+
+The match is deliberately narrow — `e2e`, `smoke`, `test`, `fixture`, `probe` as whole
+words — so a name you chose is never removed. Anything it does not match is yours, and
+you delete it yourself.
+
+### The demo league is not NBA data
+
+`python -m app.cli seed-demo` builds a synthetic league for the end-to-end suite. Team
+identity comes from `nba_api`'s bundled static table; every other row is generated and
+stamped `source_provider="demo_seed"`. The seeder refuses to run against a database that
+already holds `nba_api` rows, so it cannot mix with real data.

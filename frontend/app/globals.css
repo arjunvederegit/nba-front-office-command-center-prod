@@ -33,7 +33,7 @@
   --conditional: #fbbf24;
   --unknown: #7e8da8;
 
-  /* Team context (scoped per subtree by teamThemeVars) */
+  /* Team context (scoped per subtree by `teamVars` in lib/teamIdentity.ts) */
   --team-primary: #334155;
   --team-secondary: #64748b;
   --team-bright: #94a3b8;

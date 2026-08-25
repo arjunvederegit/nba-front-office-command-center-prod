@@ -1,4 +1,4 @@
-"""Normalized TradeLab schema.
+"""Normalized RosterLab schema.
 
 Conventions
 - Internal primary keys are UUID strings; external provider identifiers (NBA.com team
@@ -190,6 +190,41 @@ class TeamSeasonStats(Base, ProvenanceMixin):
     team: Mapped[Team] = relationship(lazy="joined")
 
 
+class SeasonCalendar(Base, ProvenanceMixin):
+    """The dates a season was actually played, one row per season.
+
+    It exists because a trade has to be described by production that existed when it was
+    made, and the month a trade falls in does not settle that. Three cases in the ten
+    ingested seasons decide it and none of them is a corner case:
+
+    - **The 2020-21 season began 22 December 2020.** Thirty-three trades were made in
+      November 2020 — draft night and the free-agency window that followed. Reading the
+      month alone calls those in-season and describes them by 2020-21 production that had
+      not been played yet.
+    - **Draft-night trades sit on the upcoming season's page.** Basketball-Reference lists
+      the 2024 draft under 2024-25, so twelve June-2024 trades carry that season label
+      while the season they should be described by is 2023-24.
+    - **Early-October trades are preseason.** Ten of them across the corpus, the earliest
+      on 1 October, against first games that fall between 22 October and 25 October.
+
+    So the season boundary is ingested rather than assumed: `first_game_date` and
+    `last_game_date` come from `LeagueGameLog`, the same provider every other season fact
+    here comes from, and `services/comparables.feature_season_for` reads them.
+    """
+
+    __tablename__ = "season_calendar"
+    __table_args__ = (UniqueConstraint("season", name="uq_season_calendar"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
+    season: Mapped[str] = mapped_column(String(10), index=True, unique=True)
+    #: First and last REGULAR-SEASON game. The play-in and the playoffs are deliberately
+    #: outside the window: a trade cannot be made during them, so they would only widen
+    #: the in-season band without ever changing an answer.
+    first_game_date: Mapped[date] = mapped_column(Date)
+    last_game_date: Mapped[date] = mapped_column(Date)
+    game_count: Mapped[int] = mapped_column(Integer)
+
+
 class Standing(Base, ProvenanceMixin):
     __tablename__ = "standings"
     __table_args__ = (UniqueConstraint("team_id", "season", name="uq_standing"),)
@@ -218,7 +253,10 @@ class Contract(Base, ProvenanceMixin):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     player_id: Mapped[str] = mapped_column(ForeignKey("players.id"), index=True)
-    contract_type: Mapped[str] = mapped_column(String(30), default="standard")
+    # Nullable: NULL means the provider does not report contract type. A default of
+    # "standard" asserted that every contract was standard, which flipped ROSTER_SIZE
+    # from (warning, medium) to (pass, high) on data nobody had (C9).
+    contract_type: Mapped[str | None] = mapped_column(String(30), nullable=True, default=None)
     signed_date: Mapped[date | None] = mapped_column(Date)
     no_trade_clause: Mapped[bool | None] = mapped_column(Boolean)
     source_name: Mapped[str] = mapped_column(String(100))
@@ -265,11 +303,105 @@ class Transaction(Base, ProvenanceMixin):
     occurred_on: Mapped[date | None] = mapped_column(Date)
 
 
+class HistoricalTrade(Base, ProvenanceMixin):
+    """A completed NBA trade, as a secondary provider reported it.
+
+    Separate from `TradeProposal` on purpose: a proposal is something a user built and
+    this is something that happened. They share no lifecycle, no editability and no
+    identity, and folding the two into one table would make "did this trade occur?" a
+    column rather than a table.
+
+    `n_teams` is the source's own count, cross-checked against the distinct teams the
+    legs name. The two agree on all 565 trades in the ten-season corpus, and the importer
+    files a data-quality warning where they would not.
+    """
+
+    __tablename__ = "historical_trades"
+    __table_args__ = (
+        UniqueConstraint("source_provider", "source_record_id", name="uq_historical_trade"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
+    season: Mapped[str] = mapped_column(String(10), index=True)
+    transaction_date: Mapped[date] = mapped_column(Date, index=True)
+    n_teams: Mapped[int] = mapped_column(Integer)
+    #: The source's sentence, flattened to text and kept verbatim. Everything derived
+    #: below can be checked against it by a person.
+    source_text: Mapped[str] = mapped_column(Text)
+    #: The source's trailing notes — pick conditions and trade-exception sentences — kept
+    #: verbatim for the same reason.
+    notes_text: Mapped[str | None] = mapped_column(Text)
+    #: Asset phrases the grammar did not recognize. Kept rather than dropped: a trade with
+    #: an unreadable leg is still a real trade, and pretending the leg was empty is how a
+    #: retrieval engine ends up comparing against a deal that never happened.
+    unparsed_assets: Mapped[list] = mapped_column(JSON, default=list)
+    #: Teams the notes say received a trade exception, resolved against this trade's own
+    #: participants. A city naming two participants (Los Angeles) resolves to neither.
+    trade_exception_team_ids: Mapped[list] = mapped_column(JSON, default=list)
+    trade_exception_unresolved: Mapped[list] = mapped_column(JSON, default=list)
+
+    assets: Mapped[list["HistoricalTradeAsset"]] = relationship(
+        back_populates="trade", lazy="selectin", cascade="all, delete-orphan"
+    )
+
+
+class HistoricalTradeAsset(Base, TimestampMixin):
+    """One asset moving one way in a historical trade.
+
+    Direction is stored per asset rather than per team, because a three-team trade has
+    legs in both directions between the same pair and a per-team representation cannot
+    express that. `from_team_id` / `to_team_id` are nullable only so an unresolvable
+    franchise abbreviation is recorded as unresolved instead of silently dropped; the
+    abbreviations the source printed are always kept.
+    """
+
+    __tablename__ = "historical_trade_assets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
+    trade_id: Mapped[str] = mapped_column(ForeignKey("historical_trades.id"), index=True)
+    asset_type: Mapped[str] = mapped_column(String(20))  # player | pick | cash
+    from_team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"))
+    to_team_id: Mapped[str | None] = mapped_column(ForeignKey("teams.id"))
+    from_abbreviation: Mapped[str] = mapped_column(String(10))
+    to_abbreviation: Mapped[str] = mapped_column(String(10))
+
+    # --- player legs ---
+    player_id: Mapped[str | None] = mapped_column(ForeignKey("players.id"))
+    #: The name the source printed. Retained even when resolution succeeds, so a wrong
+    #: match is visible rather than hidden behind this database's spelling.
+    player_name: Mapped[str | None] = mapped_column(String(120))
+    #: Basketball-Reference's own player id. Not a RosterLab identity — kept so a
+    #: resolution can be re-checked against the source rather than only against a name.
+    source_player_slug: Mapped[str | None] = mapped_column(String(20))
+    #: How the name became a player here: nba_player_id | exact_name | unaccented |
+    #: suffix_insensitive | *+season | ambiguous | none. Never blank on a player leg.
+    resolution_method: Mapped[str | None] = mapped_column(String(30))
+    via_draft_rights: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # --- pick legs ---
+    draft_year: Mapped[int | None] = mapped_column(Integer)
+    round_number: Mapped[int | None] = mapped_column(Integer)
+    #: unconditional | protected | swap | conditional — the same vocabulary
+    #: `draft_picks.conveyance` uses.
+    conveyance: Mapped[str | None] = mapped_column(String(20))
+    note_text: Mapped[str | None] = mapped_column(Text)
+    #: True when the trade moved more than one pick with this year and round, so the
+    #: source's note could not be bound to exactly one of them. The note is attached to
+    #: both rather than assigned to one by guessing.
+    note_binding_ambiguous: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Who the pick became, where the source says so. Never a traded player.
+    later_selected: Mapped[str | None] = mapped_column(String(120))
+
+    trade: Mapped[HistoricalTrade] = relationship(back_populates="assets")
+    player: Mapped[Player | None] = relationship(lazy="joined")
+
+
 class DraftPick(Base, ProvenanceMixin):
     """Verified pick ownership requires an authoritative provider; hypothetical picks
     used in trade construction live in trade_assets with is_hypothetical=True."""
 
     __tablename__ = "draft_picks"
+    __table_args__ = (Index("ix_draft_picks_year_round", "draft_year", "round_number"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     original_team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"))
@@ -278,6 +410,13 @@ class DraftPick(Base, ProvenanceMixin):
     round_number: Mapped[int] = mapped_column(Integer)
     protections: Mapped[str | None] = mapped_column(Text)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: How the pick conveys: unconditional | protected | swap | conditional | unparsed.
+    #: NULL means the row predates the distinction, not that it is unconditional (R5-2).
+    conveyance: Mapped[str | None] = mapped_column(String(20))
+    #: The source's own sentence, kept verbatim. A swap clause that this codebase cannot
+    #: reduce to a rule is still readable by a person, and paraphrasing it would lose the
+    #: only authoritative statement of the terms.
+    source_text: Mapped[str | None] = mapped_column(Text)
 
 
 class LeagueCapParameters(Base, TimestampMixin):
@@ -345,6 +484,11 @@ class DataQualityIssue(Base, TimestampMixin):
 
 class ModelVersion(Base, TimestampMixin):
     __tablename__ = "model_versions"
+    # A version string must identify a model. Before R1-9 it was a training-run
+    # timestamp, so all three models trained in one run shared `v202607210204` and the
+    # table held it three times per model. Versions are content hashes now, and the
+    # constraint keeps them that way.
+    __table_args__ = (UniqueConstraint("model_name", "version", name="uq_model_version"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     model_name: Mapped[str] = mapped_column(String(50), index=True)
@@ -369,7 +513,10 @@ class PlayerImpactEstimate(Base, TimestampMixin):
     player_id: Mapped[str] = mapped_column(ForeignKey("players.id"), index=True)
     season: Mapped[str] = mapped_column(String(10), index=True)
     model_version_id: Mapped[str] = mapped_column(ForeignKey("model_versions.id"))
-    tei: Mapped[float] = mapped_column(Float)  # TradeLab Estimated Impact, per-100 scale
+    #: RosterLab Estimated Impact, per-100 scale. The acronym predates the rename from
+    #: TradeLab and is kept because it names this column and every API field built on
+    #: it; see `analytics/impact.py`.
+    tei: Mapped[float] = mapped_column(Float)
     tei_offense: Mapped[float | None] = mapped_column(Float)
     tei_defense: Mapped[float | None] = mapped_column(Float)
     tei_low: Mapped[float | None] = mapped_column(Float)  # bootstrap 10th percentile
@@ -388,9 +535,14 @@ class PlayerArchetype(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_pk)
     player_id: Mapped[str] = mapped_column(ForeignKey("players.id"), index=True)
     season: Mapped[str] = mapped_column(String(10))
-    cluster_id: Mapped[int] = mapped_column(Integer)
+    # `role_id` comes from `archetypes.ROLE_ID`, a frozen append-only map, so the number
+    # is stable across retrains. It replaced a k-means `cluster_id`, which was an
+    # arbitrary index that could change meaning on every run (R4-3).
+    role_id: Mapped[int] = mapped_column(Integer)
     label: Mapped[str] = mapped_column(String(50))
-    distances: Mapped[dict] = mapped_column(JSON, default=dict)
+    # The values that determined the branch — "why this role" — replacing a centroid
+    # distance that a rule chain does not have.
+    role_inputs: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class TeamNeed(Base, TimestampMixin):

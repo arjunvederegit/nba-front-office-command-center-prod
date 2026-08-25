@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest! TradeLab is a portfolio project, but issues and PRs are
+Thanks for your interest! RosterLab is a portfolio project, but issues and PRs are
 welcome.
 
 ## Ground rules (the honesty bar)

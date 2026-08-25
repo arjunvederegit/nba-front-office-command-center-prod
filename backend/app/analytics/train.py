@@ -4,11 +4,13 @@ Every trained artifact is recorded in model_versions with its algorithm, feature
 target, validation metrics, and training window. Random seeds are fixed for
 reproducibility."""
 
+import hashlib
+import json
 import subprocess
 from datetime import UTC, datetime
 from typing import Any
 
-import joblib
+import numpy as np
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +19,7 @@ from app.config import BACKEND_DIR, get_settings
 from app.core.logging import get_logger
 from app.db.models import (
     ModelVersion,
+    Player,
     PlayerArchetype,
     PlayerImpactEstimate,
     RosterEntry,
@@ -28,7 +31,8 @@ from .archetypes import fit_archetypes
 from .availability import availability_from_history
 from .features import build_player_season_features, recency_weighted_features
 from .impact import TEI_SCALE, score_players, train_impact_models
-from .projection import calibrate_wins_per_net_rating
+from .picks import build_draft_outcomes, fit_pick_value_curve, fit_rank_persistence
+from .projection import calibrate_tei_to_net_rating, calibrate_wins_per_net_rating
 
 logger = get_logger(__name__)
 ARTIFACT_DIR = BACKEND_DIR.parent / "models" / "artifacts"
@@ -50,6 +54,44 @@ def _code_commit() -> str | None:
         return None
 
 
+def _content_version(
+    name: str, algorithm: str, training_period: str, features: list[str], metrics: dict
+) -> str:
+    """A version string that identifies the model, not the minute it was trained.
+
+    `datetime.now().strftime("v%Y%m%d%H%M")` gave all three models trained in one run the
+    *same* string, so `model_versions` held `v202607210204` three times over and a
+    version string could not identify a model. Hashing the model's own content makes the
+    string unique per model and stable across retrains that change nothing.
+    """
+    payload = json.dumps(
+        {
+            "name": name,
+            "algorithm": algorithm,
+            "training_period": training_period,
+            "features": sorted(features),
+            # Validation metrics move whenever the data moves, which is exactly when a
+            # retrain deserves a new identity.
+            "metrics": _stable(metrics),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:12]
+    return f"{datetime.now(UTC).strftime('%Y%m%d')}-{digest}"
+
+
+def _stable(value: Any) -> Any:
+    """Round floats so an identical retrain does not produce a new hash from noise."""
+    if isinstance(value, float):
+        return round(value, 6)
+    if isinstance(value, dict):
+        return {k: _stable(v) for k, v in sorted(value.items())}
+    if isinstance(value, list):
+        return [_stable(v) for v in value]
+    return value
+
+
 def _register_model(
     db: Session,
     name: str,
@@ -65,6 +107,22 @@ def _register_model(
         select(ModelVersion).where(ModelVersion.model_name == name, ModelVersion.is_active)
     ).all():
         old.is_active = False
+    version = _content_version(name, algorithm, training_period, features, metrics)
+    # Retraining on unchanged data produces the same content hash; reactivate that row
+    # rather than inserting a duplicate (the table has no unique constraint today, and
+    # gains one in the same release).
+    existing = db.scalar(
+        select(ModelVersion).where(
+            ModelVersion.model_name == name, ModelVersion.version == version
+        )
+    )
+    if existing is not None:
+        existing.is_active = True
+        existing.trained_at = datetime.now(UTC)
+        existing.validation_metrics = metrics
+        existing.artifact_path = artifact_path
+        db.flush()
+        return existing
     model = ModelVersion(
         model_name=name,
         version=version,
@@ -83,6 +141,145 @@ def _register_model(
     return model
 
 
+def _gc_superseded_estimates(db: Session) -> int:
+    """Delete impact estimates belonging to inactive model versions.
+
+    Nothing ever removed them, so every `make train && make score` added a full copy:
+    1,536 rows for 512 players across three versions. Only the active version is ever
+    read (`EvaluationService._impacts` filters on it), so the rest are dead weight that
+    grows without bound.
+    """
+    active_ids = {
+        m.id
+        for m in db.scalars(
+            select(ModelVersion).where(
+                ModelVersion.model_name == "player_impact", ModelVersion.is_active
+            )
+        ).all()
+    }
+    stale = db.scalars(
+        select(PlayerImpactEstimate).where(
+            PlayerImpactEstimate.model_version_id.notin_(active_ids or {""})
+        )
+    ).all()
+    for row in stale:
+        db.delete(row)
+    if stale:
+        logger.info("garbage-collected %s superseded impact estimates", len(stale))
+    return len(stale)
+
+
+def _team_tei_transitions(
+    db: Session,
+    season_df: pd.DataFrame,
+    seasons: list[str],
+    net_by_team_season: dict[tuple[str, str], float],
+) -> pd.DataFrame:
+    """Team-season changes in minutes-weighted TEI, paired with changes in net rating.
+
+    Scored per season with the same season-z construction the index is defined on, so the
+    fitted coefficient is in the units production serves (C5). Team membership comes from
+    `player_season_stats.team_id`, which is the only per-season roster record held.
+    """
+    from .impact import add_zscores, baseline_index
+
+    scored = add_zscores(season_df.copy())
+    scored["season_tei"] = baseline_index(scored)
+
+    # Per-season membership now arrives on the feature frame itself: R4 added `team_id`
+    # to `build_player_season_features` so the defensive differential could be measured
+    # against a player's teammates. This used to re-query `player_season_stats` and merge
+    # it back, which after that change collided on the column name and produced
+    # `team_id_x`/`team_id_y` — the re-query is redundant, not merely duplicated.
+    if "team_id" not in scored.columns:
+        return pd.DataFrame()
+    scored = scored[scored["team_id"].notna()]
+    if scored.empty:
+        return pd.DataFrame()
+
+    scored["player_minutes"] = (
+        pd.to_numeric(scored.get("total_minutes"), errors="coerce").fillna(0.0).clip(lower=1e-9)
+    )
+    grouped = (
+        scored.dropna(subset=["team_id"])
+        .groupby(["team_id", "season"])
+        .apply(
+            lambda t: np.average(t["season_tei"], weights=t["player_minutes"]),
+            include_groups=False,
+        )
+        .rename("team_tei")
+        .reset_index()
+    )
+    rows = []
+    for team_id, grp in grouped.groupby("team_id"):
+        grp = grp[grp["season"].isin(seasons)].sort_values("season")
+        for (_, a), (_, b) in zip(grp.iloc[:-1].iterrows(), grp.iloc[1:].iterrows(), strict=False):
+            net_a = net_by_team_season.get((team_id, a["season"]))
+            net_b = net_by_team_season.get((team_id, b["season"]))
+            if net_a is None or net_b is None:
+                continue
+            rows.append(
+                {
+                    "team_id": team_id,
+                    "transition": f"{a['season']}->{b['season']}",
+                    "d_tei": b["team_tei"] - a["team_tei"],
+                    "d_net": net_b - net_a,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _fit_pick_curve(db: Session, season_df: pd.DataFrame, seasons: list[str]) -> dict[str, Any]:
+    """Fit the pick-value curve and the rank drift its landing-slot support uses.
+
+    Kept beside the other calibrations so a single `make train` produces every fitted
+    quantity the serving path reads, and so the curve cannot drift away from the impact
+    scale it is denominated in: it is built from the same season-z TEI construction.
+    """
+    from .impact import add_zscores, baseline_index
+    from .picks import DEFAULT_ESTIMATION_CLASSES
+
+    window = season_df[season_df["season"].isin(seasons)].copy()
+    if window.empty:
+        return {"calibrated": False, "reason": "no player-seasons in the window"}
+    scored = add_zscores(window.copy())
+    drafted = pd.DataFrame(
+        [
+            {"player_id": p.id, "draft_year": p.draft_year, "draft_number": p.draft_number}
+            for p in db.scalars(
+                select(Player).where(
+                    Player.draft_year.is_not(None), Player.draft_number.is_not(None)
+                )
+            ).all()
+        ]
+    )
+    if drafted.empty:
+        return {"calibrated": False, "reason": "no player carries draft position"}
+    outcomes = build_draft_outcomes(
+        window, baseline_index(scored), drafted, DEFAULT_ESTIMATION_CLASSES
+    )
+    metrics = fit_pick_value_curve(outcomes)
+
+    standings = pd.DataFrame(
+        [
+            {"team_id": s.team_id, "season": s.season, "win_pct": s.win_pct}
+            for s in db.scalars(select(Standing)).all()
+        ]
+    )
+    metrics["rank_persistence"] = fit_rank_persistence(standings)
+    # Cells the estimation grid could not fill: a drafted player who never appeared could
+    # be a zero or a selection that was never made, and the two are indistinguishable
+    # here. Reported, never imputed.
+    if not outcomes.empty:
+        expected = len(DEFAULT_ESTIMATION_CLASSES) * 60
+        metrics["grid_cells_present"] = int(len(outcomes))
+        metrics["grid_cells_expected"] = expected
+        first_round = outcomes[outcomes["slot"] <= 30]
+        metrics["first_round_cells_present"] = int(len(first_round))
+        metrics["first_round_cells_expected"] = len(DEFAULT_ESTIMATION_CLASSES) * 30
+    return metrics
+
+
 def train_all(db: Session) -> dict[str, Any]:
     settings = get_settings()
     seasons = settings.history_season_list
@@ -95,12 +292,9 @@ def train_all(db: Session) -> dict[str, Any]:
 
     result = train_impact_models(season_df, seasons)
 
+    # No artifact: the index is fixed documented weights, so the model IS its
+    # coefficients and they are recorded below. The retired ridge needed a pickle.
     artifact_path = None
-    if result.ridge is not None:
-        ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-        artifact_file = ARTIFACT_DIR / f"impact_ridge_{version}.joblib"
-        joblib.dump({"model": result.ridge, "features": result.feature_names}, artifact_file)
-        artifact_path = str(artifact_file.relative_to(BACKEND_DIR.parent))
 
     impact_model = _register_model(
         db,
@@ -168,6 +362,8 @@ def train_all(db: Session) -> dict[str, Any]:
                 setattr(existing, k, v)
         written += 1
 
+    orphaned = _gc_superseded_estimates(db)
+
     # Archetypes
     assignments, archetype_meta = fit_archetypes(scored)
     archetype_written = 0
@@ -176,13 +372,20 @@ def train_all(db: Session) -> dict[str, Any]:
             db,
             name="player_archetype",
             version=version,
-            algorithm=f"k-means (k={archetype_meta['n_clusters']})",
+            algorithm=archetype_meta["method"],
             training_period=training_period,
             features=archetype_meta["features"],
             target=None,
+            # No silhouette: nothing is fitted, so there is no clustering quality to
+            # report. What replaces it is the non-degeneracy evidence — how the labels
+            # are actually distributed, and the league cut points that produced them.
             metrics={
-                "silhouette": archetype_meta["silhouette"],
-                "labels": archetype_meta["labels"],
+                "chain_version": archetype_meta["chain_version"],
+                "distribution": archetype_meta["distribution"],
+                "herfindahl": archetype_meta["herfindahl"],
+                "max_share": archetype_meta["max_share"],
+                "unclassified": archetype_meta["unclassified"],
+                "thresholds": archetype_meta["thresholds"],
             },
             artifact_path=None,
         )
@@ -196,9 +399,9 @@ def train_all(db: Session) -> dict[str, Any]:
             values = {
                 "player_id": row["player_id"],
                 "season": settings.current_season,
-                "cluster_id": int(row["cluster_id"]),
+                "role_id": int(row["role_id"]),
                 "label": str(row["label"]),
-                "distances": {"own_cluster": round(float(row["distance"]), 3)},
+                "role_inputs": {},
             }
             if existing_archetype is None:
                 db.add(PlayerArchetype(**values))
@@ -209,6 +412,7 @@ def train_all(db: Session) -> dict[str, Any]:
 
     # Wins-per-net-rating calibration from ingested team seasons
     team_rows = []
+    net_by_team_season: dict[tuple[str, str], float] = {}
     for stats in db.scalars(
         select(TeamSeasonStats).where(TeamSeasonStats.stat_type == "advanced")
     ).all():
@@ -218,9 +422,29 @@ def train_all(db: Session) -> dict[str, Any]:
             )
         )
         net = (stats.stats or {}).get("NET_RATING")
+        if net is not None:
+            net_by_team_season[(stats.team_id, stats.season)] = float(net)
         if standing is not None and net is not None:
             team_rows.append({"net_rating": float(net), "wins": standing.wins})
     mapping = calibrate_wins_per_net_rating(pd.DataFrame(team_rows))
+
+    # R3-2: the TEI -> net-rating conversion, fitted change-on-change on team
+    # transitions. Registered with its own diagnostics because the coefficient is only
+    # valid for the regressor construction recorded beside it.
+    conversion = calibrate_tei_to_net_rating(
+        _team_tei_transitions(db, season_df, seasons, net_by_team_season)
+    )
+    _register_model(
+        db,
+        name="tei_to_net_rating",
+        version=version,
+        algorithm="OLS on team-season changes (d_net ~ d_teamTEI)",
+        training_period=training_period,
+        features=["team minutes-weighted TEI"],
+        target="change in team net rating",
+        metrics=conversion,
+        artifact_path=None,
+    )
     _register_model(
         db,
         name="team_projection",
@@ -233,9 +457,28 @@ def train_all(db: Session) -> dict[str, Any]:
         artifact_path=None,
     )
 
+    # R5-2: the empirical draft-pick value curve, and the rank drift the landing-slot
+    # support is built from. Registered with the diagnostic that FAILS as well as the
+    # ones that pass — the curve does not significantly beat a round-only rule, and the
+    # model version says so rather than reporting only the flattering figures.
+    pick_curve = _fit_pick_curve(db, season_df, seasons)
+    _register_model(
+        db,
+        name="pick_value_curve",
+        version=version,
+        algorithm="exponential decay in draft slot, fitted on within-class-normalised "
+        "above-replacement window value",
+        training_period=training_period,
+        features=["draft_number", "draft_year"],
+        target="relative above-replacement window value (class mean = 1)",
+        metrics=pick_curve,
+        artifact_path=None,
+    )
+
     db.commit()
     summary = {
-        "version": version,
+        "version": impact_model.version,
+        "superseded_estimates_removed": orphaned,
         "impact": {
             "chosen": result.chosen_model,
             "players_scored": written,
@@ -243,7 +486,8 @@ def train_all(db: Session) -> dict[str, Any]:
         },
         "archetypes": {
             "players_labeled": archetype_written,
-            "silhouette": archetype_meta.get("silhouette"),
+            "max_label_share": archetype_meta.get("max_share"),
+            "unclassified": archetype_meta.get("unclassified"),
         },
         "wins_mapping": mapping,
     }

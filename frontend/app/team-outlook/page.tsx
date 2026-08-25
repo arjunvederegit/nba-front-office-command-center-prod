@@ -12,8 +12,9 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import { count } from "@/lib/format";
 import { teamIdentity } from "@/lib/teamIdentity";
-import { useFavoriteTeam } from "@/lib/teamTheme";
+import { useFavoriteTeam } from "@/lib/favoriteTeam";
 import type { Team } from "@/lib/types";
 import { TeamLogo } from "@/components/media";
 import { EmptyState, ErrorState, PageHeader, Skeleton, SourceRail } from "@/components/ui";
@@ -91,8 +92,8 @@ export default function TeamOutlookIndex() {
           teams && (
             <span className="eyebrow">
               {filtered.length === teams.length
-                ? `${teams.length} franchises`
-                : `${filtered.length} of ${teams.length} franchises`}
+                ? count(teams.length, "franchise", "franchises")
+                : `${filtered.length} of ${count(teams.length, "franchise", "franchises")}`}
             </span>
           )
         }

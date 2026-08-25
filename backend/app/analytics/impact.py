@@ -1,26 +1,40 @@
-"""TradeLab Estimated Impact (TEI).
+"""RosterLab Estimated Impact (TEI).
+
+**The acronym is historical and kept on purpose.** It was coined when this product was
+called TradeLab, and it names the `player_impact_estimates.tei` column, the `tei` field on
+every API response, and every `ModelVersion` registered against it. Renaming it would be a
+migration and a breaking API change in exchange for nothing a reader gains, so the
+expansion is corrected everywhere it is written out and the three letters stay.
 
 TEI is this project's own portfolio-model estimate of per-100-possession player impact.
 It is NOT RAPTOR, EPM, LEBRON, BPM, or any proprietary metric, and it is documented as
 an estimate with uncertainty (see docs/model-card-player-impact.md).
 
-Two candidates are trained and compared with time-aware validation (no row-level
-random splits across seasons — transitions only ever predict forward):
+**The transparent weighted z-score index is the production metric (R3-1).** A ridge
+challenger was trained and served until R3-1 on the strength of a held-out MAE of 0.637
+against 0.645 for the index — a comparison on a *player-level next-season proxy*, which
+is not the question the product asks of it. Measured at the level it is actually used,
+team impact, the ridge has no validity at all:
 
-1. Baseline: a transparent weighted z-score index (documented fixed weights).
-2. Challenger: ridge regression predicting a next-season box-derived impact proxy
-   (minutes-weighted blend of z(PIE) and z(NET_RATING)) from current-season features.
+    net_rating ~ team TEI (90 team-seasons)   index R2 = 0.7505   ridge R2 = 0.0039
+    change-on-change (60 transitions)         index R2 = 0.6236   ridge R2 = 0.0030
 
-The production choice is made on held-out MAE and documented in model_versions."""
+The ridge is also a volume metric rather than an impact one, and — decisively for R3-2 —
+it is not computable per season from stored artifacts, so a conversion coefficient could
+only ever be fitted on n = 30 of a metric carrying no signal. It is retired, not
+demoted: nothing in the serving path can select it.
 
-from dataclasses import dataclass
+Validation is still time-aware (no row-level random splits across seasons; transitions
+only ever predict forward) and still reports the index against a persistence baseline,
+because "better than assuming last season repeats" remains a claim worth checking."""
+
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error
 
-from .features import RANDOM_SEED, zscore_by_season
+from .features import season_moments, zscore_against, zscore_by_season
 
 # Transparent baseline index weights (documented in docs/methodology.md).
 INDEX_WEIGHTS: dict[str, float] = {
@@ -38,24 +52,6 @@ INDEX_WEIGHTS: dict[str, float] = {
 
 OFFENSE_KEYS = ["z_pts_per75", "z_TS_PCT", "z_AST_PCT", "z_TM_TOV_PCT", "z_USG_PCT", "z_OREB_PCT"]
 DEFENSE_KEYS = ["z_DREB_PCT", "z_stl_per_min", "z_blk_per_min"]
-
-RIDGE_FEATURES = [
-    "z_pts_per75",
-    "z_TS_PCT",
-    "z_USG_PCT",
-    "z_AST_PCT",
-    "z_TM_TOV_PCT",
-    "z_OREB_PCT",
-    "z_DREB_PCT",
-    "z_stl_per_min",
-    "z_blk_per_min",
-    "z_fg3a_rate",
-    "z_fta_rate",
-    "z_MIN",
-    "z_PIE",
-    "z_NET_RATING",
-    "AGE",
-]
 
 Z_SOURCE_COLS = [
     "pts_per75",
@@ -75,6 +71,11 @@ Z_SOURCE_COLS = [
 ]
 
 TEI_SCALE = 2.5  # index points per z-unit; elite seasons land around +5
+
+# R3-4: sigma^2 = SIGMA_INTERCEPT + SIGMA_PER_MINUTE / total_minutes, estimated from 921
+# same-player consecutive-season pairs on the ingested history. See `sigma_for_minutes`.
+SIGMA_INTERCEPT = 0.0326
+SIGMA_PER_MINUTE = 240.9
 
 
 def add_zscores(df: pd.DataFrame) -> pd.DataFrame:
@@ -117,8 +118,10 @@ class ImpactTrainingResult:
     algorithm: str
     validation: dict
     coefficients: dict
-    ridge: Ridge | None
     feature_names: list[str]
+    #: Reference-season moments the served window must be z-scored against (C5).
+    reference_season: str = ""
+    reference_moments: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 
 def _make_transitions(df: pd.DataFrame, seasons: list[str]) -> pd.DataFrame:
@@ -134,92 +137,110 @@ def _make_transitions(df: pd.DataFrame, seasons: list[str]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def sigma_for_minutes(total_minutes: float) -> float:
+    """Per-player TEI uncertainty as a function of playing time (R3-4).
+
+    Estimated from 921 same-player consecutive-season pairs on the ingested history:
+    observed per-season variance, binned by the smaller of the two seasons' minutes and
+    regressed on 1/minutes, gives
+
+        sigma^2 = 0.0326 + 240.9 / minutes
+
+    which is 0.72 at 500 minutes and 0.36 at 2500. It replaces a **constant 2.462**
+    derived from the retired ridge's residual spread — a band that was both wrong in
+    level and identical for a 2,800-minute starter and a 300-minute rookie.
+
+    A framing hazard worth stating where the numbers are shown: the new bands are
+    *narrower*, which reads as overconfidence when it is the opposite. And this quantity
+    is season-to-season variability, which is the right input for a forward-looking
+    interval and the wrong thing to call "measurement error".
+    """
+    minutes = max(float(total_minutes or 0.0), 1.0)
+    return float(np.sqrt(max(SIGMA_INTERCEPT + SIGMA_PER_MINUTE / minutes, 1e-9)))
+
+
 def train_impact_models(df: pd.DataFrame, seasons: list[str]) -> ImpactTrainingResult:
-    """Time-aware training: earliest transition trains, latest transition validates."""
+    """Time-aware validation of the transparent index against a persistence baseline.
+
+    No model is selected here — the index is the metric (R3-1). What is still worth
+    checking, and is still checked, is whether it beats "assume last season repeats".
+    """
     df = add_zscores(df.copy())
     df["target"] = build_target(df)
     df["baseline_tei"] = baseline_index(df)
 
     transitions = _make_transitions(df, seasons)
-    features = [f for f in RIDGE_FEATURES if f in transitions.columns]
+    features = sorted(INDEX_WEIGHTS)
 
     validation: dict = {"note": "insufficient transitions for supervised validation"}
-    ridge: Ridge | None = None
-    chosen = "baseline_index"
-    algorithm = "weighted z-score index"
-    coefficients: dict = dict(INDEX_WEIGHTS)
 
     if not transitions.empty and transitions["transition"].nunique() >= 2:
         transition_names = sorted(transitions["transition"].unique())
-        train_mask = transitions["transition"].isin(transition_names[:-1])
         valid_mask = transitions["transition"] == transition_names[-1]
-        X_train = transitions.loc[train_mask, features].fillna(0.0).to_numpy()
-        y_train = transitions.loc[train_mask, "target_next"].to_numpy()
-        X_valid = transitions.loc[valid_mask, features].fillna(0.0).to_numpy()
         y_valid = transitions.loc[valid_mask, "target_next"].to_numpy()
-
-        ridge = Ridge(alpha=10.0, random_state=RANDOM_SEED)
-        ridge.fit(X_train, y_train)
-        ridge_pred = ridge.predict(X_valid)
-
-        # Baselines: persistence (this season's target repeats) and the index.
         persistence_pred = transitions.loc[valid_mask, "target"].fillna(0.0).to_numpy()
         index_pred = (transitions.loc[valid_mask, "baseline_tei"] / TEI_SCALE).to_numpy()
 
-        residual_std = float(np.std(y_valid - ridge.predict(X_valid)))
         validation = {
             "train_transition": transition_names[:-1],
             "validation_transition": transition_names[-1],
-            "n_train": int(train_mask.sum()),
             "n_valid": int(valid_mask.sum()),
-            "ridge_mae": float(mean_absolute_error(y_valid, ridge_pred)),
-            "persistence_mae": float(mean_absolute_error(y_valid, persistence_pred)),
             "index_mae": float(mean_absolute_error(y_valid, index_pred)),
-            "ridge_residual_std": residual_std,
+            "persistence_mae": float(mean_absolute_error(y_valid, persistence_pred)),
+            "index_beats_persistence": bool(
+                mean_absolute_error(y_valid, index_pred)
+                <= mean_absolute_error(y_valid, persistence_pred)
+            ),
             "target": "next-season 0.6*z(PIE) + 0.4*z(NET_RATING), minutes-weighted z within season",
+            "band_model": f"sigma^2 = {SIGMA_INTERCEPT} + {SIGMA_PER_MINUTE}/minutes (R3-4)",
+            "retired_ridge_note": (
+                "A ridge challenger was served until R3-1 on a player-level next-season MAE "
+                "of 0.637 vs 0.645. At team level, which is where it was used, it explained "
+                "R2 = 0.0039 of net rating against the index's 0.7505. Retired."
+            ),
         }
-        if validation["ridge_mae"] <= min(validation["persistence_mae"], validation["index_mae"]):
-            chosen = "ridge"
-            algorithm = "ridge regression (alpha=10, time-aware split)"
-            coefficients = dict(zip(features, [float(c) for c in ridge.coef_], strict=False))
 
+    reference = seasons[-1] if seasons else ""
     return ImpactTrainingResult(
-        chosen_model=chosen,
-        algorithm=algorithm,
+        chosen_model="baseline_index",
+        algorithm="weighted z-score index (transparent, fixed weights)",
         validation=validation,
-        coefficients=coefficients,
-        ridge=ridge if chosen == "ridge" else None,
+        coefficients=dict(INDEX_WEIGHTS),
         feature_names=features,
+        reference_season=reference,
+        reference_moments=season_moments(df, reference, Z_SOURCE_COLS) if reference else {},
     )
 
 
 def score_players(
     weighted: pd.DataFrame, result: ImpactTrainingResult, season_df: pd.DataFrame
 ) -> pd.DataFrame:
-    """Score recency-weighted current-player features with the chosen model.
+    """Score the recency-weighted window on the SAME scale the index is defined on.
 
-    Returns TEI on the index scale plus offense/defense sub-components and an
-    uncertainty band from validation residuals (documented approximation)."""
-    # z-score the weighted frame against the latest season's distribution
+    The window frame used to be z-scored against itself (`season = "window"`), which put
+    served TEI on a different scale from every fitted quantity — team-level correlation
+    between the two constructions was r = 0.387, and the two rescalings that implied
+    disagreed by 2.6x. Serving against the reference season's moments removes the
+    mismatch instead of trying to correct for it (C5).
+    """
     weighted = weighted.copy()
-    weighted["season"] = "window"
     weighted["total_minutes"] = weighted["total_minutes_window"]
-    weighted = add_zscores(weighted)
-
-    if result.chosen_model == "ridge" and result.ridge is not None:
-        X = weighted[list(result.feature_names)].fillna(0.0).to_numpy()
-        tei = result.ridge.predict(X) * TEI_SCALE
+    if result.reference_moments:
+        weighted = zscore_against(weighted, result.reference_moments)
     else:
-        tei = baseline_index(weighted).to_numpy()
+        # No reference (single-season database): fall back to the window's own
+        # distribution and say so, rather than silently serving an unanchored scale.
+        weighted["season"] = "window"
+        weighted = add_zscores(weighted)
 
-    weighted["tei"] = tei
+    weighted["tei"] = baseline_index(weighted).to_numpy()
     weighted["tei_offense"] = component_index(weighted, OFFENSE_KEYS)
     weighted["tei_defense"] = component_index(weighted, DEFENSE_KEYS)
 
-    residual_std = 0.6
-    if isinstance(result.validation, dict) and result.validation.get("ridge_residual_std"):
-        residual_std = float(result.validation["ridge_residual_std"])
-    band = 1.2816 * residual_std * TEI_SCALE  # 10th/90th percentile under normal residuals
+    # R3-4: one band per player, from that player's own playing time.
+    sigma = weighted["total_minutes_window"].apply(sigma_for_minutes) * TEI_SCALE
+    band = 1.2816 * sigma  # 10th/90th percentile under normal residuals
+    weighted["tei_sigma"] = sigma
     weighted["tei_low"] = weighted["tei"] - band
     weighted["tei_high"] = weighted["tei"] + band
     return weighted

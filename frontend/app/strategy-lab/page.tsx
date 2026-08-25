@@ -18,17 +18,9 @@ import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import {
-  COMPONENT_EXPLAIN,
-  COMPONENT_LABEL,
-  LEGALITY_EXPLAIN,
-  LEGALITY_LABEL,
-  VERDICT_LABEL,
-  fanVerdict,
-  formatDate,
-  money,
-  pct,
-} from "@/lib/format";
+import { dataHealthSchema, tradeDetailSchema } from "@/lib/schemas";
+import { COMPONENT_EXPLAIN, COMPONENT_LABEL, LEGALITY_EXPLAIN, LEGALITY_LABEL, VERDICT_LABEL, VERDICT_STATUS, count, fanVerdict, formatDate, money, pct } from "@/lib/format";
+import { scenarioOptionLabels } from "@/lib/scenarioLabels";
 import { teamIdentity } from "@/lib/teamIdentity";
 import type {
   ComparisonAlternative,
@@ -66,14 +58,6 @@ type ComponentKey = (typeof COMPONENT_KEYS)[number];
 
 const MAX_SELECTED = 5;
 const MIN_SELECTED = 2;
-
-const VERDICT_STATUS: Record<string, string> = {
-  strong: "pass",
-  mixed: "warning",
-  upside: "info",
-  poor: "fail",
-  unknown: "unavailable",
-};
 
 const TABS = [
   { id: "summary", label: "Summary" },
@@ -204,9 +188,14 @@ export default function StrategyLabPage() {
     queryKey: ["scenarios"],
     queryFn: () => api.get<Scenario[]>("/scenarios"),
   });
+  // Built for the whole list at once — see `lib/scenarioLabels.ts`.
+  const scenarioLabels = useMemo(
+    () => scenarioOptionLabels(scenarios ?? []),
+    [scenarios],
+  );
   const { data: health } = useQuery({
     queryKey: ["data-health"],
-    queryFn: () => api.get<DataHealth>("/data-health"),
+    queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
     staleTime: 120_000,
   });
 
@@ -221,7 +210,7 @@ export default function StrategyLabPage() {
   const detailQueries = useQueries({
     queries: (trades ?? []).map((trade) => ({
       queryKey: ["trade", trade.id],
-      queryFn: () => api.get<TradeDetail>(`/trades/${trade.id}`),
+      queryFn: () => api.get<TradeDetail>(`/trades/${trade.id}`, tradeDetailSchema),
       staleTime: 300_000,
     })),
   });
@@ -288,14 +277,22 @@ export default function StrategyLabPage() {
   const totalWeight = COMPONENT_KEYS.reduce((sum, key) => sum + (weights[key] ?? 0), 0);
 
   /** Live re-ranking of the stored component scores under the slider weights. */
-  const ranked = useMemo(() => {
-    if (!comparison) return [];
-    return comparison.alternatives
-      .map((alt) => ({ alt, score: decisionScore(weights, alt.components) }))
-      .sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+  // A deal that fails a verified rule, or that no component could score, is listed but
+  // never ranked — putting it on the board invites choosing the one that cannot happen.
+  const { ranked, unrankable } = useMemo(() => {
+    if (!comparison) return { ranked: [], unrankable: [] as ComparisonAlternative[] };
+    const scored: { alt: ComparisonAlternative; score: number }[] = [];
+    const excluded: ComparisonAlternative[] = [];
+    for (const alt of comparison.alternatives) {
+      const score = alt.decision_status === "scored" ? decisionScore(weights, alt.components) : null;
+      if (score === null) excluded.push(alt);
+      else scored.push({ alt, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return { ranked: scored, unrankable: excluded };
   }, [comparison, weights]);
 
-  const leader = ranked.find((entry) => entry.score !== null) ?? null;
+  const leader = ranked[0] ?? null;
 
   /** Plain-English explanation for the current leader, derived only from response data. */
   const explanation = useMemo(() => {
@@ -358,7 +355,9 @@ export default function StrategyLabPage() {
         lede="Line up two to five saved deals, weight them by what your front office actually cares about, and see which one survives the priorities you set."
         meta={
           <>
-            <Badge status="info">{trades ? `${trades.length} saved deals` : "loading deals"}</Badge>
+            <Badge status="info">
+              {trades ? count(trades.length, "saved deal") : "loading deals"}
+            </Badge>
             <Badge status={contractsConfigured ? "pass" : "unavailable"}>
               contracts {contractsConfigured ? "imported" : "not imported"}
             </Badge>
@@ -463,9 +462,13 @@ export default function StrategyLabPage() {
                     className="min-w-0 flex-1 rounded-md border border-line bg-panel2 px-2.5 py-1.5 text-[13px] text-foreground sm:max-w-64"
                   >
                     <option value="">League default weights</option>
-                    {scenarios?.map((scenario) => (
+                    {/* Name alone is not an identity: Team Outlook generates
+                        "BOS — Contend now" every time the button is pressed. Labels are
+                        built for the whole list at once so uniqueness is a property of
+                        the output rather than a hope about the timestamps. */}
+                    {(scenarios ?? []).map((scenario, index) => (
                       <option key={scenario.id} value={scenario.id}>
-                        {scenario.name}
+                        {scenarioLabels[index]}
                       </option>
                     ))}
                   </select>
@@ -502,7 +505,7 @@ export default function StrategyLabPage() {
         </section>
       )}
 
-      {comparison && ranked.length > 0 && (
+      {comparison && ranked.length + unrankable.length > 0 && (
         <>
           <section aria-labelledby="board-heading">
             <SectionHead
@@ -513,6 +516,9 @@ export default function StrategyLabPage() {
             />
             <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
               <div className="min-w-0 space-y-3">
+                {ranked.length === 0 && (
+                  <UnavailableNotice reason="None of the selected deals can be ranked — see the list below for why each one was excluded." />
+                )}
                 {ranked.map(({ alt, score }, index) =>
                   index === 0 ? (
                     <LeaderPanel
@@ -525,6 +531,41 @@ export default function StrategyLabPage() {
                   ) : (
                     <ChallengerRow key={alt.trade_id} alt={alt} score={score} rank={index + 1} />
                   ),
+                )}
+                {unrankable.length > 0 && (
+                  <div className="rounded-lg border border-hairline bg-panel2/40 p-3.5">
+                    <div className="eyebrow text-[0.5625rem] text-unavail">
+                      Not ranked ({unrankable.length})
+                    </div>
+                    <p className="mt-1 text-[12px] leading-snug text-muted">
+                      These deals are on the board but never compete: a deal that fails a
+                      verified rule cannot be executed, and one with no scorable component has
+                      nothing to compare.
+                    </p>
+                    <ul className="mt-2 space-y-1.5">
+                      {unrankable.map((alt) => (
+                        <li
+                          key={alt.trade_id}
+                          className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px]"
+                        >
+                          <Link
+                            href={`/trades/${alt.trade_id}`}
+                            className="min-w-0 flex-1 truncate text-foreground hover:text-signal"
+                          >
+                            {alt.name}
+                          </Link>
+                          <Badge status={alt.legality_status}>
+                            {LEGALITY_LABEL[alt.legality_status]}
+                          </Badge>
+                          <span className="text-[11px] text-unavail">
+                            {alt.decision_status === "suppressed_illegal"
+                              ? "no score — fails a verified rule"
+                              : "no score — nothing could be scored"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
 
@@ -1030,7 +1071,10 @@ function LeaderPanel({
   photoIdFor: (tradeId: string, playerName: string) => number | null;
 }) {
   const missing = missingComponents(alt);
-  const verdict = fanVerdict(score, missing.length > 0 ? "low" : "high");
+  // C13: this page used to synthesize its own confidence from whether any component
+  // was missing, so the same saved deal could read "Cannot fully evaluate" here and
+  // "Strong fit" in the Trade Evaluator. The backend's confidence is the only one.
+  const verdict = fanVerdict(score, alt.confidence);
 
   return (
     <Panel accent="var(--signal)" padded={false}>
@@ -1137,8 +1181,10 @@ function ChallengerRow({
   score: number | null;
   rank: number;
 }) {
-  const missing = missingComponents(alt);
-  const verdict = fanVerdict(score, missing.length > 0 ? "low" : "high");
+  // C13: this page used to synthesize its own confidence from whether any component
+  // was missing, so the same saved deal could read "Cannot fully evaluate" here and
+  // "Strong fit" in the Trade Evaluator. The backend's confidence is the only one.
+  const verdict = fanVerdict(score, alt.confidence);
 
   return (
     <article className="rounded-lg border border-hairline bg-panel2/50 p-3.5">
@@ -1608,9 +1654,12 @@ function RiskView({ ranked }: { ranked: Ranked }) {
   return (
     <div>
       <ViewIntro>
-        Downside risk blends availability history with the share of simulations in which the deal
-        actually helps. A deal that only wins in a narrow band of outcomes is not the same as a
-        deal that wins comfortably.
+        Risk is <em>availability exposure</em> and nothing else — the minutes-weighted change in
+        historical games played between the players arriving and the players leaving. It used to
+        blend in the share of simulations in which the deal helps, which is the on-court
+        projection restated as a probability; the two components were 0.86 correlated, so the
+        composite counted the same thing twice. The simulation is still shown below, and is
+        deliberately not scored.
       </ViewIntro>
       <div className="grid gap-3 lg:grid-cols-2">
         {ranked.map(({ alt }, index) => (
@@ -1721,21 +1770,34 @@ function SensitivityView({
         </div>
         <div className="min-w-0">
           <ParetoScatter
-            points={comparison.alternatives.map((alt) => ({
-              name: alt.name,
-              x: alt.components.performance ?? 0,
-              y: alt.components.risk ?? 0,
-              dominated: !!alt.dominated_by,
-            }))}
+            points={comparison.alternatives
+              .filter(
+                (alt) => alt.components.performance !== null && alt.components.risk !== null,
+              )
+              .map((alt) => ({
+                name: alt.name,
+                x: alt.components.performance as number,
+                y: alt.components.risk as number,
+                dominated: !!alt.dominated_by,
+              }))}
           />
-          {comparison.alternatives.some(
-            (alt) => alt.components.performance === null || alt.components.risk === null,
-          ) && (
-            <p className="mt-1.5 text-[11px] text-unavail">
-              A deal missing on-court impact or downside risk is plotted at 0 on that axis —
-              treat its position as unknown, not as a low score.
-            </p>
-          )}
+          {(() => {
+            const omitted = comparison.alternatives.filter(
+              (alt) => alt.components.performance === null || alt.components.risk === null,
+            );
+            return omitted.length > 0 ? (
+              <p className="mt-1.5 text-[11px] text-unavail">
+                {omitted.length} deal{omitted.length === 1 ? " is" : "s are"} not plotted: on-court
+                impact or availability exposure could not be scored. They used to be drawn at 0,
+                which reads as the worst deal on the board rather than as an unknown.
+              </p>
+            ) : null;
+          })()}
+          <p className="mt-1.5 text-[11px] leading-snug text-faint">
+            The two axes are now genuinely different questions — projected wins against
+            games-missed exposure. Before R5 they were 0.86 correlated and this chart was close to
+            a diagonal line.
+          </p>
         </div>
       </div>
     </div>

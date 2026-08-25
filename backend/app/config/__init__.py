@@ -32,7 +32,24 @@ class Settings(BaseSettings):
     nba_api_http_proxy: str = ""
 
     current_season: str = "2025-26"
+    #: The MODELLING window. Every served estimate — player impact, skills, the rotation
+    #: allocation, the R3 conversion coefficient — is fitted and served on exactly these
+    #: seasons, and R7 did not widen it.
     history_seasons: str = "2023-24,2024-25,2025-26"
+    #: The seasons the historical-trade CORPUS may be described by. Deliberately a
+    #: separate setting: `player_season_stats` is read by two consumers with different
+    #: questions. `recency_weighted_features` collapses `history_seasons` into the window
+    #: it serves; `services/comparables` scores each season on its own within-season
+    #: z-scores and never collapses across them, so a 2016-17 trade can be priced without
+    #: any 2016-17 number reaching a served estimate.
+    #:
+    #: Widening this was measured before it shipped (R7-2): the served window frame is
+    #: byte-identical at 632 rows x 33 columns, and every R3 calibration figure reproduces
+    #: to full float precision — 14.976967215546017, SE 1.5279397396294392,
+    #: R2 0.6235734193376163 — on a season frame that grows from 1,714 rows to 5,483.
+    corpus_seasons: str = (
+        "2016-17,2017-18,2018-19,2019-20,2020-21,2021-22,2022-23,2023-24,2024-25,2025-26"
+    )
     # League year whose cap parameters govern trade legality (trades executed in July
     # 2026 fall under the 2026-27 cap even though the latest completed stats season
     # is 2025-26).
@@ -68,12 +85,31 @@ class Settings(BaseSettings):
         )
 
     @property
+    def contract_data_path(self) -> Path | None:
+        """`CONTRACT_DATA_FILE` resolved against the repo root, not the process CWD.
+
+        A relative path such as `data/imports/contracts/players.html` resolved
+        differently depending on where the process started — it worked from the repo
+        root and silently found nothing from `backend/`, which is where `make` runs
+        every backend command from."""
+        if not self.contract_data_file:
+            return None
+        candidate = Path(self.contract_data_file)
+        return candidate if candidate.is_absolute() else (BACKEND_DIR.parent / candidate)
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def history_season_list(self) -> list[str]:
         return [s.strip() for s in self.history_seasons.split(",") if s.strip()]
+
+    @property
+    def corpus_season_list(self) -> list[str]:
+        """Every season the corpus may be described by, modelling window included."""
+        seasons = {s.strip() for s in self.corpus_seasons.split(",") if s.strip()}
+        return sorted(seasons | set(self.history_season_list))
 
 
 @lru_cache

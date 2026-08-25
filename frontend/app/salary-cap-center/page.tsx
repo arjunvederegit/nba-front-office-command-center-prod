@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import { dataHealthSchema } from "@/lib/schemas";
 import { formatDate, money } from "@/lib/format";
 import { teamIdentity } from "@/lib/teamIdentity";
 import type {
@@ -107,7 +108,7 @@ function SalaryCapCenter() {
   });
   const { data: health } = useQuery({
     queryKey: ["data-health"],
-    queryFn: () => api.get<DataHealth>("/data-health"),
+    queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
     staleTime: 120_000,
   });
 

@@ -1,4 +1,4 @@
-# TradeLab frontend
+# RosterLab frontend
 
 Next.js 16 (App Router) + TypeScript + Tailwind v4 + TanStack Query + dnd-kit +
 Recharts. See the [root README](../README.md) for the full project.

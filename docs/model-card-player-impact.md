@@ -1,14 +1,27 @@
-# Model card — TradeLab Estimated Impact (TEI)
+# Model card — RosterLab Estimated Impact (TEI)
 
-**Model:** ridge regression (α=10), chosen over a transparent weighted index and a
-persistence baseline by time-aware validation. Version metadata in `model_versions`
-(algorithm, features, target, metrics, artifact, commit).
+**Model:** a transparent weighted z-score index with documented fixed weights
+(`impact.py::INDEX_WEIGHTS`). Version metadata in `model_versions` (algorithm, features,
+target, metrics, commit); there is no artifact to load, because the model *is* its
+coefficients.
+
+**Retired in R3-1:** a ridge regression (α=10) served this metric until R3-1. It won the
+player-level held-out MAE comparison (0.637 vs the index's 0.645) and lost the one the
+product depends on — at team level it explained **R² = 0.0039** of net rating against the
+index's **0.7505** (change-on-change: 0.0030 vs 0.6236). It is also a volume metric
+(corr 0.716 with usage, 0.100 with net rating) and is not computable per season, so the
+R3-2 conversion could only have been fitted on n = 30 of a metric with no signal.
 
 ## Intended use
 
-Comparative, per-100-possession impact estimates for exploratory trade analysis in
-TradeLab: rotation-weighted team projections, player comparisons, candidate
-filtering. Always displayed with uncertainty bands.
+Comparative impact estimates **on an index scale** for exploratory trade analysis in
+RosterLab: rotation-weighted team projections, player comparisons, candidate filtering.
+Always displayed with uncertainty bands.
+
+The scale is deliberately **not** described as per-100-possession points. A team's
+minutes-weighted index converts to net-rating points through a fitted coefficient of
+≈15 (R3-2); calling the raw index "points per 100" asserts that coefficient is 1.0, and
+it is not.
 
 ## Excluded uses
 
@@ -34,20 +47,41 @@ Recency-weighted (λ=0.7, minutes-weighted) z-scores of: pts/75, TS%, USG%, AST%
 TOV%, OREB%, DREB%, steals/min, blocks/min, 3PA rate, FTA rate, minutes, PIE,
 on-court net rating; plus age.
 
+**Unchanged by R4, and that was a measured decision rather than an omission.** R4 added
+columns to the feature path (fouls per minute, 3PA per minute, a team-relative defensive
+differential, shrunk 3P%) for the *skill* vectors, but none of them entered `INDEX_WEIGHTS`,
+so TEI is the same quantity it was at R3 and the fitted net-rating conversion (14.977)
+remains valid for it. Feeding the new defensive term into the index was tested and
+**rejected**: team-level R² fell from **0.7505** to 0.5655 (replacing the event terms),
+0.7263 (adding it at 0.10) or 0.6753 (at 0.20). `test_r3_gate_after_r4.py` fails the suite
+if a future change moves an R4 column into the index without refitting the conversion.
+
 ## Validation (actual, from this snapshot)
 
-- Split: train 2023-24→2024-25 transitions (n=447); validate 2024-25→2025-26
-  (n=464). No random row splits across seasons.
-- Held-out MAE (z-units): **ridge 0.637** · index 0.645 · persistence 0.717.
-- Residual σ 0.985 z-units → the ±band shown as `tei_low/high` (10th/90th pct,
-  normal-residual approximation).
+- Split: validate on the 2024-25→2025-26 transition (n=464). No random row splits
+  across seasons.
+- Held-out player MAE (z-units): **index 0.645** · persistence 0.717 · (retired ridge
+  0.637).
+- Team-level validity, 90 team-seasons: **index R² 0.7505** vs retired ridge 0.0039.
+  Change-on-change over 60 transitions: **0.6236** vs 0.0030.
+- Serving scale (C5): served rows are z-scored against the reference season's
+  minutes-weighted moments, so train and serve share one scale. Team-level served TEI
+  regresses on season TEI with slope **1.015** (r = 0.911); before the fix, r = 0.387.
+- Uncertainty bands are per player: **σ² = 0.0326 + 240.9 / total_minutes**, estimated
+  from 921 same-player consecutive-season pairs. σ runs 0.72 at 500 minutes to 0.36 at
+  2,500, replacing a constant 2.462 taken from the retired model's residual spread.
+  Bands are narrower for rotation players and **wider** below ~257 minutes. This σ is
+  season-to-season variability — the right input for a forward-looking interval, and the
+  wrong thing to call "measurement error".
 
 ## Limitations
 
 Box-score-only: no tracking, matchup, or lineup-context data; defense is
 under-measured (stocks + DREB + net-rating echo). One validation transition (three
-seasons ingested); residual-based bands understate tail risk for role changes,
-injuries, and aging outliers. Minutes threshold excludes fringe players (shown as
+seasons ingested); bands understate tail risk for role changes, injuries, and aging
+outliers. The index→net-rating coefficient is fitted on 60 team transitions from three
+ingested seasons and is valid only for the regressor construction recorded beside it in
+`model_versions`. Minutes threshold excludes fringe players (shown as
 "no estimate", not zero).
 
 ## Fairness considerations

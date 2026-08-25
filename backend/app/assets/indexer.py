@@ -20,6 +20,7 @@ from app.assets.normalize import DERIVED_DIRNAME, normalize_logo
 from app.config import get_settings
 from app.core.logging import get_logger
 from app.db.models import DataQualityIssue, MediaAsset, Player, RosterEntry, Team
+from app.ingestion.quality import upsert_issue
 from app.ingestion.runs import sync_run
 
 logger = get_logger(__name__)
@@ -57,9 +58,10 @@ def normalize_name(name: str) -> str:
 
 
 def _record_issue(db: Session, check_name: str, message: str, entity: str | None = None) -> None:
-    db.add(
-        DataQualityIssue(check_name=check_name, severity="warning", message=message, entity=entity)
-    )
+    # Upserted on (check, entity) rather than inserted. Every run re-derives these
+    # findings, so an insert left one row per finding per run: measured at 560 rows for
+    # 280 findings after two `index-assets` runs (R5-4).
+    upsert_issue(db, check_name, message, severity="warning", entity=entity)
 
 
 def _upsert(db: Session, existing: dict[tuple[str, str], MediaAsset], values: dict) -> MediaAsset:

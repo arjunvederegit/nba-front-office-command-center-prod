@@ -15,18 +15,24 @@ CBA_REF = "2023 CBA Art. VII §6; cbaguide.com/transactions/trades/tpe"
 
 def max_incoming_below_first_apron(outgoing: float, params: CapParams) -> float:
     """Expanded TPE bands. The CBA's dollar boundaries make the three formulas exactly
-    continuous at the band edges (2x + $250K meets x + band2_add at band1_max, which
-    meets 125% + $250K at band2_max)."""
+    continuous at the band edges (2x + allowance meets x + band2_add at band1_max, which
+    meets 125% + allowance at band2_max).
+
+    C13: continuity holds only when the allowance scales with the cap alongside the band
+    edges. With a fixed $250K against scaled edges the 2026-27 boundaries jump by
+    ±$16,673 and band 2 stops being monotone — sending out *more* salary could lower the
+    maximum you may take back.
+    """
     if outgoing <= params.tpe_band1_max:
-        return 2.0 * outgoing + params.allowance
+        return 2.0 * outgoing + params.scaled_allowance
     if outgoing <= params.tpe_band2_max:
         return outgoing + params.tpe_band2_add
-    return 1.25 * outgoing + params.allowance
+    return 1.25 * outgoing + params.scaled_allowance
 
 
 def max_incoming_at_or_above_first_apron(outgoing: float, params: CapParams) -> float:
-    """Standard TPE only: 100% of outgoing + allowance."""
-    return outgoing + params.allowance
+    """Standard TPE only: 100% of outgoing + allowance (scaled with the cap, per C13)."""
+    return outgoing + params.scaled_allowance
 
 
 class SalaryDataAvailabilityRule:
@@ -36,7 +42,28 @@ class SalaryDataAvailabilityRule:
     def evaluate(self, context: TradeContext) -> list[RuleResult]:
         results = []
         for team in context.teams:
-            missing = [p.name for p in team.outgoing + team.incoming if p.salary is None]
+            moved = team.outgoing + team.incoming
+            if not moved:
+                # A picks-only side moves no contracts, so "contract data present for all
+                # traded players" is vacuously true — and it was being reported as a
+                # `pass`, which reads as "salary data verified" on a deal that has no
+                # salary data at all. Say nothing rather than something false.
+                results.append(
+                    RuleResult(
+                        rule_code=self.code,
+                        status="unavailable",
+                        team_id=team.team_id,
+                        message=(
+                            "No player contracts move for this team, so there is no salary "
+                            "data to verify. Picks-only sides are not salary-matched."
+                        ),
+                        calculation={"players_moved": 0},
+                        source_reference=CBA_REF,
+                    )
+                )
+                continue
+            missing = [p.name for p in moved if p.salary is None]
+            unknown_types = [p.name for p in moved if p.contract_type is None]
             if missing:
                 provider_note = (
                     "no contract provider is configured"
@@ -57,13 +84,36 @@ class SalaryDataAvailabilityRule:
                         confidence="high",
                     )
                 )
+            elif unknown_types:
+                # Salaries are on file but contract types are not. Two-way contracts are
+                # excluded from matching, so the salary data present is not sufficient to
+                # verify matching — reporting `pass` here would overstate what is held.
+                results.append(
+                    RuleResult(
+                        rule_code=self.code,
+                        status="unavailable",
+                        team_id=team.team_id,
+                        message=(
+                            f"Salaries are on file for all {len(moved)} traded players, but the "
+                            f"contract type is unknown for {', '.join(unknown_types)}. Two-way "
+                            "contracts do not count toward salary matching, so matching cannot "
+                            "be verified from salary alone."
+                        ),
+                        calculation={
+                            "salaries_present": True,
+                            "contract_types_unknown": unknown_types,
+                        },
+                        source_reference=CBA_REF,
+                        confidence="high",
+                    )
+                )
             else:
                 results.append(
                     RuleResult(
                         rule_code=self.code,
                         status="pass",
                         team_id=team.team_id,
-                        message="Contract data present for all traded players.",
+                        message="Contract salary and type present for all traded players.",
                         source_reference=CBA_REF,
                     )
                 )
@@ -79,11 +129,22 @@ class SalaryMatchingRule:
         outgoing = team.outgoing_salary
         incoming = team.incoming_salary
         if outgoing is None or incoming is None or team.payroll_before is None:
+            # R2c: the payroll figure may now be disclosable even here — say what is
+            # known and what is missing, but do not turn a lower bound into a verdict.
+            coverage = team.coverage_before
+            detail = f" {coverage.disclosure()}" if coverage and not coverage.complete else ""
             return RuleResult(
                 rule_code=self.code,
                 status="unavailable",
                 team_id=team.team_id,
-                message="Salary matching not evaluated: contract data incomplete for this team.",
+                message=(
+                    "Salary matching not evaluated: contract data incomplete for this "
+                    f"team.{detail}"
+                ),
+                calculation={
+                    "payroll_known": team.payroll_known_before,
+                    "payroll_coverage": coverage.as_dict() if coverage else None,
+                },
                 source_reference=CBA_REF,
             )
         if incoming == 0:
@@ -156,7 +217,30 @@ class SecondApronAggregationRule:
     def evaluate(self, context: TradeContext) -> list[RuleResult]:
         results = []
         for team in context.teams:
-            if not team.aggregates_salaries:
+            aggregates = team.aggregates_salaries
+            if aggregates is None:
+                # 2+ outgoing players with at least one unknown contract type. Two-way
+                # deals are not aggregated, so whether this is an aggregation at all is
+                # unknown — and "no aggregation" is the permissive answer (C9).
+                results.append(
+                    RuleResult(
+                        rule_code=self.code,
+                        status="unavailable",
+                        team_id=team.team_id,
+                        message=(
+                            f"{len(team.outgoing)} players are outgoing, but at least one "
+                            "contract type is unknown. Two-way contracts are not aggregated, "
+                            "so whether this deal aggregates salaries cannot be determined."
+                        ),
+                        calculation={
+                            "outgoing_players": len(team.outgoing),
+                            "contract_types_known": False,
+                        },
+                        source_reference=CBA_REF,
+                    )
+                )
+                continue
+            if not aggregates:
                 results.append(
                     RuleResult(
                         rule_code=self.code,
@@ -169,6 +253,43 @@ class SecondApronAggregationRule:
                 continue
             payroll_after = team.payroll_after
             if payroll_after is None:
+                # R2c: partial data can still *refute*. The salaries actually on file are
+                # a lower bound on the post-trade payroll, so a team already past the
+                # second apron on known contracts alone is past it whatever is missing —
+                # the missing rows can only add. The converse is not sound and is not
+                # claimed: failing to clear the line leaves the rule `unavailable`.
+                coverage_after = team.coverage_after
+                proven_above = (
+                    coverage_after is not None
+                    and coverage_after.known > context.params.second_apron
+                )
+                if proven_above and coverage_after is not None:
+                    results.append(
+                        RuleResult(
+                            rule_code=self.code,
+                            status="fail",
+                            team_id=team.team_id,
+                            message=(
+                                "Second-apron team aggregates multiple salaries — prohibited. "
+                                f"The {coverage_after.players_known} contracts on file already "
+                                f"total ${coverage_after.known:,.0f} after this trade, above the "
+                                f"${context.params.second_apron:,.0f} second apron; the "
+                                f"{coverage_after.players_unknown} unpriced players can only "
+                                "raise it."
+                            ),
+                            calculation={
+                                "post_trade_payroll_known": coverage_after.known,
+                                "post_trade_payroll_is_lower_bound": True,
+                                "second_apron": context.params.second_apron,
+                                "payroll_coverage_after": coverage_after.as_dict(),
+                                "outgoing_players": len(team.outgoing),
+                            },
+                            source_reference=CBA_REF,
+                        )
+                    )
+                    continue
+                coverage = team.coverage_before
+                detail = f" {coverage.disclosure()}" if coverage and not coverage.complete else ""
                 results.append(
                     RuleResult(
                         rule_code=self.code,
@@ -176,8 +297,12 @@ class SecondApronAggregationRule:
                         team_id=team.team_id,
                         message=(
                             "Team aggregates multiple salaries, but apron status cannot be "
-                            "determined without contract data."
+                            f"determined without complete contract data.{detail}"
                         ),
+                        calculation={
+                            "payroll_known": team.payroll_known_before,
+                            "payroll_coverage": coverage.as_dict() if coverage else None,
+                        },
                         source_reference=CBA_REF,
                     )
                 )

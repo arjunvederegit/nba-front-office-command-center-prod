@@ -120,7 +120,7 @@ def get_player(player_id: str, db: Session = Depends(get_db)) -> dict:
         peers = db.scalars(
             select(PlayerArchetype).where(
                 PlayerArchetype.season == settings.current_season,
-                PlayerArchetype.cluster_id == archetype.cluster_id,
+                PlayerArchetype.role_id == archetype.role_id,
                 PlayerArchetype.player_id != player.id,
             )
         ).all()
@@ -162,12 +162,12 @@ def get_player(player_id: str, db: Session = Depends(get_db)) -> dict:
             else None,
             "minutes_estimate": impact.minutes_estimate,
             "model": f"{impact_model.algorithm} ({impact_model.version})" if impact_model else None,
-            "note": "TradeLab Estimated Impact — a portfolio-model estimate, not a "
+            "note": "RosterLab Estimated Impact — a portfolio-model estimate, not a "
             "proprietary metric. See /methodology.",
         }
         if impact
         else {"note": "No impact estimate — player below minutes threshold or model not trained."},
-        "archetype": {"label": archetype.label, "cluster_id": archetype.cluster_id}
+        "archetype": {"label": archetype.label, "role_id": archetype.role_id}
         if archetype
         else None,
         "comparables": comparables,
@@ -218,7 +218,7 @@ def get_player_contract(player_id: str, db: Session = Depends(get_db)) -> dict:
                 "Contract data unavailable from the configured provider."
                 if configured
                 else "No contract provider is configured — nba_api does not supply "
-                "contract data, and TradeLab never invents salaries. "
+                "contract data, and RosterLab never invents salaries. "
                 "See data/contracts/README.md."
             ),
         }
@@ -266,10 +266,19 @@ def list_season_totals(season: str, db: Session = Depends(get_db)) -> dict:
         )
     ).all():
         roster_team[entry.player_id] = entry.team.abbreviation
+    # R7: one query for every player in the directory, not one per row. The loop used to
+    # call `db.get` per row, which is 573 statements on the shipped season and made the
+    # cold Player Explorer load the heaviest read in the product.
+    by_id = {
+        p.id: p
+        for p in db.scalars(
+            select(Player).where(Player.id.in_({row.player_id for row in rows}))
+        ).all()
+    }
     imported_at = None
     players = []
     for row in rows:
-        player = db.get(Player, row.player_id)
+        player = by_id.get(row.player_id)
         if player is None:
             continue
         imported_at = row.source_retrieved_at or imported_at

@@ -214,11 +214,16 @@ def test_trade_save_report_and_comparison(client, seeded):
 
     report = client.get(f"/api/v1/trades/{trade1['id']}/report")
     assert report.status_code == 200
-    assert report.text.startswith("# Executive Trade Recommendation")
-    assert "Data freshness and limitations" in report.text
+    assert report.text.startswith("# Decision memo — ")
+    # R6 renamed the artifact and reorganized it. The sections asserted here are the
+    # ones a memo is useless without: where the numbers came from, and what it could not
+    # establish.
+    assert "## Assumptions and provenance" in report.text
+    assert "## What is not known" in report.text
+    assert "## 5. Precedent" in report.text
 
     html = client.get(f"/api/v1/trades/{trade1['id']}/report", params={"format": "html"})
-    assert "<title>TradeLab Executive Report</title>" in html.text
+    assert "<title>RosterLab decision memo</title>" in html.text
 
     t2 = client.post("/api/v1/trades", json=trade_payload("Deal 2", seeded["a2"], seeded["b1"]))
     comparison = client.post(
@@ -239,3 +244,152 @@ def test_data_health_reports_providers(client, seeded):
 def test_admin_sync_disabled_without_token(client):
     response = client.post("/api/v1/admin/sync")
     assert response.status_code == 403
+
+
+# --------------------------------------------------------------- QA pins (R0-1)
+#
+# xfail(strict=True) until the named release fixes them. An accidental early fix
+# turns the run red rather than passing silently.
+
+
+def _evaluate_payload(seeded, player_moves, **extra):
+    return {
+        "team_ids": [seeded["team_a"].id, seeded["team_b"].id],
+        "player_moves": player_moves,
+        "pick_moves": [],
+        **extra,
+    }
+
+
+def test_phantom_move_is_rejected(client, seeded):
+    """`b1` is on team B, so it cannot be sent *from* team A."""
+    payload = _evaluate_payload(
+        seeded,
+        [
+            {
+                "player_id": seeded["b1"].id,
+                "from_team_id": seeded["team_a"].id,
+                "to_team_id": seeded["team_b"].id,
+            }
+        ],
+    )
+    assert client.post("/api/v1/trades/evaluate", json=payload).status_code == 422
+
+
+def test_builder_rejects_phantom_move(db, cap_params, seeded):
+    from app.cba.builder import build_trade_context
+    from app.core.errors import InvalidTradeError
+
+    with pytest.raises(InvalidTradeError, match="not on the roster"):
+        build_trade_context(
+            db,
+            [seeded["team_a"].id, seeded["team_b"].id],
+            [
+                {
+                    "player_id": seeded["b1"].id,
+                    "from_team_id": seeded["team_a"].id,
+                    "to_team_id": seeded["team_b"].id,
+                }
+            ],
+            [],
+        )
+
+
+def test_duplicate_player_moves_are_rejected(client, seeded):
+    move = {
+        "player_id": seeded["a1"].id,
+        "from_team_id": seeded["team_a"].id,
+        "to_team_id": seeded["team_b"].id,
+    }
+    payload = _evaluate_payload(seeded, [move, dict(move)])
+    assert client.post("/api/v1/trades/evaluate", json=payload).status_code == 422
+
+
+def test_unknown_strategy_is_rejected(client, seeded):
+    payload = _evaluate_payload(
+        seeded,
+        [
+            {
+                "player_id": seeded["a1"].id,
+                "from_team_id": seeded["team_a"].id,
+                "to_team_id": seeded["team_b"].id,
+            }
+        ],
+        strategy="win_now_lol",
+    )
+    assert client.post("/api/v1/trades/evaluate", json=payload).status_code == 422
+
+
+def test_validation_errors_do_not_leak_pydantic_internals(client, seeded):
+    payload = {
+        "team_ids": [seeded["team_a"].id, seeded["team_b"].id],
+        "player_moves": [],
+        "pick_moves": [
+            {
+                "from_team_id": seeded["team_a"].id,
+                "to_team_id": seeded["team_b"].id,
+                "draft_year": 2034,
+                "round_number": 1,
+            }
+        ],
+    }
+    body = client.post("/api/v1/trades/evaluate", json=payload).json()
+    message = body["error"]["message"]
+    for leak in ("'type':", "'loc':", "'ctx':", "less_than_equal"):
+        assert leak not in message, f"error message leaks {leak!r}: {message}"
+
+
+def test_report_format_is_validated(client, seeded):
+    trade = client.post(
+        "/api/v1/trades",
+        json={
+            "name": "Format check",
+            "team_ids": [seeded["team_a"].id, seeded["team_b"].id],
+            "player_moves": [
+                {
+                    "player_id": seeded["a1"].id,
+                    "from_team_id": seeded["team_a"].id,
+                    "to_team_id": seeded["team_b"].id,
+                },
+                {
+                    "player_id": seeded["b1"].id,
+                    "from_team_id": seeded["team_b"].id,
+                    "to_team_id": seeded["team_a"].id,
+                },
+            ],
+            "pick_moves": [],
+        },
+    ).json()
+    response = client.get(f"/api/v1/trades/{trade['id']}/report", params={"format": "pdf"})
+    assert response.status_code == 422
+
+
+def test_asset_requests_do_not_grow_the_rate_limit_table(client):
+    """`_request_log` is a defaultdict, so reading it for an exempt request still created
+    a permanent key — asset traffic grew the dict the exemption exists to keep it out of."""
+    from app.main import _request_log
+
+    _request_log.clear()
+    client.get("/api/v1/assets/players/999999")
+    assert dict(_request_log) == {}, "asset traffic created a rate-limit bucket"
+
+    client.get("/api/v1/health")
+    assert _request_log, "non-asset traffic must still be counted"
+
+
+def test_admin_token_comparison_is_constant_time():
+    """A `!=` on strings short-circuits at the first differing byte, leaking the shared
+    prefix length to a caller who can time the response."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[2] / "app" / "api" / "deps.py"
+    tree = ast.parse(source.read_text())
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "compare_digest"
+    ]
+    assert calls, "admin token comparison must use hmac.compare_digest"

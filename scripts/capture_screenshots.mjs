@@ -1,7 +1,13 @@
 // Capture documentation screenshots from a running local stack.
 // Usage: node scripts/capture_screenshots.mjs   (requires frontend:3000 + backend:8000)
-import { chromium } from "@playwright/test";
+import { createRequire } from "node:module";
 import { mkdirSync } from "fs";
+
+// See scripts/visual_qa.mjs — node_modules lives under frontend/, not the repo root.
+const requireFromFrontend = createRequire(
+  new URL("../frontend/package.json", import.meta.url),
+);
+const { chromium } = requireFromFrontend("@playwright/test");
 
 const OUT = decodeURIComponent(new URL("../docs/screenshots/", import.meta.url).pathname);
 mkdirSync(OUT, { recursive: true });

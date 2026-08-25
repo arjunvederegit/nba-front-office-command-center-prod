@@ -25,21 +25,24 @@ import {
   useSyncExternalStore,
 } from "react";
 import { api } from "@/lib/api";
+import { sectionOf } from "@/lib/evaluationDetail";
+import { tradeDetailSchema } from "@/lib/schemas";
+import { decodeShareState, encodeShareState } from "@/lib/shareState";
 import {
-  COMPONENT_EXPLAIN,
   COMPONENT_LABEL,
   LEGALITY_EXPLAIN,
   LEGALITY_LABEL,
-  NEED_LABEL,
+  LEGALITY_SHORT,
   VERDICT_LABEL,
   fanVerdict,
   money,
+  payrollDisclosure,
   tei,
 } from "@/lib/format";
-import { getFavoriteTeam } from "@/lib/teamTheme";
+import { getFavoriteTeam } from "@/lib/favoriteTeam";
 import { teamIdentity } from "@/lib/teamIdentity";
 import type {
-  GeneratedCandidate,
+  PerformanceDetail,
   LegalityResponse,
   PickMove,
   PlayerMove,
@@ -52,12 +55,17 @@ import type {
   TradeDetail,
 } from "@/lib/types";
 import {
-  BeforeAfterBars,
-  ComponentBars,
-  TornadoChart,
   UncertaintyStrip,
 } from "@/components/charts";
 import { HalfCourt, KeyFrame, TransactionLane } from "@/components/court";
+import {
+  CapTab,
+  FitTab,
+  ImpactTab,
+  PrecedentTab,
+  RiskTab,
+  TimelineTab,
+} from "@/components/evaluation-tabs";
 import { PlayerPhoto, TeamCrest, TeamLogo } from "@/components/media";
 import { useToast } from "@/components/toast";
 import {
@@ -65,7 +73,6 @@ import {
   Button,
   ButtonLink,
   EmptyState,
-  MeterBar,
   PageHeader,
   Panel,
   Skeleton,
@@ -77,14 +84,6 @@ import {
 } from "@/components/ui";
 
 /* ---------------------------------------------------------------- constants */
-
-/** Chip-sized legality wording; the long form stays in the verdict frame. */
-const LEGALITY_SHORT: Record<string, string> = {
-  verified_legal: "Legal",
-  verified_illegal: "Illegal",
-  conditionally_valid: "Incomplete",
-  not_evaluated: "Unchecked",
-};
 
 /** Four visually distinct states — glyph and word, never color alone. */
 const LEGALITY_VISUAL: Record<string, { glyph: string; color: string; text: string }> = {
@@ -124,48 +123,6 @@ const HOW_IT_WORKS: { step: string; title: string; body: string }[] = [
 
 /* -------------------------------------------------------------- local types */
 
-interface RotationRow {
-  player_id: string;
-  name: string;
-  minutes: number;
-  tei: number;
-  availability: number;
-}
-
-interface PerformanceDetail {
-  delta_wins?: number;
-  delta_net_rating?: number;
-  rotation_before?: RotationRow[];
-  rotation_after?: RotationRow[];
-}
-
-interface FitDetail {
-  unavailable?: string;
-  needs?: Record<string, number>;
-  needs_addressed?: Record<string, number>;
-  redundancies?: Record<string, number>;
-  skill_delta?: Record<string, number>;
-}
-
-interface TimelineDetail {
-  unavailable?: string;
-  strategy?: string;
-  incoming_alignment?: number;
-  outgoing_alignment?: number;
-}
-
-interface AssetsDetail {
-  picks_in?: number;
-  picks_out?: number;
-  roster_spots_delta?: number;
-  payroll_note?: string;
-}
-
-interface RiskDetail {
-  prob_positive_outcome?: number;
-  incoming_availability?: number;
-}
-
 interface TeamDetailResponse {
   team: Team;
   season: string;
@@ -182,34 +139,6 @@ interface Destination {
   id: string;
   abbr: string;
   name: string;
-}
-
-/** Serializable builder state for share links (?state=base64url json). */
-interface ShareState {
-  teamIds: string[];
-  moves: Record<string, string>;
-  picks: PickMove[];
-  name?: string;
-}
-
-function encodeShareState(state: ShareState): string {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(state))))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
-}
-
-function decodeShareState(raw: string): ShareState | null {
-  try {
-    const b64 = raw.replaceAll("-", "+").replaceAll("_", "/");
-    return JSON.parse(decodeURIComponent(escape(atob(b64)))) as ShareState;
-  } catch {
-    return null;
-  }
-}
-
-function sectionOf<T>(detail: Record<string, Record<string, unknown>> | undefined, key: string): T {
-  return (detail?.[key] ?? {}) as T;
 }
 
 /* --------------------------------------------------------------------- page */
@@ -305,7 +234,7 @@ function TradeEvaluator() {
 
   const { data: loadedTrade } = useQuery({
     queryKey: ["trade", loadTradeId],
-    queryFn: () => api.get<TradeDetail>(`/trades/${loadTradeId}`),
+    queryFn: () => api.get<TradeDetail>(`/trades/${loadTradeId}`, tradeDetailSchema),
     enabled: !!loadTradeId,
   });
   const [appliedTradeId, setAppliedTradeId] = useState<string | null>(null);
@@ -418,6 +347,42 @@ function TradeEvaluator() {
     onError: (e) => toast("error", `Evaluation failed: ${String(e)}`),
   });
 
+  /**
+   * The memo is the artifact a front office actually circulates, and it used to be
+   * reachable only after saving a deal — which meant the document existed only for
+   * trades someone had already committed to keeping.
+   *
+   * The response is markdown; it opens in a new tab rather than downloading, because a
+   * download the browser cannot preview is a worse default for a document a person is
+   * about to read.
+   */
+  const memo = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/v1/trades/memo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: tradeName || "Untitled deal",
+          team_ids: teamIds,
+          focal_team_id: teamIds[0],
+          player_moves: playerMoves,
+          pick_moves: picks,
+          scenario_id: scenarioId,
+          strategy: scenario?.strategy ?? "custom",
+          format: "html",
+        }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.text();
+    },
+    onSuccess: (html) => {
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    },
+    onError: (e) => toast("error", `Could not build the memo: ${String(e)}`),
+  });
+
   const saveTrade = useMutation({
     mutationFn: () =>
       api.post<TradeDetail>("/trades", {
@@ -482,16 +447,17 @@ function TradeEvaluator() {
     if (event.over) movePlayer(String(event.active.id), String(event.over.id));
   }
 
-  const generate = useMutation({
-    mutationFn: () =>
-      api.post<{ candidates: GeneratedCandidate[]; note: string }>(
-        "/trades/generate",
-        scenarioId
-          ? { scenario_id: scenarioId, max_candidates: 6 }
-          : { focal_team_id: teamIds[0], max_candidates: 6 },
-      ),
-    onError: (e) => toast("error", `Idea generation failed: ${String(e)}`),
-  });
+  // R1-8 — the candidate generator is hidden pending a constrained rebuild in R5.
+  //
+  // Measured, it reaches **13.8 %** of counterparties (4 of 29): `evaluations_run`
+  // hits the 400-evaluation budget after roughly six teams, in unordered insertion
+  // order, and says nothing about the truncation. It has no salary matching, so it
+  // proposed Donovan Mitchell *and* James Harden for Jordan Walsh at a counterparty
+  // utility of 52.0 — above the 42.0 acceptance floor (QA-10).
+  //
+  // `services/candidates.py` and `POST /trades/generate` remain; only the entry point
+  // is removed, so the R5 rebuild starts from working scaffolding rather than a blank
+  // file.
 
   const loaded = teams ?? [];
   const threeWay = teamIds.length === 3;
@@ -507,23 +473,13 @@ function TradeEvaluator() {
         title="Trade Evaluator"
         lede="Build a two- or three-team deal, watch the rules check run live on the backend, then evaluate the projected impact for every side."
         actions={
-          <>
-            <TeamPicker
-              teams={loaded}
-              selected={teamIds}
-              onAdd={addTeam}
-              open={pickerOpen}
-              setOpen={setPickerOpen}
-            />
-            <Button
-              type="button"
-              onClick={() => generate.mutate()}
-              disabled={generate.isPending || (teamIds.length === 0 && !scenarioId)}
-              title="Model-generated deal ideas under your constraints — explorations, not predictions"
-            >
-              {generate.isPending ? "Searching…" : "Suggest deals"}
-            </Button>
-          </>
+          <TeamPicker
+            teams={loaded}
+            selected={teamIds}
+            onAdd={addTeam}
+            open={pickerOpen}
+            setOpen={setPickerOpen}
+          />
         }
         meta={
           <>
@@ -549,23 +505,6 @@ function TradeEvaluator() {
       />
 
       <div className="space-y-6">
-        {generate.data && (
-          <SuggestedDeals
-            note={generate.data.note}
-            candidates={generate.data.candidates}
-            focalTeamId={teamIds[0]}
-            onLoad={(candidate) => {
-              addTeam(candidate.counterparty.team_id);
-              const next: Record<string, string> = {};
-              for (const p of candidate.outgoing) next[p.player_id] = candidate.counterparty.team_id;
-              for (const p of candidate.incoming) next[p.player_id] = teamIds[0];
-              setMoves(next);
-              setEvaluation(null);
-            }}
-            onDismiss={() => generate.reset()}
-          />
-        )}
-
         {teamIds.length === 0 ? (
           <StartHere teams={loaded} onAdd={addTeam} onPick={() => setPickerOpen(true)} />
         ) : (
@@ -640,6 +579,8 @@ function TradeEvaluator() {
                   onEvaluate={() => evaluate.mutate()}
                   onSave={() => saveTrade.mutate()}
                   onCopy={copyShareLink}
+                  onMemo={() => memo.mutate()}
+                  memoPending={memo.isPending}
                 />
                 <DealLedger
                   teams={loaded}
@@ -654,7 +595,13 @@ function TradeEvaluator() {
         )}
 
         {evaluation && teams && (
-          <EvaluationSection evaluation={evaluation} teams={teams} teamIds={teamIds} />
+          <EvaluationSection
+            evaluation={evaluation}
+            teams={teams}
+            teamIds={teamIds}
+            playerMoves={playerMoves}
+            pickMoves={picks}
+          />
         )}
       </div>
 
@@ -989,7 +936,14 @@ function TeamWorkspace({
   const outgoing = all.filter((p) => moves[p.player_id] && moves[p.player_id] !== teamId);
 
   const standing = detail?.standing;
-  const payrollKnown = legality?.payroll_after !== null && legality?.payroll_after !== undefined;
+  // R2c: with partial contract coverage the verified payroll is withheld but a lower
+  // bound is publishable. `≥` and the coverage count travel with the number so the
+  // reader can never mistake a floor for the payroll.
+  const payrollShown = payrollDisclosure(
+    legality?.payroll_after,
+    legality?.payroll_known_after,
+    legality?.payroll_coverage_after,
+  );
 
   return (
     <Panel
@@ -1082,9 +1036,19 @@ function TeamWorkspace({
           <StatBlock
             size="sm"
             label="Payroll"
-            value={payrollKnown ? money(legality?.payroll_after) : "—"}
-            note={payrollKnown ? `from ${money(legality?.payroll_before)}` : "not imported"}
-            title={payrollKnown ? undefined : CONTRACT_TOOLTIP}
+            value={payrollShown.value}
+            note={
+              payrollShown.kind === "verified"
+                ? `from ${money(legality?.payroll_before)}`
+                : payrollShown.note
+            }
+            title={
+              payrollShown.kind === "verified"
+                ? undefined
+                : payrollShown.kind === "floor"
+                  ? (legality?.payroll_coverage_note ?? CONTRACT_TOOLTIP)
+                  : CONTRACT_TOOLTIP
+            }
           />
         </div>
 
@@ -1404,8 +1368,19 @@ function RosterCard({
             {player.position ?? "—"} · {player.age ? `${player.age.toFixed(0)}y` : "age —"}
             {player.archetype ? ` · ${player.archetype}` : ""}
           </span>
-          <span className="mt-0.5 block text-[10px] leading-tight text-faint" title={CONTRACT_TOOLTIP}>
-            salary <span className="data">—</span> · years <span className="data">—</span>
+          {/* Real contract data. This line was two hardcoded em-dashes until R2b, so a
+              contracts import changed nothing here and the defect became invisible the
+              moment the import was marked done. */}
+          <span
+            className="mt-0.5 block text-[10px] leading-tight text-faint"
+            title={player.salary === null ? CONTRACT_TOOLTIP : undefined}
+          >
+            salary <span className="data">{player.salary === null ? "—" : money(player.salary)}</span> ·
+            years{" "}
+            <span className="data">
+              {player.contract_years_remaining === null ? "—" : player.contract_years_remaining}
+            </span>
+            {player.contract_type && ` · ${player.contract_type}`}
           </span>
         </span>
       </button>
@@ -1672,92 +1647,6 @@ function HowItWorks({ variant = "strip" }: { variant?: "strip" | "rail" }) {
   );
 }
 
-/* ------------------------------------------------------------- suggestions */
-
-function SuggestedDeals({
-  note,
-  candidates,
-  focalTeamId,
-  onLoad,
-  onDismiss,
-}: {
-  note: string;
-  candidates: GeneratedCandidate[];
-  focalTeamId: string | undefined;
-  onLoad: (candidate: GeneratedCandidate) => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <Panel
-      title="Suggested deals"
-      subtitle={note}
-      accent="var(--signal)"
-      actions={
-        <Button size="sm" variant="ghost" onClick={onDismiss}>
-          Dismiss
-        </Button>
-      }
-    >
-      {candidates.length === 0 ? (
-        <EmptyState
-          title="No candidate cleared the constraints"
-          hint="Loosen the untouchable list in your strategy, or add a second team by hand and build the deal yourself."
-        />
-      ) : (
-        <ul className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-          {candidates.map((candidate, i) => {
-            const identity = teamIdentity(candidate.counterparty.abbreviation);
-            return (
-              <li
-                key={`${candidate.counterparty.team_id}-${i}`}
-                className="rounded-lg border border-hairline bg-panel2/60 p-3"
-                style={{ borderTopColor: identity.bright }}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <TeamLogo abbreviation={candidate.counterparty.abbreviation} size={22} decorative />
-                    <span className="numeral whitespace-nowrap text-base">
-                      {candidate.counterparty.abbreviation}
-                    </span>
-                  </span>
-                  <Badge status={candidate.legality_status}>
-                    {LEGALITY_SHORT[candidate.legality_status]}
-                  </Badge>
-                </div>
-                <dl className="mt-2 space-y-1 text-[12px]">
-                  <div className="flex gap-1.5">
-                    <dt className="eyebrow shrink-0 pt-0.5 text-[0.5rem] text-illegal">Out</dt>
-                    <dd className="min-w-0 text-muted">
-                      {candidate.outgoing.map((p) => p.name).join(", ") || "—"}
-                    </dd>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <dt className="eyebrow shrink-0 pt-0.5 text-[0.5rem] text-legal">In</dt>
-                    <dd className="min-w-0 text-muted">
-                      {candidate.incoming.map((p) => p.name).join(", ") || "—"}
-                    </dd>
-                  </div>
-                </dl>
-                <p className="mt-2 text-[11px] leading-snug text-faint">{candidate.rationale}</p>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="mt-2.5 w-full"
-                  disabled={!focalTeamId}
-                  onClick={() => onLoad(candidate)}
-                >
-                  Load into the builder
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <SourceRail source="RosterLab candidate search over ingested rosters and impact estimates" />
-    </Panel>
-  );
-}
-
 /* -------------------------------------------------------------- rules check */
 
 function RulesCheck({
@@ -1951,6 +1840,8 @@ function SaveShare({
   onEvaluate,
   onSave,
   onCopy,
+  onMemo,
+  memoPending,
 }: {
   tradeName: string;
   setTradeName: (value: string) => void;
@@ -1960,6 +1851,8 @@ function SaveShare({
   onEvaluate: () => void;
   onSave: () => void;
   onCopy: () => void;
+  onMemo: () => void;
+  memoPending: boolean;
 }) {
   return (
     <Panel title="Run it" subtitle="Evaluate now, then keep the deal for comparison." accent="var(--leather)">
@@ -1992,6 +1885,13 @@ function SaveShare({
             Copy share link
           </Button>
         </div>
+        <Button className="w-full" disabled={!canAct || memoPending} onClick={onMemo}>
+          {memoPending ? "Building memo…" : "Open decision memo"}
+        </Button>
+        <p className="text-[11px] leading-snug text-faint">
+          The memo is one page: the recommendation, what changes on the floor, fit, cost, the
+          rules, comparable completed trades, and everything the analysis could not establish.
+        </p>
         {!canAct && (
           <p className="text-[11px] leading-snug text-faint">
             Move at least one player between teams to enable these actions.
@@ -2015,10 +1915,14 @@ function EvaluationSection({
   evaluation,
   teams,
   teamIds,
+  playerMoves,
+  pickMoves,
 }: {
   evaluation: { legality: LegalityResponse; evaluations: Record<string, TeamEvaluation> };
   teams: Team[];
   teamIds: string[];
+  playerMoves: PlayerMove[];
+  pickMoves: PickMove[];
 }) {
   const [activeTeam, setActiveTeam] = useState(teamIds[0]);
   const resolvedTeam = evaluation.evaluations[activeTeam] ? activeTeam : teamIds[0];
@@ -2046,20 +1950,69 @@ function EvaluationSection({
         />
       }
     >
-      <TeamEvaluationView key={resolvedTeam} teamEval={teamEval} identity={identity} />
+      <TeamEvaluationView
+        key={resolvedTeam}
+        teamEval={teamEval}
+        identity={identity}
+        teamAbbreviations={Object.fromEntries(
+          Object.entries(evaluation.legality.teams).map(([id, t]) => [id, t.abbreviation]),
+        )}
+        precedent={
+          <PrecedentTab
+            focalTeamId={resolvedTeam}
+            teamIds={teamIds}
+            playerMoves={playerMoves}
+            pickMoves={pickMoves}
+          />
+        }
+      />
     </Panel>
+  );
+}
+
+/**
+ * Players the impact model has never scored are excluded from the projection and named
+ * here. Before R1-4 they arrived carrying `tei = 0.0` — the 63rd percentile of rostered
+ * players — so a player with no data quietly moved the number.
+ */
+function UnmodeledNotice({ teamEval }: { teamEval: TeamEvaluation }) {
+  const names = teamEval.unmodeled_players ?? [];
+  if (!teamEval.has_unmodeled_players || names.length === 0) return null;
+  const inDeal = [...teamEval.incoming, ...teamEval.outgoing]
+    .filter((p) => p.tei === null)
+    .map((p) => p.name);
+  return (
+    <p className="mt-2 border-t border-hairline pt-2.5 text-[11px] leading-snug text-unavail">
+      {names.length === 1 ? "1 player has" : `${names.length} players have`} no impact
+      estimate and {names.length === 1 ? "was" : "were"} left out of the projection rather
+      than given a league-average stand-in: {names.join(", ")}.
+      {inDeal.length > 0 && (
+        <>
+          {" "}
+          {inDeal.length === 1 ? "One of them is" : "Some of them are"} in this deal (
+          {inDeal.join(", ")}), so confidence is reported as low.
+        </>
+      )}{" "}
+      They still count against the roster limits.
+    </p>
   );
 }
 
 function TeamEvaluationView({
   teamEval,
   identity,
+  teamAbbreviations,
+  precedent,
 }: {
   teamEval: TeamEvaluation;
   identity: ReturnType<typeof teamIdentity>;
+  teamAbbreviations: Record<string, string>;
+  /** Rendered only when its tab is selected, so the search runs on demand. */
+  precedent: React.ReactNode;
 }) {
   const [tab, setTab] = useState("impact");
   const verdict = fanVerdict(teamEval.composite_utility, teamEval.confidence);
+  const suppressed = teamEval.decision_status === "suppressed_illegal";
   const perf = sectionOf<PerformanceDetail>(teamEval.detail, "performance");
   const gained = teamEval.drivers?.filter((d) => d.contribution > 0.5).slice(0, 3) ?? [];
   const lost = teamEval.drivers?.filter((d) => d.contribution < -0.5).slice(0, 3) ?? [];
@@ -2067,6 +2020,50 @@ function TeamEvaluationView({
     teamEval.legality.payroll_after !== null && teamEval.legality.payroll_before !== null
       ? teamEval.legality.payroll_after - teamEval.legality.payroll_before
       : null;
+
+  if (suppressed) {
+    // A deal that fails a verified rule cannot be executed, so it gets no verdict, no
+    // score and no component breakdown — only the reason and the rules that caused it.
+    return (
+      <div
+        className="rounded-lg border px-4 py-4"
+        style={{ borderColor: "var(--illegal)", background: "rgb(248 113 113 / 0.06)" }}
+      >
+        <div className="flex items-center gap-2">
+          <TeamLogo abbreviation={identity.abbreviation} size={18} decorative />
+          <span className="eyebrow">Verdict for {identity.abbreviation}</span>
+        </div>
+        <h3 className="title-lg mt-1.5 text-foreground">No decision score — this deal is illegal</h3>
+        <p className="mt-2 max-w-prose text-[13px] leading-relaxed text-muted">
+          {teamEval.suppression?.message}
+        </p>
+        <ul className="mt-3 space-y-2">
+          {(teamEval.suppression?.failing_rules ?? []).map((rule, index) => (
+            <li
+              key={`${rule.rule_code}-${rule.team_id ?? "all"}-${index}`}
+              className="rounded-lg border border-hairline bg-panel2 px-3 py-2"
+            >
+              <div className="eyebrow flex flex-wrap items-center gap-2 text-[0.5625rem] text-illegal">
+                <span>{rule.rule_code}</span>
+                {/* A deal can be illegal because of the counterparty; naming the side
+                    keeps the refusal from reading as a fault of this team. */}
+                {rule.team_id && teamAbbreviations[rule.team_id] && (
+                  <span className="text-unavail">fails for {teamAbbreviations[rule.team_id]}</span>
+                )}
+              </div>
+              <p className="mt-0.5 text-sm text-foreground">{rule.message}</p>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 border-t border-hairline pt-2.5 text-[11px] leading-snug text-faint">
+          Salary in {money(teamEval.legality.incoming_salary)} · out{" "}
+          {money(teamEval.legality.outgoing_salary)} · roster{" "}
+          {teamEval.legality.roster_before} → {teamEval.legality.roster_after}. Fix the rule
+          failures above and evaluate again.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -2114,6 +2111,7 @@ function TeamEvaluationView({
             remaining weights were rescaled so the score stays comparable.
           </p>
         )}
+        <UnmodeledNotice teamEval={teamEval} />
       </div>
 
       {/* ------------------------------------------------- 2. impact summary */}
@@ -2185,6 +2183,7 @@ function TeamEvaluationView({
               { id: "cap", label: "Cap" },
               { id: "timeline", label: "Timeline" },
               { id: "risk", label: "Risk & uncertainty" },
+              { id: "precedent", label: "Precedent" },
             ]}
           />
         </div>
@@ -2194,6 +2193,7 @@ function TeamEvaluationView({
           {tab === "cap" && <CapTab teamEval={teamEval} />}
           {tab === "timeline" && <TimelineTab teamEval={teamEval} />}
           {tab === "risk" && <RiskTab teamEval={teamEval} />}
+          {tab === "precedent" && precedent}
         </div>
       </div>
 
@@ -2205,337 +2205,11 @@ function TeamEvaluationView({
   );
 }
 
-function ImpactTab({ teamEval, perf }: { teamEval: TeamEvaluation; perf: PerformanceDetail }) {
-  const rows = useMemo(() => {
-    const before = perf.rotation_before ?? [];
-    const after = perf.rotation_after ?? [];
-    if (before.length === 0 && after.length === 0) return [];
-    const byId = new Map<string, { name: string; before: number; after: number }>();
-    for (const r of before) byId.set(r.player_id, { name: r.name, before: r.minutes, after: 0 });
-    for (const r of after) {
-      const existing = byId.get(r.player_id);
-      if (existing) existing.after = r.minutes;
-      else byId.set(r.player_id, { name: r.name, before: 0, after: r.minutes });
-    }
-    return [...byId.values()]
-      .sort((a, b) => Math.max(b.before, b.after) - Math.max(a.before, a.after))
-      .slice(0, 8);
-  }, [perf]);
-
-  return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <div className="min-w-0">
-        {/* Cyan is the chart voice; the diverging red already means "below neutral". */}
-        <ComponentBars components={teamEval.components} excluded={teamEval.excluded_components} />
-        <dl className="mt-3 space-y-1.5 text-[11px] leading-snug text-muted">
-          {Object.entries(COMPONENT_EXPLAIN).map(([key, explanation]) => (
-            <div key={key}>
-              <dt className="inline font-semibold text-foreground">{COMPONENT_LABEL[key]}: </dt>
-              <dd className="inline">{explanation}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-      <div className="min-w-0">
-        {rows.length > 0 ? (
-          <BeforeAfterBars
-            rows={rows}
-            title="Rotation minutes — before vs after"
-            unit="projected minutes per game"
-            why="Where the deal actually changes who plays; a trade that never reaches the floor can't move the record."
-          />
-        ) : (
-          <UnavailableNotice reason="This evaluation did not return a rotation breakdown, so the before-and-after minutes chart can't be drawn." />
-        )}
-        {perf.delta_wins !== undefined && (
-          <p className="mt-3 text-[12px] leading-relaxed text-muted">
-            Reallocating those minutes moves the projection by{" "}
-            <span className="data text-foreground">
-              {perf.delta_wins >= 0 ? "+" : ""}
-              {perf.delta_wins.toFixed(1)}
-            </span>{" "}
-            wins before uncertainty is applied.
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function FitTab({ teamEval }: { teamEval: TeamEvaluation }) {
-  const fit = sectionOf<FitDetail>(teamEval.detail, "fit");
-  if (fit.unavailable) {
-    return (
-      <UnavailableNotice
-        reason={fit.unavailable}
-        steps={
-          <ButtonLink href="/team-outlook" size="sm">
-            Open Team Outlook
-          </ButtonLink>
-        }
-      />
-    );
-  }
-
-  const needs = fit.needs ?? {};
-  const addressed = fit.needs_addressed ?? {};
-  const skills = fit.skill_delta ?? {};
-  const redundancies = fit.redundancies ?? {};
-  const rankedNeeds = Object.entries(needs)
-    .filter(([, severity]) => severity > 0)
-    .sort((a, b) => b[1] - a[1]);
-
-  return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <div className="min-w-0">
-        <h4 className="title-md text-foreground">Needs this deal addresses</h4>
-        <p className="mt-1 text-[12px] leading-snug text-muted">
-          Only needs the model measured as real for this roster are listed. The bar is how severe
-          the need is; the number is how far this deal moves it.
-        </p>
-        {rankedNeeds.length === 0 ? (
-          <p className="mt-3 text-[13px] text-muted">
-            No measurable roster need is outstanding for this team, so fit is scored on redundancy
-            alone.
-          </p>
-        ) : (
-          <ul className="mt-3 space-y-2.5">
-            {rankedNeeds.map(([key, severity]) => {
-              const delta = addressed[key] ?? 0;
-              return (
-                <li key={key}>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="min-w-0 truncate text-[13px]">{NEED_LABEL[key] ?? key}</span>
-                    <span
-                      className={`data shrink-0 text-[12px] ${
-                        delta > 0 ? "text-legal" : delta < 0 ? "text-illegal" : "text-faint"
-                      }`}
-                    >
-                      {delta > 0 ? "+" : ""}
-                      {delta.toFixed(3)}
-                    </span>
-                  </div>
-                  <MeterBar
-                    value={severity}
-                    max={Math.max(...rankedNeeds.map(([, s]) => s), 0.001)}
-                    color="var(--signal)"
-                    className="mt-1"
-                    label={`${NEED_LABEL[key] ?? key} severity`}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-      <div className="min-w-0">
-        <h4 className="title-md text-foreground">Skill balance change</h4>
-        <p className="mt-1 text-[12px] leading-snug text-muted">
-          Minutes-weighted skill profile arriving minus the profile leaving.
-        </p>
-        <ul className="mt-3 space-y-1.5">
-          {Object.entries(skills)
-            .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-            .map(([key, value]) => (
-              <li key={key} className="flex items-center justify-between gap-3 text-[13px]">
-                <span className="min-w-0 truncate capitalize">{key.replaceAll("_", " ")}</span>
-                <span
-                  className={`data shrink-0 text-[12px] ${
-                    value > 0 ? "text-legal" : value < 0 ? "text-illegal" : "text-faint"
-                  }`}
-                >
-                  {value > 0 ? "+" : ""}
-                  {value.toFixed(2)}
-                </span>
-              </li>
-            ))}
-        </ul>
-        {Object.keys(redundancies).length > 0 && (
-          <p className="mt-3 border-t border-hairline pt-2.5 text-[11px] leading-snug text-faint">
-            Redundancy penalty applied to:{" "}
-            {Object.entries(redundancies)
-              .filter(([, v]) => v > 0)
-              .map(([k, v]) => `${k.replaceAll("_", " ")} (${v.toFixed(2)})`)
-              .join(", ") || "none"}
-            .
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CapTab({ teamEval }: { teamEval: TeamEvaluation }) {
-  const contract = sectionOf<{ unavailable?: string; net_surplus_cap_share?: number; method?: string }>(
-    teamEval.detail,
-    "contract",
-  );
-  const assets = sectionOf<AssetsDetail>(teamEval.detail, "assets");
-  const legality = teamEval.legality;
-  const known = legality.payroll_before !== null && legality.payroll_after !== null;
-
-  return (
-    <div className="space-y-4">
-      {known ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatBlock size="sm" label="Payroll before" value={money(legality.payroll_before)} />
-          <StatBlock size="sm" label="Payroll after" value={money(legality.payroll_after)} />
-          <StatBlock
-            size="sm"
-            label="Apron before"
-            value={legality.apron_status_before ?? "—"}
-          />
-          <StatBlock size="sm" label="Apron after" value={legality.apron_status_after ?? "—"} />
-        </div>
-      ) : (
-        <UnavailableNotice
-          reason={
-            contract.unavailable ??
-            "Contract data isn't imported, so payroll, apron position and contract value can't be computed for this team."
-          }
-          steps={
-            <ButtonLink href="/salary-cap-center" size="sm" variant="secondary">
-              Open the Salary-Cap Center
-            </ButtonLink>
-          }
-        />
-      )}
-
-      {contract.net_surplus_cap_share !== undefined && (
-        <p className="text-[13px] leading-relaxed text-muted">
-          Net contract surplus{" "}
-          <span className="data text-foreground">
-            {contract.net_surplus_cap_share >= 0 ? "+" : ""}
-            {(contract.net_surplus_cap_share * 100).toFixed(2)}%
-          </span>{" "}
-          of the cap. {contract.method}
-        </p>
-      )}
-
-      <div className="rounded-lg border border-hairline bg-panel2/40 p-3.5">
-        <div className="eyebrow">Flexibility &amp; future value</div>
-        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <StatBlock size="sm" label="Picks in" value={assets.picks_in ?? 0} note="hypothetical" />
-          <StatBlock size="sm" label="Picks out" value={assets.picks_out ?? 0} note="hypothetical" />
-          <StatBlock
-            size="sm"
-            label="Roster spots"
-            value={
-              assets.roster_spots_delta !== undefined
-                ? `${assets.roster_spots_delta > 0 ? "+" : ""}${assets.roster_spots_delta}`
-                : "—"
-            }
-            note="net change"
-          />
-        </div>
-        {assets.payroll_note && (
-          <p className="mt-2.5 text-[11px] leading-snug text-faint">{assets.payroll_note}.</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TimelineTab({ teamEval }: { teamEval: TeamEvaluation }) {
-  const timeline = sectionOf<TimelineDetail>(teamEval.detail, "timeline");
-  if (timeline.unavailable || timeline.incoming_alignment === undefined) {
-    return (
-      <UnavailableNotice
-        reason={
-          timeline.unavailable ??
-          "Player ages are missing for at least one asset, so competitive-window alignment can't be scored."
-        }
-      />
-    );
-  }
-  const delta = (timeline.incoming_alignment ?? 0) - (timeline.outgoing_alignment ?? 0);
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatBlock
-          size="sm"
-          label="Strategy"
-          value={(timeline.strategy ?? "custom").replaceAll("_", " ")}
-        />
-        <StatBlock
-          size="sm"
-          label="Arriving fit"
-          value={(timeline.incoming_alignment ?? 0).toFixed(2)}
-          note="0–1 · age vs window"
-        />
-        <StatBlock
-          size="sm"
-          label="Departing fit"
-          value={(timeline.outgoing_alignment ?? 0).toFixed(2)}
-          note="0–1 · age vs window"
-        />
-      </div>
-      <p className="text-[13px] leading-relaxed text-muted">
-        {delta > 0.02
-          ? "The players arriving align better with this team's stated window than the players leaving."
-          : delta < -0.02
-            ? "The players leaving aligned better with this team's stated window than the players arriving."
-            : "Arriving and departing players sit at roughly the same point in this team's window."}{" "}
-        Alignment is a documented age-vs-strategy curve, not a projection of future production.
-      </p>
-    </div>
-  );
-}
-
-function RiskTab({ teamEval }: { teamEval: TeamEvaluation }) {
-  const risk = sectionOf<RiskDetail>(teamEval.detail, "risk");
-  return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <div className="min-w-0">
-        <UncertaintyStrip u={teamEval.uncertainty} />
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <StatBlock
-            size="sm"
-            label="Chance it helps"
-            value={
-              risk.prob_positive_outcome !== undefined
-                ? `${(risk.prob_positive_outcome * 100).toFixed(0)}%`
-                : `${(teamEval.uncertainty.prob_positive * 100).toFixed(0)}%`
-            }
-            note={`${teamEval.uncertainty.n_draws.toLocaleString()} simulations`}
-          />
-          <StatBlock
-            size="sm"
-            label="Arriving availability"
-            value={
-              risk.incoming_availability !== undefined
-                ? `${(risk.incoming_availability * 100).toFixed(0)}%`
-                : "—"
-            }
-            note="historical games played"
-          />
-        </div>
-        {teamEval.uncertainty.top_uncertainty_drivers.length > 0 && (
-          <ul className="mt-3 space-y-1 text-[12px] text-muted">
-            {teamEval.uncertainty.top_uncertainty_drivers.map((d) => (
-              <li key={d.side} className="flex items-center justify-between gap-3">
-                <span className="capitalize">{d.side} side spread</span>
-                <span className="data text-foreground">±{d.spread_wins.toFixed(2)} wins</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <div className="min-w-0">
-        {teamEval.sensitivity_tornado.length > 0 ? (
-          <TornadoChart bars={teamEval.sensitivity_tornado} />
-        ) : (
-          <UnavailableNotice reason="No sensitivity range was returned for this evaluation." />
-        )}
-        <p className="mt-2 text-[11px] leading-snug text-faint">
-          Each bar swings one priority weight by ±50%. A wide bar means the verdict depends on your
-          priorities, not on the deal.
-        </p>
-      </div>
-    </div>
-  );
-}
-
+/**
+ * Mounted only while its tab is selected, which is what makes the search on-demand: the
+ * retrieval reads 337 corpus sides and there is no reason to do it for a user who never
+ * opens the tab.
+ */
 /* ------------------------------------------------------------ player drawer */
 
 function PlayerDrawer({
@@ -2624,7 +2298,13 @@ function PlayerDrawer({
                 </div>
                 {data.archetype && (
                   <div className="mt-1.5">
-                    <Badge status="info">{data.archetype.label}</Badge>
+                    {/* Role labels reach 31 characters ("unclassified (no listed
+                        height)") where the retired k-means labels topped out at 18, and
+                        this Badge sits in a max-w-sm drawer, so it must be allowed to
+                        wrap rather than overflow. */}
+                    <Badge status="info" className="max-w-full whitespace-normal text-left">
+                      {data.archetype.label}
+                    </Badge>
                   </div>
                 )}
               </div>

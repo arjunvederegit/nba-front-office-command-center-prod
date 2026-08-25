@@ -12,17 +12,8 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import {
-  COMPONENT_EXPLAIN,
-  COMPONENT_LABEL,
-  LEGALITY_EXPLAIN,
-  LEGALITY_LABEL,
-  VERDICT_LABEL,
-  fanVerdict,
-  formatDate,
-  money,
-  tei,
-} from "@/lib/format";
+import { tradeDetailSchema } from "@/lib/schemas";
+import { COMPONENT_EXPLAIN, COMPONENT_LABEL, LEGALITY_EXPLAIN, LEGALITY_LABEL, VERDICT_LABEL, VERDICT_STATUS, count, fanVerdict, formatDate, money, tei } from "@/lib/format";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type { TeamEvaluation, TradeDetail } from "@/lib/types";
 import { ComponentBars, TornadoChart, UncertaintyStrip } from "@/components/charts";
@@ -47,19 +38,11 @@ const LEGALITY_ACCENT: Record<string, string> = {
   not_evaluated: "var(--unknown)",
 };
 
-const VERDICT_STATUS: Record<string, string> = {
-  strong: "pass",
-  mixed: "info",
-  upside: "warning",
-  poor: "fail",
-  unknown: "unavailable",
-};
-
 export default function TradeReportPage({ params }: { params: Promise<{ tradeId: string }> }) {
   const { tradeId } = use(params);
   const { data: trade, error } = useQuery({
     queryKey: ["trade", tradeId],
-    queryFn: () => api.get<TradeDetail>(`/trades/${tradeId}`),
+    queryFn: () => api.get<TradeDetail>(`/trades/${tradeId}`, tradeDetailSchema),
   });
   const [activeTeam, setActiveTeam] = useState<string | null>(null);
 
@@ -132,7 +115,7 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
                       className="numeral shrink-0 text-right text-[1.75rem] leading-none"
                       style={{ color: teamIdentityColors.bright }}
                     >
-                      {teamEval ? teamEval.composite_utility.toFixed(1) : "—"}
+                      {teamEval?.composite_utility?.toFixed(1) ?? "—"}
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 pl-[42px]">
@@ -159,7 +142,7 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
 
       {/* ------------------------------------------------------------- assets */}
       <section>
-        <SectionRail title="What moves" aside={`${trade.assets.length} assets across ${trade.teams.length} teams`} />
+        <SectionRail title="What moves" aside={`${count(trade.assets.length, "asset")} across ${count(trade.teams.length, "team")}`} />
         <div
           className={`grid gap-3 ${
             trade.teams.length >= 3 ? "lg:grid-cols-3" : "md:grid-cols-2"
@@ -223,6 +206,15 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
           <div className="mt-3">
             <UnavailableNotice reason="No stored evaluation exists for this team on this deal." />
           </div>
+        ) : evaluation.decision_status !== "scored" ? (
+          <div className="mt-3">
+            <SuppressedDecision
+              evaluation={evaluation}
+              teamAbbreviations={Object.fromEntries(
+                trade.teams.map((t) => [t.team_id, t.abbreviation]),
+              )}
+            />
+          </div>
         ) : (
           <div className="mt-3 space-y-3">
             {/* headline result */}
@@ -230,7 +222,7 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
               <div className="grid grid-cols-2 gap-x-6 gap-y-5 px-5 py-4 lg:grid-cols-4">
                 <StatBlock
                   label="Decision score"
-                  value={evaluation.composite_utility.toFixed(1)}
+                  value={evaluation.composite_utility?.toFixed(1) ?? "—"}
                   note="out of 100 · 50 neutral"
                   accent={identity.bright}
                 />
@@ -249,7 +241,11 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
                 <StatBlock
                   label="Projected wins"
                   value={`${evaluation.uncertainty.median >= 0 ? "+" : ""}${evaluation.uncertainty.median.toFixed(1)}`}
-                  note={`${(evaluation.uncertainty.prob_positive * 100).toFixed(0)}% chance it helps`}
+                  note={
+                    evaluation.uncertainty.prob_positive === null
+                      ? "no outcome distribution"
+                      : `${(evaluation.uncertainty.prob_positive * 100).toFixed(0)}% chance it helps`
+                  }
                   accent="var(--signal)"
                 />
                 <StatBlock
@@ -258,6 +254,16 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
                   note="post-trade roster count"
                 />
               </div>
+              {evaluation.has_unmodeled_players &&
+                (evaluation.unmodeled_players?.length ?? 0) > 0 && (
+                  // Named rather than silently averaged: before R1-4 a player with no
+                  // impact estimate arrived carrying tei = 0.0, the 63rd percentile.
+                  <p className="border-t border-hairline px-5 py-2.5 text-[11px] leading-snug text-unavail">
+                    Left out of the projection for want of an impact estimate (they still
+                    count against the roster limits):{" "}
+                    {evaluation.unmodeled_players?.join(", ")}.
+                  </p>
+                )}
             </Panel>
 
             <div className="grid items-start gap-3 xl:grid-cols-2">
@@ -513,13 +519,83 @@ function AssetList({
   );
 }
 
+/**
+ * A deal that fails a verified rule cannot happen, so it gets no decision score. The
+ * refusal is shown with the rules that caused it — an unexplained "—" would read as a
+ * bug rather than as an answer.
+ */
+function SuppressedDecision({
+  evaluation,
+  teamAbbreviations,
+}: {
+  evaluation: TeamEvaluation;
+  teamAbbreviations: Record<string, string>;
+}) {
+  const suppressed = evaluation.decision_status === "suppressed_illegal";
+  const rules = evaluation.suppression?.failing_rules ?? [];
+  return (
+    <Panel accent={suppressed ? "var(--illegal)" : "var(--unavail)"}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge status={suppressed ? "verified_illegal" : "unavailable"}>
+          {suppressed ? "No decision score — deal is illegal" : "No decision score"}
+        </Badge>
+      </div>
+      <p className="mt-2 max-w-prose text-sm text-muted">
+        {evaluation.suppression?.message ??
+          "No component could be scored for this team with the data available."}
+      </p>
+      {rules.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {rules.map((rule, index) => (
+            <li
+              key={`${rule.rule_code}-${rule.team_id ?? "all"}-${index}`}
+              className="rounded-lg border border-hairline bg-panel2 px-3 py-2"
+            >
+              <div className="eyebrow flex flex-wrap items-center gap-2 text-[0.5625rem] text-illegal">
+                <span>{rule.rule_code}</span>
+                {/* The failing side matters: a deal can be illegal because of the
+                    counterparty, and hiding that reads as an error on this team. */}
+                {rule.team_id && teamAbbreviations[rule.team_id] && (
+                  <span className="text-unavail">
+                    fails for {teamAbbreviations[rule.team_id]}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-sm text-foreground">{rule.message}</p>
+              {rule.source_reference && (
+                <p className="mt-1 text-[11px] text-faint">ref {rule.source_reference}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <MoveList label="In" players={evaluation.incoming} tone="var(--legal)" />
+        <MoveList label="Out" players={evaluation.outgoing} tone="var(--illegal)" />
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <MoneyBlock
+          label="Salary movement"
+          value={`in ${money(evaluation.legality.incoming_salary)} · out ${money(
+            evaluation.legality.outgoing_salary,
+          )}`}
+        />
+        <MoneyBlock
+          label="Roster spots"
+          value={`${evaluation.legality.roster_before} → ${evaluation.legality.roster_after}`}
+        />
+      </div>
+    </Panel>
+  );
+}
+
 function MoveList({
   label,
   players,
   tone,
 }: {
   label: string;
-  players: { player_id: string; name: string; tei: number }[];
+  players: { player_id: string; name: string; tei: number | null }[];
   tone: string;
 }) {
   return (

@@ -23,31 +23,52 @@ PARAMS = CapParams(
 
 class TestMatchingBands:
     def test_small_salary_doubles_plus_allowance(self):
-        # $5M outgoing, below band-1 max → 200% + 250K = $10.25M
-        assert max_incoming_below_first_apron(5_000_000, PARAMS) == 5_000_000 + 5_000_000 + 250_000
+        # $5M outgoing, below band-1 max → 200% + the cap-scaled allowance
+        assert max_incoming_below_first_apron(5_000_000, PARAMS) == (
+            5_000_000 + 5_000_000 + PARAMS.scaled_allowance
+        )
 
     def test_mid_band_adds_fixed_amount(self):
-        # $20M outgoing (scaled band 2): out + band2_add wins over 125%+250K
+        # $20M outgoing (scaled band 2): out + band2_add wins over 125%+allowance
         expected = 20_000_000 + PARAMS.tpe_band2_add
         assert max_incoming_below_first_apron(20_000_000, PARAMS) == expected
 
     def test_large_salary_uses_125_percent(self):
         out = 60_000_000
-        assert max_incoming_below_first_apron(out, PARAMS) == 1.25 * out + 250_000
+        assert max_incoming_below_first_apron(out, PARAMS) == 1.25 * out + PARAMS.scaled_allowance
 
     def test_bands_scale_with_cap(self):
         # 2026-27 cap is ~6.67% above 2025-26 → thresholds scale by the same ratio
         assert PARAMS.tpe_band1_max > 8_846_000
         assert abs(PARAMS.tpe_band1_max / 8_846_000 - PARAMS.salary_cap / 154_647_000) < 1e-9
 
+    def test_the_allowance_scales_with_the_cap_too(self):
+        """C13. Every dollar term in the band formulas must scale together, or the
+        formulas stop meeting at the edges they are defined to meet at."""
+        assert PARAMS.scaled_allowance == PARAMS.allowance * PARAMS.cap_ratio
+        assert PARAMS.scaled_allowance > PARAMS.allowance  # 2026-27 cap is above 2025-26
+
     def test_no_discontinuity_at_band_edges(self):
-        edge = PARAMS.tpe_band1_max
-        below = max_incoming_below_first_apron(edge - 1, PARAMS)
-        above = max_incoming_below_first_apron(edge + 1, PARAMS)
-        assert above >= below - 2  # "greater of" formulation never drops
+        """Both edges, to the dollar. With a fixed $250K against scaled edges the 2026-27
+        boundaries jump by ±$16,673 — this is the assertion that would have caught it."""
+        for edge in (PARAMS.tpe_band1_max, PARAMS.tpe_band2_max):
+            below = max_incoming_below_first_apron(edge - 1, PARAMS)
+            above = max_incoming_below_first_apron(edge + 1, PARAMS)
+            assert abs(above - below) < 10, f"discontinuity of {above - below:,.0f} at {edge:,.0f}"
+
+    def test_the_maximum_is_monotone_in_outgoing_salary(self):
+        """Sending out more salary may never lower the maximum you can take back. Band 2
+        was non-monotonic with the unscaled allowance."""
+        values = [
+            max_incoming_below_first_apron(out, PARAMS)
+            for out in range(1_000_000, 60_000_000, 250_000)
+        ]
+        assert all(b >= a for a, b in zip(values, values[1:], strict=False))
 
     def test_apron_team_limited_to_100_percent(self):
-        assert max_incoming_at_or_above_first_apron(30_000_000, PARAMS) == 30_250_000
+        assert max_incoming_at_or_above_first_apron(30_000_000, PARAMS) == (
+            30_000_000 + PARAMS.scaled_allowance
+        )
 
 
 def _context(db, cap_params, salaries_a, salaries_b, payroll_filler_a=0, payroll_filler_b=0):

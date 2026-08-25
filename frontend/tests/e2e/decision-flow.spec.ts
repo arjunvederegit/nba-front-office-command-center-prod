@@ -47,9 +47,37 @@ test("player explorer lists imported season totals", async ({ page }) => {
   await expect(page.getByText(/season totals/i).first()).toBeVisible({ timeout: 20_000 });
 });
 
+/**
+ * The Strategy Lab is a *comparison* board: with fewer than two saved deals it renders
+ * an empty state by design, so the flow below needs a second deal to exist. Creating it
+ * through the API is deliberate test setup — the UI path is what the flow itself
+ * exercises. Without this the test only passed because a developer database happened to
+ * carry deals left over from earlier runs (the pollution R1-7 removes).
+ */
+async function seedComparisonDeal(request: import("@playwright/test").APIRequestContext) {
+  const api = "http://localhost:8000/api/v1";
+  const teams = await (await request.get(`${api}/teams`)).json();
+  const [teamA, teamB] = teams.slice(0, 2);
+  const roster = await (await request.get(`${api}/teams/${teamA.id}/roster`)).json();
+  const player = roster.roster[0];
+  await request.post(`${api}/trades`, {
+    data: {
+      name: "E2E comparison baseline",
+      team_ids: [teamA.id, teamB.id],
+      player_moves: [
+        { player_id: player.player_id, from_team_id: teamA.id, to_team_id: teamB.id },
+      ],
+      pick_moves: [],
+    },
+  });
+}
+
 test("full flow: team outlook → strategy → trade evaluator → rules → evaluate → save → compare", async ({
   page,
+  request,
 }) => {
+  await seedComparisonDeal(request);
+
   // 1. Team Outlook: open a team
   await page.goto("/team-outlook");
   await page.getByRole("link", { name: /Celtics/ }).first().click();
@@ -78,13 +106,27 @@ test("full flow: team outlook → strategy → trade evaluator → rules → eva
       .first(),
   ).toBeVisible({ timeout: 25_000 });
 
-  // 6. Evaluate and read the fan verdict
+  // 6. Evaluate and read the verdict.
+  //
+  //    Two honest outcomes are possible and which one appears depends on the database:
+  //    a fan verdict, or an explicit refusal when the deal fails a verified rule (a
+  //    counterparty already carrying 18 players cannot receive a 19th). Both are
+  //    correct; a *decision score on an illegal deal* is not, which is what the next
+  //    assertion pins.
   await page.getByRole("button", { name: /Evaluate this deal/i }).click();
   await expect(
     page
-      .getByText(/Strong fit|Mixed outcome|High-risk upside|Poor strategic fit|Cannot fully evaluate/)
+      .getByText(
+        /Clear win|Roughly neutral|Net negative|Clear loss|Cannot fully evaluate|No decision score/,
+      )
       .first(),
   ).toBeVisible({ timeout: 40_000 });
+
+  const refused = await page.getByText("No decision score").first().isVisible();
+  if (refused) {
+    // The refusal must name the rule that caused it, not just withhold the number.
+    await expect(page.getByText(/ROSTER_SIZE|SALARY_MATCHING|STEPIEN|APRON/).first()).toBeVisible();
+  }
 
   // 7. Save the deal → full report
   await page.getByLabel(/Deal name/i).fill("E2E RosterLab deal");

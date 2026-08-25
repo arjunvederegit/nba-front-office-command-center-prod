@@ -1,7 +1,7 @@
 [project]
 name = "tradelab-backend"
 version = "0.1.0"
-description = "TradeLab: NBA Trade Deadline Decision Room — backend API, ingestion, and analytics"
+description = "RosterLab: NBA Front Office Simulator — backend API, ingestion, and analytics"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",

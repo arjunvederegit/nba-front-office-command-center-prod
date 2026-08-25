@@ -1,6 +1,6 @@
 # CBA rule coverage
 
-TradeLab implements a **meaningful, documented subset** of the 2023 NBA–NBPA
+RosterLab implements a **meaningful, documented subset** of the 2023 NBA–NBPA
 Collective Bargaining Agreement's trade rules. This page is the authoritative map of
 what is and isn't covered. The engine's honesty standard means anything not listed
 as implemented reports `unavailable` or is simply out of scope — **a trade is never
@@ -102,7 +102,7 @@ outgoing/incoming totals and noted in results.
 ## STEPIEN_FUTURE_FIRSTS — unavailable by design
 
 **Plain English:** teams may not leave themselves without first-round picks in
-consecutive future drafts. TradeLab has **no authoritative pick-ownership provider**,
+consecutive future drafts. RosterLab has **no authoritative pick-ownership provider**,
 picks in trades are user-added hypotheticals (labeled), so the rule reports
 `unavailable` with low confidence whenever firsts are traded — compliance is never
 certified.

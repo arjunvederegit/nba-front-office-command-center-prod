@@ -13,7 +13,7 @@ STAT_RULES = [
         "base",
         "FG3A",
         True,
-        "Team ranks in the {pct:.0f}th percentile for three-point attempts per game",
+        "Team ranks in the {pct} percentile for three-point attempts per game",
         None,
     ),
     (
@@ -21,7 +21,7 @@ STAT_RULES = [
         "advanced",
         "DEF_RATING",
         False,
-        "Defensive rating is in the {pct:.0f}th percentile (higher = worse defense)",
+        "Defensive rating is in the {pct} percentile (higher = worse defense)",
         None,
     ),
     (
@@ -29,7 +29,7 @@ STAT_RULES = [
         "advanced",
         "OFF_RATING",
         True,
-        "Offensive rating is in the {pct:.0f}th percentile",
+        "Offensive rating is in the {pct} percentile",
         None,
     ),
     (
@@ -37,7 +37,7 @@ STAT_RULES = [
         "advanced",
         "DREB_PCT",
         True,
-        "Defensive rebound share is in the {pct:.0f}th percentile",
+        "Defensive rebound share is in the {pct} percentile",
         None,
     ),
     (
@@ -45,7 +45,7 @@ STAT_RULES = [
         "advanced",
         "AST_PCT",
         True,
-        "Share of baskets assisted is in the {pct:.0f}th percentile",
+        "Share of baskets assisted is in the {pct} percentile",
         None,
     ),
     (
@@ -53,7 +53,7 @@ STAT_RULES = [
         "advanced",
         "TM_TOV_PCT",
         False,
-        "Turnover rate is in the {pct:.0f}th percentile (higher = more turnovers)",
+        "Turnover rate is in the {pct} percentile (higher = more turnovers)",
         None,
     ),
     (
@@ -61,7 +61,7 @@ STAT_RULES = [
         "base",
         "BLK",
         True,
-        "Blocks per game is in the {pct:.0f}th percentile",
+        "Blocks per game is in the {pct} percentile",
         "blocks are a partial proxy for rim protection",
     ),
     (
@@ -69,7 +69,7 @@ STAT_RULES = [
         "base",
         "STL",
         True,
-        "Steals per game is in the {pct:.0f}th percentile",
+        "Steals per game is in the {pct} percentile",
         "steals are a partial proxy for point-of-attack pressure",
     ),
     (
@@ -77,10 +77,24 @@ STAT_RULES = [
         "advanced",
         "TS_PCT",
         True,
-        "True-shooting percentage is in the {pct:.0f}th percentile",
+        "True-shooting percentage is in the {pct} percentile",
         None,
     ),
 ]
+
+
+def ordinal(value: float) -> str:
+    """`3` -> `3rd`, `11` -> `11th`, `52` -> `52nd`.
+
+    The templates below wrote `{pct:.0f}th` unconditionally, so a team in the third
+    percentile for rim protection was told it ranked "3th" — in the team-outlook panel,
+    in the acquisition explanations and in the decision memo, all of which quote this
+    string verbatim.
+    """
+    number = int(round(value))
+    if 10 <= number % 100 <= 20:
+        return f"{number}th"
+    return f"{number}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(number % 10, 'th') }"
 
 
 @dataclass
@@ -95,16 +109,34 @@ def _percentile(series: pd.Series, value: float) -> float:
     series = pd.to_numeric(series, errors="coerce").dropna()
     if series.empty:
         return 50.0
+    # `series` must EXCLUDE the team being scored — see `compute_team_needs`. Including
+    # it puts a row in the denominator that can never satisfy `< value`, deflating every
+    # percentile by a factor of (n-1)/n.
     return float((series < value).mean() * 100)
 
 
 def compute_team_needs(
-    team_stats: dict[str, dict], league_stats: pd.DataFrame, roster_profile: dict | None = None
+    team_stats: dict[str, dict],
+    league_stats: pd.DataFrame,
+    roster_profile: dict | None = None,
+    team_id: str | None = None,
 ) -> list[NeedResult]:
     """team_stats: {"base": {...}, "advanced": {...}} for the team.
     league_stats: DataFrame with one row per team and columns like base_FG3A / advanced_DEF_RATING.
     roster_profile: optional {"avg_height": float, "n_creators": int, "avg_age": float}.
+    team_id: the team being scored, excluded from its own peer group (R4-4).
+
+    **A team is not one of its own peers.** With itself in the frame the denominator
+    counts a row that can never satisfy `< value`, so every percentile was multiplied by
+    exactly 29/30: the league leader in any category scored 96.7 rather than 100, the
+    mean absolute shift was 1.638 percentile points and the worst 3.333, and three of 270
+    team-need cells recorded severity 0 while the team actually sat above its peers'
+    median.
     """
+    peers = league_stats
+    if team_id is not None and "team_id" in league_stats.columns:
+        peers = league_stats[league_stats["team_id"] != team_id]
+
     results: list[NeedResult] = []
     for need_key, source, column, lower_is_need, template, proxy_note in STAT_RULES:
         stats = team_stats.get(source) or {}
@@ -112,7 +144,7 @@ def compute_team_needs(
         league_col = f"{source}_{column}"
         if value is None or league_col not in league_stats.columns:
             continue
-        pct = _percentile(league_stats[league_col], float(value))
+        pct = _percentile(peers[league_col], float(value))
         # Need severity grows as the team falls below (or above, for inverted stats)
         # the league median.
         severity = max(0.0, (50.0 - pct) / 50.0) if lower_is_need else max(0.0, (pct - 50.0) / 50.0)
@@ -121,7 +153,10 @@ def compute_team_needs(
                 need_key=need_key,
                 severity=round(severity, 3),
                 percentile=round(pct, 1),
-                explanation=template.format(pct=pct) + (f" ({proxy_note})" if proxy_note else ""),
+                explanation=(
+                    template.format(pct=ordinal(pct))
+                    + (f" ({proxy_note})" if proxy_note else "")
+                ),
             )
         )
 
@@ -152,16 +187,36 @@ def compute_team_needs(
 
 # Mapping from need keys to the player skill dimensions that address them (see
 # archetypes.SKILL_KEYS). Used by roster-fit.
+#
+# `ball_security` mapped to `creation` — that is, to `pct(AST_PCT)` — until R4-1b, so a
+# team with a turnover problem was told to acquire high-assist ball handlers, the
+# population that turns the ball over most. Measured on the ingested history
+# (player-seasons with >= 1000 minutes): corr(pct(AST_PCT), pct_inv(TM_TOV_PCT)) = -0.255,
+# 10 of the top 12 by assist rate sit below the median in turnover avoidance, and those
+# twelve average 0.285 against a 0.5 median. The mapping did not merely fail to help — it
+# pointed at the worst available answer.
+#
+# `defense_overall` and `point_of_attack_defense` both resolved to `perimeter_defense`,
+# which was steals per minute. Two different questions — "we defend badly" and "we cannot
+# contain a ball handler" — got one answer, and it was the answer that made acquiring a
+# high-usage lead guard read as a point-of-attack upgrade. They now address separate
+# skills built from different terms (R4-1c).
+#
+# `three_point_volume` and `shooting_efficiency` likewise shared one `shooting` skill,
+# so a team that shot plenty of threes badly and a team that shot few threes well were
+# handed the same recommendation (R4-1d).
 NEED_TO_SKILL = {
-    "three_point_volume": "shooting",
-    "shooting_efficiency": "shooting",
+    "three_point_volume": "shooting_volume",
+    "shooting_efficiency": "shooting_accuracy",
     "offense_overall": "scoring",
-    "defense_overall": "perimeter_defense",
-    "point_of_attack_defense": "perimeter_defense",
+    "defense_overall": "team_defense",
+    # `point_of_attack_defense` is deliberately absent — see
+    # `archetypes.UNADDRESSABLE_NEEDS`. The need is measured and displayed; no player
+    # skill claims to fix it, because none can be measured from box-score data.
     "rim_protection": "rim_protection",
     "defensive_rebounding": "rebounding",
     "playmaking": "creation",
     "secondary_creation": "creation",
-    "ball_security": "creation",
+    "ball_security": "turnover_avoidance",
     "lineup_size": "size",
 }

@@ -3,10 +3,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import Provenance, RosterPlayerOut, TeamOut
+from app.cba import resolver
 from app.config import get_settings
 from app.core.errors import NotFoundError
 from app.db.base import get_db
 from app.db.models import (
+    ContractYear,
     ModelVersion,
     PlayerArchetype,
     PlayerImpactEstimate,
@@ -17,6 +19,7 @@ from app.db.models import (
     TeamNeed,
     TeamSeasonStats,
 )
+from app.services.acquisition import DEFAULT_LIMIT, acquisition_targets
 from app.services.payroll import team_payroll_summary
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -123,13 +126,24 @@ def get_roster(team_id: str, db: Session = Depends(get_db)) -> dict:
         ).all()
     }
 
+    # Contract facts for the cap league year, batched. Absent contracts stay absent:
+    # every field below is None when nothing is on file, and none is defaulted.
+    contracts = resolver.salaries(db, [e.player_id for e in entries], settings.cap_league_year)
+    contract_years = _remaining_contract_years(
+        db, [c.id for _, c in contracts.values() if c is not None], settings.cap_league_year
+    )
+
     players = []
     retrieved_at = None
     for entry in entries:
         impact = impacts.get(entry.player_id)
+        salary, contract = contracts[entry.player_id]
         retrieved_at = entry.source_retrieved_at or retrieved_at
         players.append(
             RosterPlayerOut(
+                salary=salary,
+                contract_years_remaining=contract_years.get(contract.id) if contract else None,
+                contract_type=contract.contract_type if contract else None,
                 player_id=entry.player_id,
                 nba_player_id=entry.player.nba_player_id,
                 name=entry.player.full_name,
@@ -152,6 +166,27 @@ def get_roster(team_id: str, db: Session = Depends(get_db)) -> dict:
         "source": "NBA.com via nba_api (CommonTeamRoster)",
         "source_retrieved_at": retrieved_at.isoformat() if retrieved_at else None,
     }
+
+
+def _remaining_contract_years(
+    db: Session, contract_ids: list[str], from_league_year: str
+) -> dict[str, int]:
+    """Seasons on file at or after `from_league_year`, per contract.
+
+    Counts what the snapshot actually carries — it is not a claim about the contract's
+    true remaining length, which no provider here reports. A contract whose file rows end
+    at the cap league year returns 1 (expiring), not 0.
+    """
+    if not contract_ids:
+        return {}
+    counts: dict[str, int] = {}
+    for (contract_id,) in db.execute(
+        select(ContractYear.contract_id).where(
+            ContractYear.contract_id.in_(contract_ids), ContractYear.season >= from_league_year
+        )
+    ).all():
+        counts[contract_id] = counts.get(contract_id, 0) + 1
+    return counts
 
 
 @router.get("/{team_id}/needs")
@@ -182,6 +217,41 @@ def get_needs(team_id: str, db: Session = Depends(get_db)) -> dict:
         "method": "Transparent percentile rules over real team statistics and roster "
         "composition (see /methodology); no LLM involvement.",
     }
+
+
+@router.get(
+    "/{team_id}/acquisition-targets",
+    summary="Start from a need: who addresses it, what it would cost, and the trade",
+    description=(
+        "Diagnosis to trade in one call. The chosen need defaults to the most severe one "
+        "a player skill can address; candidates are **filtered** to players above this "
+        "roster's own level in that skill and **ranked** by projected win change, and "
+        "both rules are named in the response.\n\n"
+        "Each target is then put through the trade evaluator with a package that balances "
+        "its modelled value, and returned only if both sides clear the conditions the "
+        "candidate generator already applies. Set `feasible_only=false` to see the "
+        "unfiltered ranking — across the 30 ingested rosters that filter takes the number "
+        "of distinct players appearing in a top five from 26 to 72."
+    ),
+)
+def team_acquisition_targets(
+    team_id: str,
+    need_key: str | None = None,
+    limit: int = DEFAULT_LIMIT,
+    sort: str = "impact",
+    feasible_only: bool = True,
+    scenario_id: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    return acquisition_targets(
+        db,
+        team_id,
+        need_key=need_key,
+        limit=limit,
+        sort=sort,
+        feasible_only=feasible_only,
+        scenario_id=scenario_id,
+    )
 
 
 @router.get("/{team_id}/payroll")

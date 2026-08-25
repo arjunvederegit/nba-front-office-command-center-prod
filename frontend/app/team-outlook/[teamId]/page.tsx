@@ -10,7 +10,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import { NEED_LABEL, height, money, ordinal, pct, tei } from "@/lib/format";
+import { NEED_LABEL, count, height, money, ordinal, payrollDisclosure, pct, tei } from "@/lib/format";
+import { selectStrengths, selectWeaknesses } from "@/lib/needs";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type {
   PayrollResponse,
@@ -20,6 +21,7 @@ import type {
   Team,
   TeamNeedItem,
 } from "@/lib/types";
+import { AcquisitionTargetsPanel } from "@/components/acquisition";
 import { HalfCourt } from "@/components/court";
 import { PlayerPhoto, TeamCrest } from "@/components/media";
 import { useToast } from "@/components/toast";
@@ -163,10 +165,8 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
   const competitiveWindow = windowLabel(avgRotationAge);
 
   const sortedNeeds = needs?.needs ?? [];
-  const weaknesses = sortedNeeds.filter((n) => n.severity >= 0.35).slice(0, 4);
-  const strengths = sortedNeeds
-    .filter((n) => n.severity === 0 && n.percentile !== null && (n.percentile ?? 0) >= 65)
-    .slice(0, 4);
+  const weaknesses = selectWeaknesses(sortedNeeds);
+  const strengths = selectStrengths(sortedNeeds);
 
   const groups: Record<Group, RosterPlayer[]> = { Guards: [], Wings: [], Bigs: [] };
   for (const player of rosterPlayers) groups[positionGroup(player.position)].push(player);
@@ -288,7 +288,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
         <TeamStat
           label="Average age"
           value={avgAge ?? undefined}
-          note={`${rosterPlayers.length} players on the roster`}
+          note={`${count(rosterPlayers.length, "player")} on the roster`}
           accent={identity.bright}
         />
       </section>
@@ -431,30 +431,43 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
 
                 <div>
                   <h4 className="eyebrow text-illegal">Needs</h4>
-                  <ul className="mt-2 space-y-2">
-                    {(weaknesses.length ? weaknesses : sortedNeeds.slice(0, 4)).map((need) => (
-                      <li key={need.need_key} title={need.explanation}>
-                        <div className="flex items-baseline justify-between gap-3 text-[13px]">
-                          <span className="min-w-0 truncate text-foreground">
-                            {NEED_LABEL[need.need_key] ?? need.need_key}
-                          </span>
-                          <span className="data shrink-0 text-[11px] text-muted">
-                            {ordinal(need.percentile)}
-                          </span>
-                        </div>
-                        <MeterBar
-                          value={need.severity}
-                          color={need.severity > 0.5 ? "var(--illegal)" : "var(--conditional)"}
-                          className="mt-1"
-                          label={`${NEED_LABEL[need.need_key] ?? need.need_key} severity ${(need.severity * 100).toFixed(0)} percent`}
-                        />
-                      </li>
-                    ))}
-                  </ul>
+                  {/* The old fallback rendered the first four rows by severity order
+                      regardless of severity, so Atlanta showed "Defensive rebounding
+                      67th" under Strengths *and* under Needs, with a zero-length bar
+                      beneath the caption "longer bar = larger shortfall". Deleting the
+                      fallback outright would leave ATL and CLE with an empty <ul> under
+                      a bare heading, so the empty case gets a real state. */}
+                  {weaknesses.length === 0 ? (
+                    <p className="mt-2 rounded-lg border border-hairline bg-panel2 px-3 py-2.5 text-[13px] leading-relaxed text-muted">
+                      No pressing needs. Every measured category sits at or above the
+                      league median for this team, so nothing here reads as a shortfall.
+                    </p>
+                  ) : (
+                    <ul className="mt-2 space-y-2">
+                      {weaknesses.map((need) => (
+                        <li key={need.need_key} title={need.explanation}>
+                          <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                            <span className="min-w-0 truncate text-foreground">
+                              {NEED_LABEL[need.need_key] ?? need.need_key}
+                            </span>
+                            <span className="data shrink-0 text-[11px] text-muted">
+                              {ordinal(need.percentile)}
+                            </span>
+                          </div>
+                          <MeterBar
+                            value={need.severity}
+                            color={need.severity > 0.5 ? "var(--illegal)" : "var(--conditional)"}
+                            className="mt-1"
+                            label={`${NEED_LABEL[need.need_key] ?? need.need_key} severity ${(need.severity * 100).toFixed(0)} percent`}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
 
                 <p className="text-[11px] leading-relaxed text-faint">
-                  Longer bar under Needs = larger shortfall.{" "}
+                  {weaknesses.length > 0 ? "Longer bar under Needs = larger shortfall. " : ""}
                   <Link href="/methodology#needs" className="text-signal underline">
                     How this is calculated
                   </Link>
@@ -522,6 +535,9 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
         </div>
       </div>
 
+      {/* ------------------------------------------- need-driven discovery */}
+      <AcquisitionTargetsPanel teamId={detail.team.id} />
+
       {/* --------------------------------------------------- money & assets */}
       <div className="grid items-start gap-3 lg:grid-cols-2">
         {/* ---------------------------------------------------------- payroll */}
@@ -550,6 +566,8 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
                   <SourceRail source={payroll.cap_context.cap_source} retrievedAt={undefined} />
                 )}
               </div>
+            ) : payroll.payroll_known !== null && payroll.payroll_coverage.players_known > 0 ? (
+              <PartialPayroll payroll={payroll} teamId={teamId} />
             ) : (
               <UnavailableNotice
                 reason={
@@ -608,6 +626,71 @@ function TeamStat({
         accent={value === undefined || value === null ? "var(--unknown)" : accent}
       />
     </Panel>
+  );
+}
+
+const THRESHOLD_LABEL: Record<string, string> = {
+  salary_cap: "the salary cap",
+  luxury_tax: "the luxury-tax line",
+  first_apron: "the first apron",
+  second_apron: "the second apron",
+};
+
+/**
+ * Partial contract coverage (R2c). The figure shown is the sum of the contracts on file,
+ * which is a *floor* — every missing salary can only raise it. The coverage, the count of
+ * unpriced players and their names are rendered with the number, never behind a
+ * disclosure the reader has to go looking for, and no cap position is claimed.
+ */
+function PartialPayroll({ payroll, teamId }: { payroll: PayrollResponse; teamId: string }) {
+  const coverage = payroll.payroll_coverage;
+  const cleared = payroll.cap_context_partial?.thresholds_already_cleared ?? [];
+  const shown = payrollDisclosure(payroll.payroll, payroll.payroll_known, coverage);
+  return (
+    <div className="space-y-3">
+      <StatBlock
+        label={`Committed payroll · ${payroll.league_year}`}
+        value={shown.value}
+        note={shown.note}
+        accent="var(--leather)"
+      />
+      <div className="flex flex-wrap gap-1.5">
+        <Badge status="unavailable">lower bound — {coverage.players_unknown} salaries missing</Badge>
+        {cleared.length > 0 && (
+          <Badge status="warning" glyph={false}>
+            already above {THRESHOLD_LABEL[cleared[cleared.length - 1]] ?? cleared[cleared.length - 1]}
+          </Badge>
+        )}
+      </div>
+      <p className="text-[12px] leading-relaxed text-muted">{payroll.payroll_coverage_note}</p>
+      {payroll.cap_context_partial && (
+        <dl className="space-y-1.5 border-t border-hairline pt-3">
+          <MoneyRow label="Luxury-tax line" value={money(payroll.cap_context_partial.luxury_tax)} />
+          <MoneyRow label="First apron" value={money(payroll.cap_context_partial.first_apron)} />
+          <MoneyRow label="Room below tax" value="not computable" />
+        </dl>
+      )}
+      {payroll.players_missing_salary.length > 0 && (
+        <details className="text-[12px] text-muted">
+          <summary className="cursor-pointer text-signal">
+            {count(payroll.players_missing_salary.length, "player")} with no salary on file
+          </summary>
+          <ul className="mt-1.5 space-y-0.5 pl-4">
+            {payroll.players_missing_salary.map((name) => (
+              <li key={name} className="list-disc">
+                {name}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <ButtonLink href={`/salary-cap-center?team=${teamId}`} size="sm" className="w-full">
+        Full picture in Salary-Cap Center
+      </ButtonLink>
+      {payroll.cap_context_partial && (
+        <SourceRail source={payroll.cap_context_partial.cap_source} retrievedAt={undefined} />
+      )}
+    </div>
   );
 }
 

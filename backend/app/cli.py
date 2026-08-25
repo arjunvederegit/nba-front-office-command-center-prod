@@ -1,11 +1,17 @@
-"""TradeLab operational CLI.
+"""RosterLab operational CLI.
 
 Usage: python -m app.cli <command>
 
 Commands
   sync-all         Full provider-backed refresh (teams, players, rosters, standings,
                    stats, games, contracts) + data quality validation
-  sync-<job>       Run one job (teams|players|rosters|standings|player-stats|team-stats|games|contracts)
+  sync-<job>       Run one job (teams|players|rosters|standings|player-stats|team-stats|
+                   games|season-calendar|contracts)
+  sync-corpus-stats
+                   Ingest player season stats and standings for every season in
+                   CORPUS_SEASONS, plus the season calendar. This widens what the
+                   historical-trade corpus can be described by; it does NOT widen the
+                   modelling window, which stays HISTORY_SEASONS.
   seed-config      Load cap-parameter YAML files into league_cap_parameters
   build-features   Build modeling features from ingested data
   train            Train impact model + archetypes; persist model versions
@@ -15,9 +21,61 @@ Commands
   import-stats-csv <path>  Import the user-supplied season-totals CSV (default
                    data/imports/nba_player_stats_2026.csv)
   import-kaggle    Import historical enrichment from the Kaggle basketball dataset
+  seed-demo        Populate a DEDICATED database with the synthetic demo league used by
+                   the end-to-end suite. Refuses to run where nba_api rows exist.
+  import-draft-picks [path]
+                   Import pick ownership from a local RealGM future-drafts snapshot
+                   (default data/imports/draft_picks/realgm_future_drafts.html). Only
+                   unconditional transfers become verified ownership; swaps, protected
+                   and conditional picks are recorded with their source sentence and
+                   filed as data-quality warnings.
+  pick-ownership [year] [round]
+                   Report who verifiably controls each team's own pick for a draft.
+  fetch-transactions [first_end_year] [last_end_year]
+                   Fetch Basketball-Reference season transaction pages into
+                   data/imports/transactions/ (gitignored). One request per season,
+                   3.5 s apart, honouring the source's published Crawl-delay. Existing
+                   files are kept unless --force is passed.
+  import-transactions
+                   Parse the local transaction snapshots into historical_trades /
+                   historical_trade_assets. Nothing is fuzzy-matched: an unresolvable
+                   name is recorded as unresolved and filed as a data-quality warning.
+  transaction-coverage
+                   Report what the imported corpus contains without importing anything.
+  acquisition-validation
+                   Run the need-driven acquisition validation battery over the whole
+                   league: need-filter differentiation, same-need versus cross-need
+                   agreement, the shuffled-need null, and a team-type breakdown.
+  lineup-availability [season]
+                   Measure whether NBA.com lineup data could support a lineup-aware fit
+                   model: group counts, minutes distributions and the implied standard
+                   error of a net-rating estimate at each group size. Network required;
+                   nothing is stored.
+  adversarial-validation
+                   Run the adversarial trade battery against the ingested league: does
+                   the product refuse well? Empty trades score exactly neutral, verified-
+                   illegal trades carry no decision score and name their rule, giving away
+                   the best three never reads as a gain, an unpriced player is disclosed
+                   rather than defaulted, and an impossible trade is refused at
+                   construction. Exits non-zero on any failure.
+  comparable-validation
+                   Run the comparable-trade validation battery: perturbation stability,
+                   scale-form and distance-form sensitivity, single-dimension and
+                   shuffled-feature nulls, leave-one-dimension-out, archetype recovery,
+                   direction confusion, era structure and season concentration. Exits
+                   non-zero when a stated threshold fails.
+  contract-coverage
+                   Report ROSTER-side contract coverage without importing anything:
+                   how many rostered players have a salary for the cap league year,
+                   and how many teams therefore have a computable payroll.
+  purge-fixtures [--apply]
+                   List (or with --apply, delete) scenarios, trade proposals and
+                   comparison sets whose names look like automated-test leftovers.
+                   Dry run by default.
 """
 
 import json
+import os
 import sys
 from collections.abc import Callable
 from datetime import date, datetime
@@ -29,6 +87,19 @@ from app.core.logging import configure_logging, get_logger
 from app.db.base import SessionLocal
 
 logger = get_logger(__name__)
+
+#: Commands that reach a third party. `ROSTERLAB_OFFLINE=1` refuses them.
+#:
+#: The test suite sets it, and it has to: `test_every_documented_command_is_reachable`
+#: executes every command named in this docstring, which for these two means a real
+#: request to Basketball-Reference or NBA.com on every `pytest` run — ten pages at a
+#: 3.5-second crawl delay in the first case. A test suite is not a reason to make traffic
+#: on someone else's servers, and a CI runner is not a reason either.
+NETWORK_COMMANDS = frozenset({"fetch-transactions", "lineup-availability"})
+
+
+def offline() -> bool:
+    return os.environ.get("ROSTERLAB_OFFLINE", "").strip() not in ("", "0", "false", "False")
 
 
 def seed_config() -> None:
@@ -74,6 +145,18 @@ def main() -> None:
         print(__doc__)
         sys.exit(1)
     command = sys.argv[1]
+    if command in NETWORK_COMMANDS and offline():
+        print(
+            json.dumps(
+                {
+                    "refused": command,
+                    "reason": "ROSTERLAB_OFFLINE is set, and this command reaches a "
+                    "third-party service",
+                },
+                indent=2,
+            )
+        )
+        sys.exit(3)
 
     from app.ingestion import jobs
 
@@ -85,11 +168,137 @@ def main() -> None:
         "sync-player-stats": jobs.sync_player_stats,
         "sync-team-stats": jobs.sync_team_stats,
         "sync-games": jobs.sync_games,
+        "sync-season-calendar": jobs.sync_season_calendar,
         "sync-contracts": jobs.sync_contracts,
     }
 
     if command == "seed-config":
         seed_config()
+    elif command == "contract-coverage":
+        from app.ingestion.contract_coverage import (
+            contract_coverage,
+            roster_side_unmatched,
+            summarize,
+        )
+
+        settings = get_settings()
+        with SessionLocal() as db:
+            coverage = contract_coverage(db, settings.current_season, settings.cap_league_year)
+            uncovered = roster_side_unmatched(db, settings.current_season, settings.cap_league_year)
+        print(json.dumps({**coverage, "roster_players_without_salary": uncovered}, indent=2, default=str))
+        print("\n" + summarize(coverage, uncovered))
+    elif command == "import-draft-picks":
+        from app.ingestion.draft_picks import import_draft_picks
+
+        source = sys.argv[2] if len(sys.argv) > 2 else None
+        with SessionLocal() as db:
+            summary = import_draft_picks(db, source)
+        print(json.dumps(summary, indent=2, default=str))
+        if summary.get("error"):
+            sys.exit(2)
+    elif command == "fetch-transactions":
+        from app.ingestion.transactions.fetch import FetchRefused, fetch_seasons
+
+        args = [a for a in sys.argv[2:] if not a.startswith("--")]
+        first = int(args[0]) if args else 2017
+        last = int(args[1]) if len(args) > 1 else date.today().year
+        try:
+            summary = fetch_seasons(first, last, force="--force" in sys.argv[2:])
+        except FetchRefused as exc:
+            print(f"fetch-transactions refused: {exc}")
+            sys.exit(2)
+        print(json.dumps(summary, indent=2, default=str))
+        if summary["failed"]:
+            sys.exit(2)
+    elif command == "import-transactions":
+        from app.ingestion.transactions.importer import import_transactions
+
+        source = sys.argv[2] if len(sys.argv) > 2 else None
+        with SessionLocal() as db:
+            summary = import_transactions(db, source)
+        print(json.dumps(summary, indent=2, default=str))
+        if summary.get("error"):
+            sys.exit(2)
+    elif command == "lineup-availability":
+        from app.analytics.lineup_availability import measure
+
+        season = sys.argv[2] if len(sys.argv) > 2 else "2024-25"
+        try:
+            print(json.dumps(measure(season), indent=2, default=str))
+        except Exception as exc:  # network or upstream failure, reported not swallowed
+            print(json.dumps({"error": type(exc).__name__, "message": str(exc)[:300]}, indent=2))
+            sys.exit(2)
+    elif command == "acquisition-validation":
+        from app.services.acquisition_validation import run_battery as acquisition_battery
+
+        with SessionLocal() as db:
+            report = acquisition_battery(db)
+        print(json.dumps(report, indent=2, default=str))
+        if report["failed"]:
+            print(f"\nFAILED: {', '.join(report['failed'])}")
+            sys.exit(2)
+    elif command == "comparable-validation":
+        from app.analytics.comparables_validation import run_battery
+        from app.services.comparables import ComparableTradeService
+
+        with SessionLocal() as db:
+            service = ComparableTradeService(db)
+            report = run_battery(service.rankable_corpus(), all_sides=service.corpus())
+        print(json.dumps(report, indent=2, default=str))
+        if report["failed"]:
+            print(f"\nFAILED: {', '.join(report['failed'])}")
+            sys.exit(2)
+    elif command == "transaction-coverage":
+        from app.ingestion.transactions.importer import coverage_summary
+
+        with SessionLocal() as db:
+            print(json.dumps(coverage_summary(db), indent=2, default=str))
+    elif command == "pick-ownership":
+        from app.ingestion.draft_picks import ownership_summary
+
+        year = int(sys.argv[2]) if len(sys.argv) > 2 else date.today().year + 1
+        round_number = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+        with SessionLocal() as db:
+            print(json.dumps(ownership_summary(db, year, round_number), indent=2, default=str))
+    elif command == "purge-fixtures":
+        from app.ingestion.fixtures import purge_fixtures
+
+        apply = "--apply" in sys.argv[2:]
+        with SessionLocal() as db:
+            summary = purge_fixtures(db, dry_run=not apply)
+        print(json.dumps(summary, indent=2, default=str))
+        if not apply:
+            print("\nDry run. Re-run with --apply to delete these rows.")
+    elif command == "seed-demo":
+        from app.ingestion.demo_seed import DemoSeedRefused, seed_demo
+
+        try:
+            with SessionLocal() as db:
+                summary = seed_demo(db)
+        except DemoSeedRefused as exc:
+            print(f"seed-demo refused: {exc}")
+            sys.exit(2)
+        print(json.dumps(summary, indent=2, default=str))
+    elif command == "adversarial-validation":
+        from app.services.adversarial_validation import run_battery as adversarial_battery
+
+        with SessionLocal() as db:
+            report = adversarial_battery(db)
+        print(json.dumps(report, indent=2, default=str))
+        if report.get("failed"):
+            print(f"\nFAILED: {', '.join(report['failed'])}")
+            sys.exit(1)
+    elif command == "sync-corpus-stats":
+        from app.config import get_settings as _settings
+
+        seasons = _settings().corpus_season_list
+        with SessionLocal() as db:
+            written = {
+                "player_stats": jobs.sync_player_stats(db, seasons),
+                "standings": sum(jobs.sync_standings(db, season) for season in seasons),
+                "season_calendar": jobs.sync_season_calendar(db, seasons),
+            }
+        print(json.dumps({"seasons": seasons, "rows_written": written}, indent=2))
     elif command == "sync-all":
         with SessionLocal() as db:
             results = jobs.sync_all(db)

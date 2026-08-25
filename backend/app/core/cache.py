@@ -93,7 +93,12 @@ class Cache:
         return version or "0"
 
     def bump_data_version(self) -> None:
-        version = str(int(time.time()))
+        # Nanoseconds, not whole seconds. At second resolution two bumps inside the same
+        # second produced the *same* namespace, so the second one invalidated nothing and
+        # the caller kept reading the previous snapshot's cached values. Production rarely
+        # ingests twice in one second; the test suite does it constantly, and the symptom
+        # there was one test's skill vectors being served to the next test's database.
+        version = str(time.time_ns())
         if self._redis is not None:
             with contextlib.suppress(Exception):
                 self._redis.set("tradelab:data_version", version)

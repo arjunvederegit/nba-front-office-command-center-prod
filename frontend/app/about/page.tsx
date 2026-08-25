@@ -27,13 +27,33 @@ const TOOLS: { name: string; href: string; blurb: string }[] = [
     name: "Player Explorer",
     href: "/player-explorer",
     blurb:
-      "imported 2025-26 player stat lines with photos, per-game derivations, percentiles and multi-player comparison.",
+      "imported 2025-26 player stat lines with photos, per-game derivations, multi-player comparison, and league percentiles taken only over players whose sample can support one.",
   },
   {
     name: "Salary-Cap Center",
     href: "/salary-cap-center",
     blurb:
       "payroll by season from imported contract snapshots; fully honest empty state until contracts are imported.",
+  },
+  // R5 and R6 shipped three surfaces this list did not mention, which made a page
+  // titled "the tool suite" an incomplete description of the tool suite.
+  {
+    name: "Comparable trades",
+    href: "/trade-evaluator",
+    blurb:
+      "the completed trades a proposal most resembles, retrieved from ten seasons of Basketball-Reference transaction pages — evidence rather than model output. Inside the Trade Evaluator, under Precedent.",
+  },
+  {
+    name: "Need-driven acquisition",
+    href: "/team-outlook",
+    blurb:
+      "start from what a roster is short of, filter to players who actually improve it, and rank by projected wins — each candidate run through the trade evaluator before it is shown. Inside Team Outlook.",
+  },
+  {
+    name: "Decision memo",
+    href: "/trade-evaluator",
+    blurb:
+      "the evaluation as a reviewable artifact, including an explicit list of what is not known about the deal. Exportable from a saved trade.",
   },
 ];
 
@@ -90,14 +110,18 @@ export default function AboutPage() {
 {`Next.js 16 (this UI) ── /api/v1 ──> FastAPI
                                      ├─ CBA rules engine (four-state honesty standard)
                                      ├─ Evaluation (6 components + Monte Carlo + sensitivity)
-                                     ├─ Analytics (TEI, archetypes, needs, projections)
-                                     ├─ SQLAlchemy + Alembic (32 tables, full provenance)
+                                     ├─ Analytics (TEI, archetypes, needs, projections,
+                                     │             rotation allocator, pick valuation)
+                                     ├─ Comparable-trade retrieval (10 seasons, side-level)
+                                     ├─ SQLAlchemy + Alembic (35 tables, full provenance)
                                      ├─ Media asset manifest (photos/logos by NBA id)
                                      └─ Integrations
                                         ├─ nba_api  ←  NBA.com (rate-limited, circuit-broken)
                                         ├─ user CSV totals import (PLAYER_ID-keyed)
                                         ├─ Kaggle basketball DB (NULL-fill enrichment)
-                                        └─ Basketball-Reference contracts snapshot parser`}
+                                        ├─ Basketball-Reference contracts snapshot parser
+                                        ├─ Basketball-Reference transaction pages (trades)
+                                        └─ RealGM future-drafts snapshot (pick ownership)`}
         </pre>
       </Panel>
 

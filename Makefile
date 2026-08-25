@@ -4,12 +4,21 @@ FRONTEND := frontend
 PY := $(BACKEND)/.venv/bin/python
 PIP := $(BACKEND)/.venv/bin/pip
 
+E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
+
 .PHONY: setup dev dev-backend dev-frontend test test-backend test-frontend lint format \
         sync-data build-features train score seed-config migrate e2e help \
-        index-assets import-stats-csv import-kaggle
+        index-assets import-stats-csv import-kaggle seed-demo visual-qa worker \
+        sync-corpus-stats sync-season-calendar \
+        purge-fixtures import-contracts contract-coverage \
+        import-draft-picks pick-ownership fetch-transactions import-transactions \
+        transaction-coverage comparable-validation acquisition-validation lineup-availability \
+        adversarial-validation
 
+# `[a-z-]+` missed targets containing a digit or ending the alternation early, so
+# `e2e` never appeared. Match the full target token instead.
 help:
-	@grep -E '^[a-z-]+:' Makefile | sed 's/:.*//' | sort -u
+	@grep -E '^[a-z0-9][a-z0-9-]*:' Makefile | sed 's/:.*//' | sort -u
 
 setup: ## Create backend venv, install backend + frontend dependencies
 	python3.12 -m venv $(BACKEND)/.venv 2>/dev/null || python3.11 -m venv $(BACKEND)/.venv
@@ -34,16 +43,53 @@ dev-backend:
 dev-frontend:
 	cd $(FRONTEND) && npm run dev
 
+worker: ## Run the background scheduler locally (the same one docker compose runs)
+	cd $(BACKEND) && .venv/bin/python -m app.worker
+
 test: test-backend test-frontend ## Run all tests
 
+# Mirrors CI exactly (see .github/workflows/ci.yml) so a green local run means a green
+# CI run — including the coverage floor.
 test-backend:
-	cd $(BACKEND) && .venv/bin/pytest -q
+	cd $(BACKEND) && .venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under=85
 
 test-frontend:
 	cd $(FRONTEND) && npm run test -- --run
 
-e2e: ## Playwright end-to-end tests (requires running stack or fixture mode)
-	cd $(FRONTEND) && npx playwright test
+sync-corpus-stats: ## Ingest player stats + standings + calendar for every CORPUS_SEASONS season
+	cd $(BACKEND) && .venv/bin/python -m app.cli sync-corpus-stats
+
+sync-season-calendar: ## Ingest each season's first and last regular-season game date
+	cd $(BACKEND) && .venv/bin/python -m app.cli sync-season-calendar
+
+import-contracts: ## Import contracts from the configured provider and report ROSTER-side coverage
+	cd $(BACKEND) && .venv/bin/python -m app.cli sync-contracts
+
+contract-coverage: ## Report contract coverage without importing anything
+	cd $(BACKEND) && .venv/bin/python -m app.cli contract-coverage
+
+purge-fixtures: ## List test-run leftovers in the dev DB (add APPLY=1 to delete)
+	cd $(BACKEND) && .venv/bin/python -m app.cli purge-fixtures $(if $(APPLY),--apply,)
+
+seed-demo: ## Build a DEDICATED e2e database from the synthetic demo league
+	rm -f "$(E2E_DB)"
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/alembic upgrade head
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli seed-config
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli seed-demo
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli train
+	cd $(BACKEND) && DATABASE_URL="sqlite:///$(E2E_DB)" .venv/bin/python -m app.cli score
+
+e2e: seed-demo ## Playwright end-to-end tests against the dedicated demo database
+	@# R7. Playwright no longer reuses a running server, because it was attaching to a
+	@# developer's `make dev` — pointed at their ingested database — running the whole
+	@# suite against it and writing fixture trades into it, while every test passed.
+	@# Its own error for a busy port suggests setting `reuseExistingServer: true`, which
+	@# is the defect. Say so before it gets the chance.
+	@if lsof -ti:8000 >/dev/null 2>&1 || lsof -ti:3000 >/dev/null 2>&1; then 		echo ""; 		echo "  Port 8000 or 3000 is in use — probably \`make dev\`."; 		echo ""; 		echo "  This suite writes fixture trades into whatever backend it reaches, so it"; 		echo "  starts its own against \$$E2E_DB rather than reusing yours. Stop the dev"; 		echo "  servers and re-run."; 		echo ""; 		echo "  Do NOT set reuseExistingServer — attaching to a dev server is how the suite"; 		echo "  came to be testing the wrong database. If you really do have a demo-seeded"; 		echo "  backend up, use E2E_NO_SERVER=1."; 		echo ""; 		exit 1; 	fi
+	cd $(FRONTEND) && DATABASE_URL="sqlite:///$(E2E_DB)" npx playwright test
+
+visual-qa: ## Screenshot every route at every supported viewport; fails on problems
+	cd $(FRONTEND) && node ../scripts/visual_qa.mjs $(OUT)
 
 lint: ## Ruff + mypy + eslint + tsc
 	cd $(BACKEND) && .venv/bin/ruff check app tests && .venv/bin/mypy app
@@ -75,3 +121,30 @@ import-stats-csv: ## Import the user-supplied season-totals CSV (data/imports/)
 
 import-kaggle: ## Import historical enrichment from the Kaggle basketball dataset
 	cd $(BACKEND) && .venv/bin/python -m app.cli import-kaggle
+
+import-draft-picks: ## Import pick ownership from the local RealGM snapshot (data/imports/)
+	cd $(BACKEND) && .venv/bin/python -m app.cli import-draft-picks
+
+pick-ownership: ## Report verified pick ownership for a draft year (YEAR=2029 ROUND=1)
+	cd $(BACKEND) && .venv/bin/python -m app.cli pick-ownership $(YEAR) $(ROUND)
+
+fetch-transactions: ## Fetch BBRef season transaction pages into data/imports/ (FROM=2017 TO=2026)
+	cd $(BACKEND) && .venv/bin/python -m app.cli fetch-transactions $(FROM) $(TO) $(if $(FORCE),--force,)
+
+import-transactions: ## Parse the local transaction snapshots into historical_trades
+	cd $(BACKEND) && .venv/bin/python -m app.cli import-transactions
+
+transaction-coverage: ## Report what the imported historical-trade corpus contains
+	cd $(BACKEND) && .venv/bin/python -m app.cli transaction-coverage
+
+adversarial-validation: ## Run the adversarial trade battery (fails on any honesty violation)
+	cd $(BACKEND) && .venv/bin/python -m app.cli adversarial-validation
+
+comparable-validation: ## Run the comparable-trade validation battery (fails on a threshold)
+	cd $(BACKEND) && .venv/bin/python -m app.cli comparable-validation
+
+acquisition-validation: ## Run the need-driven acquisition battery over the league
+	cd $(BACKEND) && .venv/bin/python -m app.cli acquisition-validation
+
+lineup-availability: ## Re-measure whether lineup data could support a fit model (network)
+	cd $(BACKEND) && .venv/bin/python -m app.cli lineup-availability $(SEASON)

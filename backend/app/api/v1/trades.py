@@ -3,7 +3,15 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import EvaluateRequest, GenerateRequest, TradeIn, ValidateRequest
+from app.api.schemas import (
+    ComparablesRequest,
+    EvaluateRequest,
+    GenerateRequest,
+    MemoRequest,
+    ReportFormat,
+    TradeIn,
+    ValidateRequest,
+)
 from app.cba.builder import build_trade_context
 from app.cba.engine import TradeLegalityEngine
 from app.core.errors import DomainError, NotFoundError
@@ -20,10 +28,15 @@ from app.db.models import (
     TradeTeam,
 )
 from app.services.candidates import generate_candidates
+from app.services.comparables import ComparableTradeService
 from app.services.evaluation import EvaluationService
-from app.services.reports import build_report_markdown, report_to_html
+from app.services.reports import build_report_markdown, memo_payload, report_to_html
 
 router = APIRouter(prefix="/trades", tags=["trades"])
+
+#: Comparable trades shown in a memo. Three, not twenty-five: the memo is a document a
+#: person reads, and the fourth-closest precedent has never changed anyone's mind.
+MEMO_COMPARABLES = 3
 
 
 def _moves_from_payload(payload: ValidateRequest) -> tuple[list[dict], list[dict]]:
@@ -74,7 +87,21 @@ def evaluate_trade(payload: EvaluateRequest, db: Session = Depends(get_db)) -> d
     return {"legality": legality, "evaluations": evaluations}
 
 
-@router.post("/generate")
+@router.post(
+    "/generate",
+    summary="[experimental] Generate candidate trades",
+    description=(
+        "**Experimental — no UI entry point (R1-8).** Rebuilt in R5-3. The search covers "
+        "**every** counterparty: the evaluation budget is divided across the league "
+        "rather than consumed by the first few teams alphabetically, which is how it "
+        "previously reached 13.8 % of counterparties. Salary matching uses the CBA's "
+        "expanded-TPE bands where both packages are priced. A candidate is surfaced only "
+        "if **both** teams score above 50 — the composite's own definition of 'changes "
+        "nothing' — and neither projects worse than −2 wins, and the packages differ by "
+        "no more than 2 wins of modelled value. Responses carry a `coverage` block "
+        "stating what was enumerated, evaluated and rejected, per counterparty."
+    ),
+)
 def generate_trades(payload: GenerateRequest, db: Session = Depends(get_db)) -> dict:
     strategy, weights, scenario_focal = _scenario_weights(db, payload.scenario_id)
     focal_team_id = payload.focal_team_id or scenario_focal
@@ -98,6 +125,36 @@ def generate_trades(payload: GenerateRequest, db: Session = Depends(get_db)) -> 
         preferred_outgoing_ids=preferred,
         max_candidates=payload.max_candidates,
     )
+
+
+@router.post(
+    "/comparables",
+    summary="Completed trades most like this one, from one team's side",
+    description=(
+        "Retrieval over ten seasons of Basketball-Reference transaction pages, normalized "
+        "locally. The unit is a **side**: what one team sent, received and was at the "
+        "time, because 'we trade a star for picks' and 'we trade picks for a star' are "
+        "the same transaction and different decisions.\n\n"
+        "Similarity is an interpretable grouped distance over six dimensions, each "
+        "returned with its own similarity and the feature values that produced it. "
+        "Salary is not among them — no source here carries a historical contract — and "
+        "**nothing reads what happened next**. A comparable is evidence about precedent, "
+        "not about consequence."
+    ),
+)
+def comparable_trades(payload: ComparablesRequest, db: Session = Depends(get_db)) -> dict:
+    if payload.focal_team_id not in payload.team_ids:
+        raise DomainError("focal_team_id must be one of team_ids")
+    player_moves, pick_moves = _moves_from_payload(payload)
+    return ComparableTradeService(db).find(
+        payload.focal_team_id, payload.team_ids, player_moves, pick_moves, k=payload.k
+    )
+
+
+@router.get("/comparables/coverage")
+def comparable_coverage(db: Session = Depends(get_db)) -> dict:
+    """What the historical corpus contains, and where it stops."""
+    return ComparableTradeService(db).coverage()
 
 
 @router.post("", status_code=201)
@@ -262,41 +319,149 @@ def get_trade(trade_id: str, db: Session = Depends(get_db)) -> dict:
     return _trade_detail(db, trade_id)
 
 
-@router.get("/{trade_id}/report")
-def get_trade_report(trade_id: str, format: str = "markdown", db: Session = Depends(get_db)):
-    detail = _trade_detail(db, trade_id)
+@router.get("/{trade_id}/comparables")
+def saved_trade_comparables(
+    trade_id: str, focal_team_id: str | None = None, k: int = 5, db: Session = Depends(get_db)
+) -> dict:
     trade = db.get(TradeProposal, trade_id)
-    assert trade is not None
-    strategy, _, scenario_focal = _scenario_weights(db, trade.scenario_id)
-    focal_team_id = scenario_focal or detail["teams"][0]["team_id"]
-    focal_team_name = next(
-        (t["name"] for t in detail["teams"] if t["team_id"] == focal_team_id),
-        detail["teams"][0]["name"],
-    )
+    if trade is None:
+        raise NotFoundError(f"trade {trade_id} not found")
+    team_ids, player_moves, pick_moves = _trade_moves(trade)
+    _, _, scenario_focal = _scenario_weights(db, trade.scenario_id)
+    focal = focal_team_id or scenario_focal or (team_ids[0] if team_ids else None)
+    if focal is None or focal not in team_ids:
+        raise DomainError("focal_team_id must be one of the trade's teams")
+    return ComparableTradeService(db).find(focal, team_ids, player_moves, pick_moves, k=k)
 
+
+def _memo_markdown(
+    db: Session,
+    *,
+    trade_name: str,
+    team_ids: list[str],
+    player_moves: list[dict],
+    pick_moves: list[dict],
+    focal_team_id: str,
+    strategy: str,
+    legality: dict,
+    evaluations: dict,
+    include_comparables: bool,
+) -> str:
+    """One builder for both memo routes, so a saved trade and an unsaved one cannot
+    diverge into two documents that disagree."""
+    teams = {t.id: t for t in db.scalars(select(Team).where(Team.id.in_(team_ids))).all()}
+    focal_team = teams.get(focal_team_id)
+    comparables = None
+    if include_comparables:
+        comparables = ComparableTradeService(db).find(
+            focal_team_id, team_ids, player_moves, pick_moves, k=MEMO_COMPARABLES
+        )
     last_sync = db.scalar(
         select(DataSyncRun.finished_at)
         .where(DataSyncRun.status == "succeeded")
         .order_by(DataSyncRun.finished_at.desc())
     )
-    markdown_text = build_report_markdown(
+    return build_report_markdown(
+        trade_name=trade_name,
+        focal_team_name=focal_team.full_name if focal_team else "the focal team",
+        strategy=strategy,
+        legality=legality,
+        evaluations=evaluations,
+        focal_team_id=focal_team_id,
+        data_freshness={"last_sync": last_sync.isoformat() if last_sync else "never"},
+        comparables=comparables,
+    )
+
+
+@router.post(
+    "/memo",
+    summary="Decision memo for a trade that has not been saved",
+    description=(
+        "The same document `/trades/{id}/report` produces, for a deal the user is still "
+        "building. Recommendation, what changes on the floor including the rotation "
+        "consequences, roster fit, cost in salary and draft capital, the CBA rules that "
+        "fired, comparable completed trades, risks, and one consolidated section naming "
+        "everything the memo could not establish."
+    ),
+)
+def trade_memo(payload: MemoRequest, db: Session = Depends(get_db)):
+    if payload.focal_team_id not in payload.team_ids:
+        raise DomainError("focal_team_id must be one of team_ids")
+    player_moves, pick_moves = _moves_from_payload(payload)
+    strategy, weights, _ = _scenario_weights(db, payload.scenario_id)
+    if payload.strategy != "custom":
+        strategy = payload.strategy
+    context = build_trade_context(db, payload.team_ids, player_moves, pick_moves)
+    legality = TradeLegalityEngine().evaluate(context)
+    service = EvaluationService(db)
+    evaluations = {
+        team_id: service.evaluate_for_team(
+            team_id, payload.team_ids, player_moves, pick_moves, strategy, weights, legality
+        )
+        for team_id in payload.team_ids
+    }
+    markdown_text = _memo_markdown(
+        db,
+        trade_name=payload.name,
+        team_ids=payload.team_ids,
+        player_moves=player_moves,
+        pick_moves=pick_moves,
+        focal_team_id=payload.focal_team_id,
+        strategy=strategy,
+        legality=legality,
+        evaluations=evaluations,
+        include_comparables=payload.include_comparables,
+    )
+    if payload.format == "html":
+        return HTMLResponse(report_to_html(markdown_text))
+    if payload.format == "markdown":
+        return PlainTextResponse(markdown_text, media_type="text/markdown")
+    return memo_payload(markdown_text)
+
+
+@router.get("/{trade_id}/report")
+def get_trade_report(
+    trade_id: str,
+    format: ReportFormat = "markdown",
+    include_comparables: bool = True,
+    db: Session = Depends(get_db),
+):
+    """`format` is a closed set. It used to be a bare `str`, and the `GeneratedReport`
+    row was written *before* the branch, so `?format=pdf` returned markdown while
+    persisting a record claiming PDF."""
+    detail = _trade_detail(db, trade_id)
+    trade = db.get(TradeProposal, trade_id)
+    assert trade is not None
+    team_ids, player_moves, pick_moves = _trade_moves(trade)
+    strategy, _, scenario_focal = _scenario_weights(db, trade.scenario_id)
+    focal_team_id = scenario_focal or detail["teams"][0]["team_id"]
+
+    markdown_text = _memo_markdown(
+        db,
         trade_name=detail["name"],
-        focal_team_name=focal_team_name,
+        team_ids=team_ids,
+        player_moves=player_moves,
+        pick_moves=pick_moves,
+        focal_team_id=focal_team_id,
         strategy=strategy,
         legality=detail["legality"],
         evaluations=detail["evaluations"],
-        focal_team_id=focal_team_id,
-        data_freshness={"last_sync": last_sync.isoformat() if last_sync else "never"},
+        include_comparables=include_comparables,
     )
-    report = GeneratedReport(
-        trade_id=trade.id,
-        scenario_id=trade.scenario_id,
-        format=format,
-        content=markdown_text,
-        llm_enhanced=False,
+    response = (
+        HTMLResponse(report_to_html(markdown_text))
+        if format == "html"
+        else PlainTextResponse(markdown_text, media_type="text/markdown")
     )
-    db.add(report)
+    # Recorded only once the response it describes actually exists.
+    db.add(
+        GeneratedReport(
+            trade_id=trade.id,
+            scenario_id=trade.scenario_id,
+            format=format,
+            content=markdown_text,
+            llm_enhanced=False,
+        )
+    )
     db.commit()
-    if format == "html":
-        return HTMLResponse(report_to_html(markdown_text))
-    return PlainTextResponse(markdown_text, media_type="text/markdown")
+    return response
