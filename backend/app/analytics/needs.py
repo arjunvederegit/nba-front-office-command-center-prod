@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from app.domain.needs import NEED_TO_SKILL as _DOMAIN_NEED_TO_SKILL
+
 # (need_key, source, column, lower_is_need, explanation template, proxy_note)
 STAT_RULES = [
     (
@@ -205,18 +207,4 @@ def compute_team_needs(
 # `three_point_volume` and `shooting_efficiency` likewise shared one `shooting` skill,
 # so a team that shot plenty of threes badly and a team that shot few threes well were
 # handed the same recommendation (R4-1d).
-NEED_TO_SKILL = {
-    "three_point_volume": "shooting_volume",
-    "shooting_efficiency": "shooting_accuracy",
-    "offense_overall": "scoring",
-    "defense_overall": "team_defense",
-    # `point_of_attack_defense` is deliberately absent — see
-    # `archetypes.UNADDRESSABLE_NEEDS`. The need is measured and displayed; no player
-    # skill claims to fix it, because none can be measured from box-score data.
-    "rim_protection": "rim_protection",
-    "defensive_rebounding": "rebounding",
-    "playmaking": "creation",
-    "secondary_creation": "creation",
-    "ball_security": "turnover_avoidance",
-    "lineup_size": "size",
-}
+NEED_TO_SKILL = _DOMAIN_NEED_TO_SKILL

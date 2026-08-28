@@ -310,7 +310,7 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
                   </ul>
                 )}
                 <SourceRail
-                  source="RosterLab evaluation engine"
+                  source="Pivot evaluation engine"
                   retrievedAt={evaluation.evaluated_at}
                 />
               </Panel>
@@ -405,7 +405,7 @@ function PageTop({ trade }: { trade: TradeDetail }) {
             </span>
             <span>created {formatDate(trade.created_at)}</span>
           </div>
-          <h1 className="title-lg whitespace-nowrap text-foreground">{trade.name}</h1>
+          <h1 className="title-lg text-balance text-foreground">{trade.name}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {trade.teams.map((team, index) => (
               <span key={team.team_id} className="flex items-center gap-2">
@@ -463,7 +463,7 @@ function SectionRail({ title, aside }: { title: string; aside?: string }) {
     <div className="mb-3">
       <div className="h-px w-full bg-gradient-to-r from-signal/60 to-transparent" />
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-2.5">
-        <h2 className="title-lg whitespace-nowrap text-foreground">{title}</h2>
+        <h2 className="title-lg text-balance text-foreground">{title}</h2>
         {aside && <p className="text-[11px] text-faint">{aside}</p>}
       </div>
     </div>

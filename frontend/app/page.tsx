@@ -1,21 +1,42 @@
 "use client";
 
+/**
+ * Command Center — Pivot's front door.
+ *
+ * The page it replaced was a tool launcher: a four-card grid of modules with a status
+ * chip each. That is an accurate description of what the software contains and a poor
+ * description of what it is for, and it made Pivot read as a collection of calculators
+ * that happen to share a header.
+ *
+ * This page leads with the decision workflow instead — observe, diagnose, test, decide —
+ * because that sequence is the product. Every step links to the module that performs it,
+ * so nothing is lost: the launcher is still here, it is just ordered by the question a
+ * user is asking rather than by the shape of the codebase.
+ *
+ * The visual language is unchanged. The arena-at-night palette, the condensed display
+ * face, the half-court motif and the team-tinted hero were all developed through R1-R7
+ * and are the part of this product that was already right.
+ */
+
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { dataHealthSchema } from "@/lib/schemas";
 import { formatDate } from "@/lib/format";
 import { setFavoriteTeam, useFavoriteTeam } from "@/lib/favoriteTeam";
+import { useHydrated } from "@/lib/hydrated";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type { DataHealth, Scenario, Team, TradeSummary } from "@/lib/types";
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from "@/components/brand";
 import { BallGlyph, HalfCourt, ShotChartMotif, TransactionLane } from "@/components/court";
 import { TeamCrest, TeamLogo } from "@/components/media";
 import { useToast } from "@/components/toast";
-import { Badge, ButtonLink, Panel, Skeleton, StatBlock } from "@/components/ui";
+import { Badge, ButtonLink, ErrorState, Panel, Skeleton, StatBlock } from "@/components/ui";
 
-/* --------------------------------------------------------------- tool data */
+/* ----------------------------------------------------------- decision workflow */
 
-interface Tool {
+interface Step {
+  step: string;
   title: string;
   href: string;
   blurb: string;
@@ -23,18 +44,44 @@ interface Tool {
   art: React.ReactNode;
 }
 
-const TOOLS: Tool[] = [
+/**
+ * The four questions, in the order a front office asks them. `href` points at the module
+ * that answers each one — these are the shipped routes, not aspirational ones.
+ */
+const WORKFLOW: Step[] = [
   {
-    title: "Trade Evaluator",
+    step: "01",
+    title: "Understand the roster",
+    href: "/team-outlook",
+    blurb:
+      "What a team actually contains: rotation, roles, measured strengths, and the needs that follow from them.",
+    status: "ready",
+    art: <HalfCourt className="h-10 w-28 text-signal/45" />,
+  },
+  {
+    step: "02",
+    title: "Identify the edge",
+    href: "/player-explorer",
+    blurb:
+      "Who is out there, what they do, and which of them answers a need this roster actually has.",
+    status: "ready",
+    art: <ShotChartMotif className="h-10 w-28 text-signal" />,
+  },
+  {
+    step: "03",
+    title: "Test the move",
     href: "/trade-evaluator",
-    blurb: "Build a two- or three-team deal and get a live rules check with projected impact.",
+    blurb:
+      "Build a two- or three-team deal and get a live rules check with projected impact, fit and risk.",
     status: "ready",
     art: <TransactionLane className="h-10 w-28" active />,
   },
   {
-    title: "Strategy Lab",
+    step: "04",
+    title: "Make the decision",
     href: "/strategy-lab",
-    blurb: "Put saved deals side by side and see which one survives your priorities.",
+    blurb:
+      "Put the options side by side under your own priorities and see which one survives them.",
     status: "ready",
     art: (
       <svg viewBox="0 0 112 40" className="h-10 w-28" aria-hidden fill="none">
@@ -45,72 +92,81 @@ const TOOLS: Tool[] = [
       </svg>
     ),
   },
+];
+
+const SUPPORTING = [
   {
-    title: "Player Explorer",
-    href: "/player-explorer",
-    blurb: "Search every rostered player, compare season lines, and read league context.",
-    status: "ready",
-    art: <ShotChartMotif className="h-10 w-28 text-signal" />,
-  },
-  {
-    title: "Salary-Cap Center",
+    title: "Contracts & Cap",
     href: "/salary-cap-center",
     blurb: "Payroll by season, expiring money and commitments — once contracts are imported.",
-    status: "needs-import",
-    art: (
-      <svg viewBox="0 0 112 40" className="h-10 w-28" aria-hidden fill="none">
-        {[6, 26, 46, 66, 86].map((x, i) => (
-          <rect
-            key={x}
-            x={x}
-            y={38 - [26, 20, 14, 9, 5][i]}
-            width="14"
-            height={[26, 20, 14, 9, 5][i]}
-            rx="2"
-            fill="var(--leather)"
-            fillOpacity={0.25 + i * 0.05}
-          />
-        ))}
-        <line x1="0" y1="12" x2="112" y2="12" stroke="var(--conditional)" strokeDasharray="3 3" />
-      </svg>
-    ),
+    status: "needs-import" as const,
+  },
+  {
+    title: "Methodology",
+    href: "/methodology",
+    blurb: "Every number, its definition, its source data and what it cannot support.",
+    status: "ready" as const,
+  },
+  {
+    title: "Data Health",
+    href: "/data-health",
+    blurb: "Seven sources with coverage, freshness and the next step for each.",
+    status: "ready" as const,
   },
 ];
 
 const ROADMAP = [
-  { title: "Contract Predictor", need: "Needs imported contract history before a model can be validated" },
-  { title: "Free Agency Planner", need: "Planned once cap holds and exceptions are modeled" },
-  { title: "Draft Fit", need: "Planned once verified pick ownership is available" },
+  { title: "Player Intelligence", need: "Skill grades beyond the box score need tracking or matchup data" },
+  { title: "Scenario Engine", need: "Signings, waivers and departures on the same before/after machinery as trades" },
+  { title: "Pivot AI", need: "Planned to call the engines and quote them — never to invent an answer" },
 ];
 
-const CAPABILITIES = [
+const PRINCIPLES = [
   ["Real NBA data", "Rosters and stats from NBA.com, never invented"],
-  ["Salary-cap validation", "2023 CBA matching bands and apron limits"],
-  ["Player-impact modeling", "Validated against a persistence baseline"],
-  ["Scenario comparison", "Rank deals under your own priorities"],
-  ["Uncertainty analysis", "Ranges and probabilities, not false precision"],
-  ["Transparent methodology", "Every number traces to a documented calculation"],
+  ["Conditional fit", "There is no universal fit score — it depends on the roster"],
+  ["Traceable numbers", "Every value carries its method, source and limitations"],
+  ["Named uncertainty", "Ranges and probabilities, not false precision"],
+  ["Honest gaps", "What Pivot cannot measure is listed, not quietly omitted"],
+  ["Rules that refuse", "A check that could not run never upgrades a verdict"],
 ];
 
 /* -------------------------------------------------------------------- page */
 
-export default function OverviewPage() {
+export default function CommandCenterPage() {
   const toast = useToast();
   const favorite = useFavoriteTeam();
+  const hydrated = useHydrated();
 
-  const { data: teams } = useQuery({ queryKey: ["teams"], queryFn: () => api.get<Team[]>("/teams") });
-  const { data: health } = useQuery({
+  // Each of these reads `error` as well as `data`. Without it a failed request renders
+  // the same skeleton as a pending one, forever — the loading state becomes the error
+  // state and the user is never told anything went wrong.
+  const { data: teamsData, error: teamsError } = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => api.get<Team[]>("/teams"),
+  });
+  const { data: healthData } = useQuery({
     queryKey: ["data-health"],
     queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
   });
-  const { data: trades } = useQuery({
+  const { data: tradesData, error: tradesError } = useQuery({
     queryKey: ["trades"],
     queryFn: () => api.get<TradeSummary[]>("/trades"),
   });
-  const { data: scenarios } = useQuery({
+  const { data: scenariosData, error: scenariosError } = useQuery({
     queryKey: ["scenarios"],
     queryFn: () => api.get<Scenario[]>("/scenarios"),
   });
+
+  // Everything below reads through the hydration gate. The app shell hydrates before this
+  // page and warms the shared query cache, so these can already hold data on the page's
+  // very first client render while the server HTML still had skeletons — React then throws
+  // "Hydration failed because the server rendered text didn't match the client". Holding
+  // the values back for that one render makes the two trees identical; the real data
+  // arrives in the commit immediately after.
+  const teams = hydrated ? teamsData : undefined;
+  const health = hydrated ? healthData : undefined;
+  const trades = hydrated ? tradesData : undefined;
+  const scenarios = hydrated ? scenariosData : undefined;
 
   const favoriteTeam = teams?.find((t) => t.id === favorite?.id) ?? null;
   const identity = teamIdentity(favorite?.abbreviation);
@@ -136,12 +192,12 @@ export default function OverviewPage() {
             <div className="eyebrow flex flex-wrap items-center gap-x-2.5 gap-y-1">
               <span className="flex items-center gap-1.5 text-signal">
                 <BallGlyph size={13} />
-                RosterLab
+                {PRODUCT_NAME}
               </span>
               <span aria-hidden className="hidden text-faint sm:inline">
                 /
               </span>
-              <span className="hidden sm:inline">Basketball Decision Intelligence</span>
+              <span className="hidden sm:inline">{PRODUCT_TAGLINE}</span>
               {health && (
                 <>
                   <span aria-hidden className="text-faint">
@@ -153,22 +209,26 @@ export default function OverviewPage() {
             </div>
 
             <h1 className="title-xl mt-3 text-foreground">
-              Build the next move.
+              Know what your roster is. Then change it.
             </h1>
             <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-muted">
-              Evaluate trades, compare roster strategies, and understand the decisions shaping an
-              NBA team — on live data, with a rules check that never guesses.
+              Pivot is a decision system for basketball front offices. Observe a roster,
+              diagnose what it lacks, compare who fits it, test the move — and read why,
+              with every number traced to how it was produced.
             </p>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <ButtonLink
-                href={favorite ? `/trade-evaluator?team=${favorite.id}` : "/trade-evaluator"}
+                href={favorite ? `/team-outlook/${favorite.id}` : "/team-outlook"}
                 variant="primary"
               >
-                Open the Trade Evaluator
+                Start with your roster
               </ButtonLink>
-              <ButtonLink href="/player-explorer" variant="secondary">
-                Explore the platform
+              <ButtonLink
+                href={favorite ? `/trade-evaluator?team=${favorite.id}` : "/trade-evaluator"}
+                variant="secondary"
+              >
+                Open the Trade Evaluator
               </ButtonLink>
             </div>
 
@@ -213,7 +273,7 @@ export default function OverviewPage() {
                     <div className="eyebrow mt-0.5 text-[0.5625rem]">Your team</div>
                     <div className="mt-3 flex flex-wrap justify-center gap-2">
                       <ButtonLink href={`/team-outlook/${favoriteTeam.id}`} size="sm">
-                        Team Outlook
+                        Roster
                       </ButtonLink>
                       <ButtonLink
                         href={`/trade-evaluator?team=${favoriteTeam.id}`}
@@ -236,7 +296,7 @@ export default function OverviewPage() {
                       Pick your team
                     </div>
                     <p className="mt-1 text-[12px] leading-snug text-muted">
-                      Choose a franchise below — RosterLab defaults to it everywhere.
+                      Choose a franchise below — Pivot defaults to it everywhere.
                     </p>
                   </>
                 )}
@@ -246,46 +306,81 @@ export default function OverviewPage() {
         </div>
       </section>
 
-      {/* ------------------------------------------------------ tool launcher */}
+      {/* ------------------------------------------------- the decision workflow */}
       <section>
         <SectionHead
-          eyebrow="The platform"
-          title="Front-office tools"
-          aside="Every active tool is one click from here"
+          eyebrow="How Pivot works"
+          title="The decision workflow"
+          aside="Four questions, in the order a front office asks them"
         />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {TOOLS.map((tool) => (
-            <Link
-              key={tool.title}
-              href={tool.href}
-              className="panel group flex flex-col p-4 transition-colors hover:border-signal/45"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="title-md whitespace-nowrap text-foreground group-hover:text-signal">
-                  {tool.title}
+        <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {WORKFLOW.map((step, index) => (
+            <li key={step.title} className="relative">
+              <Link
+                href={step.href}
+                className="panel group flex h-full flex-col p-4 transition-colors hover:border-signal/45"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="numeral text-[22px] leading-none text-signal/70">
+                    {step.step}
+                  </span>
+                  {step.status === "ready" ? (
+                    <Badge status="pass">ready</Badge>
+                  ) : (
+                    <Badge status="warning">needs import</Badge>
+                  )}
+                </div>
+                <h3 className="title-md mt-2 text-foreground group-hover:text-signal">
+                  {step.title}
                 </h3>
-                {tool.status === "ready" ? (
-                  <Badge status="pass">ready</Badge>
-                ) : (
-                  <Badge status="warning">needs import</Badge>
-                )}
-              </div>
-              <p className="mt-2 flex-1 text-[13px] leading-relaxed text-muted">{tool.blurb}</p>
-              <div className="mt-3 flex items-end justify-between">
-                <span className="text-muted/80">{tool.art}</span>
-                <span className="eyebrow text-signal opacity-0 transition-opacity group-hover:opacity-100">
-                  Open →
+                <p className="mt-1.5 flex-1 text-[13px] leading-relaxed text-muted">
+                  {step.blurb}
+                </p>
+                <div className="mt-3 flex items-end justify-between">
+                  <span className="text-muted/80">{step.art}</span>
+                  <span className="eyebrow text-signal opacity-0 transition-opacity group-hover:opacity-100">
+                    Open →
+                  </span>
+                </div>
+              </Link>
+              {index < WORKFLOW.length - 1 && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute -right-2 top-1/2 z-10 hidden text-signal/40 xl:block"
+                >
+                  →
                 </span>
-              </div>
+              )}
+            </li>
+          ))}
+        </ol>
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          {SUPPORTING.map((item) => (
+            <Link
+              key={item.title}
+              href={item.href}
+              className="group flex items-start justify-between gap-3 rounded-lg border border-hairline bg-panel px-4 py-3 transition-colors hover:border-signal/45"
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-foreground group-hover:text-signal">
+                  {item.title}
+                </span>
+                <span className="mt-0.5 block text-[12px] leading-snug text-muted">
+                  {item.blurb}
+                </span>
+              </span>
+              {item.status === "needs-import" && <Badge status="warning">import</Badge>}
             </Link>
           ))}
         </div>
 
         <div className="mt-3 rounded-lg border border-dashed border-line px-4 py-3">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="eyebrow">On the roadmap</span>
+            <span className="eyebrow">Not built yet</span>
             <span className="text-[11px] text-faint">
-              Not shipped, not clickable — RosterLab won&apos;t fake a model it can&apos;t validate.
+              Named rather than hinted at — Pivot won&apos;t ship a model it can&apos;t validate,
+              or a page that promises one.
             </span>
           </div>
           <ul className="mt-2 flex flex-wrap gap-x-6 gap-y-1.5">
@@ -304,10 +399,14 @@ export default function OverviewPage() {
         <SectionHead
           eyebrow="Set your context"
           title="Pick your team"
-          aside="Sets the default across every tool"
+          aside="Sets the default across every module"
         />
-        {!teams ? (
-          <div className="grid grid-cols-5 gap-2 md:grid-cols-10">
+        {teamsError ? (
+          <ErrorState message={`Could not load teams: ${String(teamsError)}`} />
+        ) : !teams ? (
+          // Same column ramp as the loaded grid below, so the tiles do not reflow when
+          // the request resolves.
+          <div className="grid grid-cols-5 gap-2 sm:grid-cols-6 md:grid-cols-10">
             {Array.from({ length: 30 }).map((_, i) => (
               <Skeleton key={i} className="h-[74px]" />
             ))}
@@ -351,7 +450,9 @@ export default function OverviewPage() {
         <SectionHead eyebrow="Your work" title="Front-office snapshot" />
         <div className="grid gap-3 lg:grid-cols-2">
           <Panel title="Recent deals" actions={<Link className="eyebrow text-signal" href="/strategy-lab">Compare →</Link>}>
-            {!trades ? (
+            {tradesError ? (
+              <ErrorState message={`Could not load saved deals: ${String(tradesError)}`} />
+            ) : !trades ? (
               <div className="space-y-2">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <Skeleton key={i} className="h-9" />
@@ -390,9 +491,11 @@ export default function OverviewPage() {
 
           <Panel
             title="Saved strategies"
-            actions={<Link className="eyebrow text-signal" href="/team-outlook">Team Outlook →</Link>}
+            actions={<Link className="eyebrow text-signal" href="/team-outlook">Teams →</Link>}
           >
-            {!scenarios ? (
+            {scenariosError ? (
+              <ErrorState message={`Could not load saved strategies: ${String(scenariosError)}`} />
+            ) : !scenarios ? (
               <div className="space-y-2">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <Skeleton key={i} className="h-9" />
@@ -401,7 +504,7 @@ export default function OverviewPage() {
             ) : scenarios.length === 0 ? (
               <SnapshotEmpty
                 title="No strategies yet"
-                body="Choose how a team should build in Team Outlook — it sets how every deal is scored."
+                body="Choose how a team should build on its roster page — it sets how every deal is scored."
                 href="/team-outlook"
                 cta="Choose a strategy"
               />
@@ -439,10 +542,10 @@ export default function OverviewPage() {
             <Panel padded={false} className="px-4 py-3">
               <StatBlock
                 label="Contracts"
-                value={health.providers.contracts?.configured ? "Imported" : "Not imported"}
+                value={health.providers?.contracts?.configured ? "Imported" : "Not imported"}
                 note="Salary rules stay unavailable until imported"
                 size="sm"
-                accent={health.providers.contracts?.configured ? "var(--legal)" : "var(--unknown)"}
+                accent={health.providers?.contracts?.configured ? "var(--legal)" : "var(--unknown)"}
               />
             </Panel>
             <Panel padded={false} className="px-4 py-3">
@@ -467,11 +570,11 @@ export default function OverviewPage() {
         )}
       </section>
 
-      {/* --------------------------------------------------- capability strip */}
+      {/* --------------------------------------------------- principles strip */}
       <section className="hardwood rounded-xl border border-hairline px-5 py-5">
-        <SectionHead eyebrow="What it does" title="Built for defensible decisions" />
+        <SectionHead eyebrow="What Pivot holds to" title="Built for defensible decisions" />
         <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-          {CAPABILITIES.map(([title, body]) => (
+          {PRINCIPLES.map(([title, body]) => (
             <li key={title} className="flex gap-2.5">
               <span aria-hidden className="mt-1 text-signal">
                 <BallGlyph size={13} />
@@ -507,7 +610,7 @@ function SectionHead({
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-2.5">
         <div>
           <div className="eyebrow">{eyebrow}</div>
-          <h2 className="title-lg mt-1 whitespace-nowrap text-foreground">{title}</h2>
+          <h2 className="title-lg mt-1 text-balance text-foreground">{title}</h2>
         </div>
         {aside && <p className="text-[11px] text-faint">{aside}</p>}
       </div>

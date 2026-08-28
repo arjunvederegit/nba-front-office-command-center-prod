@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Data Health — what is powering RosterLab right now, and what to plug in next.
+ * Data Health — what is powering Pivot right now, and what to plug in next.
  *
  * The honesty rule is structural here: the summary strip counts critical sources
  * that are missing, so a page carrying an unconfigured contract provider can
@@ -90,7 +90,7 @@ export default function DataHealthPage() {
         <PageHeader
           eyebrow="Provenance"
           title="Data Health"
-          lede="What's powering RosterLab right now — and what to plug in next."
+          lede="What's powering Pivot right now — and what to plug in next."
         />
         <Skeleton className="h-24" />
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -133,7 +133,7 @@ export default function DataHealthPage() {
       <PageHeader
         eyebrow="Provenance"
         title="Data Health"
-        lede="Every screen in RosterLab traces to one of these sources. When a source is missing, the product says so instead of estimating around it."
+        lede="Every screen in Pivot traces to one of these sources. When a source is missing, the product says so instead of estimating around it."
         actions={
           <Button variant="secondary" onClick={() => refetch()} disabled={isFetching}>
             {isFetching ? "Refreshing…" : "Refresh"}
@@ -555,7 +555,7 @@ function SectionRail({ title, aside }: { title: string; aside?: string }) {
     <div className="mb-3">
       <div className="h-px w-full bg-gradient-to-r from-signal/60 to-transparent" />
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-2.5">
-        <h2 className="title-lg whitespace-nowrap text-foreground">{title}</h2>
+        <h2 className="title-lg text-balance text-foreground">{title}</h2>
         {aside && <p className="text-[11px] text-faint">{aside}</p>}
       </div>
     </div>

@@ -5,6 +5,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.provenance import (
+    UNKNOWN_UPSTREAM,
+    describe_providers,
+    upstream_for,
+)
+
+__all__ = ["describe_providers", "upstream_for", "UNKNOWN_UPSTREAM"]
+
 # One definition of the strategy vocabulary. It was previously inlined in
 # `ScenarioIn` only, so `EvaluateRequest.strategy` and `GenerateRequest.strategy`
 # were bare `str` and silently fell back to different weights on a typo (QA-7).
@@ -18,9 +26,21 @@ ReportFormat = Literal["markdown", "html"]
 
 
 class Provenance(BaseModel):
-    source_provider: str = "nba_api"
-    upstream: str = "NBA.com"
+    # No defaults. The default *was* the bug: every caller that omitted these got
+    # "NBA.com" regardless of what the row actually said.
+    source_provider: str
+    upstream: str
     source_retrieved_at: datetime | None = None
+
+    @classmethod
+    def of(cls, row: object) -> "Provenance":
+        """Read provenance off a `ProvenanceMixin` row, describing what it actually is."""
+        provider = getattr(row, "source_provider", None) or ""
+        return cls(
+            source_provider=provider or "unknown",
+            upstream=upstream_for(provider),
+            source_retrieved_at=getattr(row, "source_retrieved_at", None),
+        )
 
 
 class TeamOut(BaseModel):

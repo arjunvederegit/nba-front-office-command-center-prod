@@ -25,12 +25,26 @@ from app.analytics.archetypes import SKILL_KEYS, player_skill_vector
 APP = Path(__file__).resolve().parents[2] / "app"
 
 # Modules whose output can reach a rendered number.
+#
+# This list is literal paths, so a module that moves or is added is silently NOT scanned
+# — the guard would keep passing over the old files while new scoring logic went
+# unchecked. Anything that applies a threshold or serves a percentile belongs here.
 SCANNED = [
     APP / "analytics" / "archetypes.py",
     APP / "analytics" / "fit.py",
     APP / "analytics" / "sensitivity.py",
     APP / "services" / "evaluation.py",
+    # Pivot: serves skill percentiles, roster skill coverage and the fit component, and
+    # applies the strength/weakness thresholds that used to live in the browser.
+    APP / "services" / "intelligence.py",
 ]
+
+
+def test_every_scanned_module_exists():
+    """The scan is parametrized over literal paths, so a renamed module would make it
+    silently vacuous rather than red. Fail loudly instead."""
+    missing = [p for p in SCANNED if not p.exists()]
+    assert missing == [], f"scanned modules that no longer exist: {missing}"
 
 
 def _league_frame() -> pd.DataFrame:

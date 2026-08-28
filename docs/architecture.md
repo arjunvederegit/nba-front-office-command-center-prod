@@ -5,8 +5,10 @@
 ```
 ┌───────────────────────────── Browser ─────────────────────────────┐
 │ Next.js 16 App Router · Tailwind · TanStack Query · dnd-kit       │
-│ pages: / decision-room teams/[id] players/[id] trade-builder      │
-│        trades/[id] compare methodology data-health about          │
+│ routes: / player-explorer team-outlook[/id] trade-evaluator       │
+│         strategy-lab salary-cap-center players/[id] trades/[id]   │
+│         methodology data-health about                             │
+│ nav follows the workflow: observe → diagnose → test → decide      │
 └───────────────▲───────────────────────────────────────────────────┘
                 │ /api/v1 (Next rewrite → FastAPI)
 ┌───────────────┴───────────────────────────────────────────────────┐
@@ -15,6 +17,9 @@
 │  errors: deterministic {error:{code,message,request_id}}          │
 │                                                                   │
 │  api/v1 ──► services ──► analytics / cba ──► db (SQLAlchemy 2)    │
+│                 │              │                                  │
+│                 └──────────────┴──► domain (the vocabulary layer;  │
+│                        computes nothing, imports nothing above it) │
 │                │                                                  │
 │                └──► integrations/nba_api (the ONLY NBA.com path)  │
 │                └──► integrations/contracts (optional)             │
@@ -30,7 +35,7 @@
 3. **The frontend never decides legality.** It renders `POST /trades/validate` results; the CBA engine is backend-authoritative.
 4. **Analytics are pure** given a DataFrame — feature building, models, and simulations don't import FastAPI or the ORM session beyond loading rows, which makes them unit-testable with fixtures. `analytics/comparables.py` holds the distance and knows nothing about the database; `services/comparables.py` owns the join and is the only place a `TradeSide` is built.
 5. **A validation battery is a command, not a paragraph.** `make comparable-validation`, `make acquisition-validation` and `make lineup-availability` re-run the measurements the R6 claims rest on and exit non-zero on a stated threshold, so a claim can be falsified by running it.
-6. **No test reaches a third party.** `ROSTERLAB_OFFLINE=1` — set by the test suite — makes the two fetching commands refuse.
+6. **No test reaches a third party.** `ROSTERLAB_OFFLINE=1` (the name is historical; see ADR-24) — set by the test suite — makes the two fetching commands refuse.
 
 ## Data flow
 

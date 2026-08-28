@@ -1,7 +1,11 @@
 """Cache abstraction: Redis when configured, in-process TTL cache otherwise.
 
 Cache keys embed a data-version namespace so evaluations computed against an older
-snapshot are invalidated after each ingestion run (see bump_data_version)."""
+snapshot are invalidated after each ingestion run (see bump_data_version).
+
+The `tradelab:` key prefix below predates the product's renames and is kept deliberately:
+it namespaces a live cache, and changing it would orphan every key already in Redis
+rather than invalidate it."""
 
 import contextlib
 import json
@@ -105,6 +109,7 @@ class Cache:
         self._local.set("tradelab:data_version", version, ttl_seconds=10 * 365 * 86400)
 
     def versioned_key(self, *parts: str) -> str:
+        # "tradelab:" is the historical namespace of a live cache — see module docstring.
         return "tradelab:v" + self.get_data_version() + ":" + ":".join(parts)
 
 

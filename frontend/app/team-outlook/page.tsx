@@ -144,7 +144,9 @@ export default function TeamOutlookIndex() {
           </section>
         ))}
 
-      {teams && <SourceRail source="NBA.com via nba_api" retrievedAt={retrievedAt} />}
+      {teams && (
+        <SourceRail source={teams[0]?.provenance?.upstream ?? "unknown source"} retrievedAt={retrievedAt} />
+      )}
     </div>
   );
 }
@@ -154,7 +156,7 @@ function ConferenceRail({ label, count }: { label: string; count: number | null 
     <div className="mb-3">
       <div className="h-px w-full bg-gradient-to-r from-signal/60 to-transparent" />
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-2.5">
-        <h2 className="title-lg whitespace-nowrap text-foreground">{label}</h2>
+        <h2 className="title-lg text-balance text-foreground">{label}</h2>
         {count !== null && (
           <span className="eyebrow">
             {count} {count === 1 ? "team" : "teams"}

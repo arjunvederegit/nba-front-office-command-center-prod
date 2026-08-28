@@ -223,7 +223,7 @@ def test_trade_save_report_and_comparison(client, seeded):
     assert "## 5. Precedent" in report.text
 
     html = client.get(f"/api/v1/trades/{trade1['id']}/report", params={"format": "html"})
-    assert "<title>RosterLab decision memo</title>" in html.text
+    assert "<title>Pivot decision memo</title>" in html.text
 
     t2 = client.post("/api/v1/trades", json=trade_payload("Deal 2", seeded["a2"], seeded["b1"]))
     comparison = client.post(
@@ -393,3 +393,67 @@ def test_admin_token_comparison_is_constant_time():
         and node.func.attr == "compare_digest"
     ]
     assert calls, "admin token comparison must use hmac.compare_digest"
+
+
+def test_demo_rows_are_never_described_as_nba_com(client, db):
+    """The honesty assertion the suite was missing.
+
+    Storage was always right: the demo seeder stamps its rows `demo_seed`, refuses to run
+    against a database holding `nba_api` rows, and a Playwright guard checks the roster
+    names. The *serializers* were wrong — they hard-coded `nba_api` / `NBA.com`, so a
+    synthetic row was described to the client as NBA.com data. Four guards stopped
+    synthetic data leaking; none stopped it being mislabelled.
+    """
+    from app.ingestion.demo_seed import seed_demo
+
+    seed_demo(db, seasons=("2025-26",))
+
+    teams = client.get("/api/v1/teams").json()
+    team = next(t for t in teams if t["abbreviation"] == "BOS")
+
+    # Team *identity* genuinely comes from nba_api's static table, so it may say NBA.com —
+    # but it must say which nba_api surface, not be defaulted.
+    assert team["provenance"]["source_provider"] == "nba_api_static"
+
+    roster = client.get(f"/api/v1/teams/{team['id']}/roster").json()
+    assert roster["source_providers"] == ["demo_seed"]
+    assert "NBA.com" not in roster["source"], roster["source"]
+    assert "Synthetic" in roster["source"]
+
+    player_id = roster["roster"][0]["player_id"]
+    detail = client.get(f"/api/v1/players/{player_id}").json()
+    provenance = detail["player"]["provenance"]
+    assert provenance["source_provider"] == "demo_seed"
+    assert "NBA.com" not in provenance["upstream"], provenance["upstream"]
+
+    # The player's *current team* is nested inside the same payload and carries its own
+    # provenance — the nested serializer took the same default and must be right too.
+    assert detail["player"]["current_team"]["provenance"]["source_provider"] == (
+        "nba_api_static"
+    )
+
+    stats = client.get(f"/api/v1/players/{player_id}/stats").json()
+    assert stats["source_providers"] == ["demo_seed"]
+    assert "NBA.com" not in stats["source"], stats["source"]
+
+
+
+def test_unknown_provider_renders_as_itself_not_as_nba_com():
+    """An unmapped provider must not borrow NBA.com's name.
+
+    This is the property that keeps the fix from rotting: a new ingester added without a
+    line in `UPSTREAM_BY_PROVIDER` shows up as its own key rather than silently
+    inheriting the old default.
+    """
+    from app.api.schemas import UNKNOWN_UPSTREAM, describe_providers, upstream_for
+
+    assert upstream_for("nba_api") == "NBA.com via nba_api"
+    assert upstream_for("demo_seed") == "Synthetic demo data (not real NBA data)"
+    assert upstream_for("some_future_provider") == "some_future_provider"
+    assert upstream_for(None) == UNKNOWN_UPSTREAM
+    assert upstream_for("") == UNKNOWN_UPSTREAM
+
+    assert describe_providers([]) == UNKNOWN_UPSTREAM
+    assert describe_providers({"nba_api", "user_import_csv"}) == (
+        "NBA.com via nba_api + User-imported CSV"
+    )

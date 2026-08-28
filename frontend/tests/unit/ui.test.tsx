@@ -65,8 +65,24 @@ describe("UnavailableNotice", () => {
 
 describe("SourceLine", () => {
   it("shows provenance and update time", () => {
-    render(<SourceLine retrievedAt="2026-07-20T12:00:00Z" />);
+    render(<SourceLine source="NBA.com via nba_api" retrievedAt="2026-07-20T12:00:00Z" />);
     expect(screen.getByText(/Source: NBA.com via nba_api/)).toBeInTheDocument();
+  });
+
+  it("renders whatever provenance it is given, and asserts nothing on its own", () => {
+    // The prop used to default to "NBA.com via nba_api", so a rail rendered over
+    // synthetic or user-imported data still claimed NBA.com. There is no default now;
+    // this pins that the component is a renderer, not a source of truth.
+    // Scoped to this render's own container: the suite does not auto-clean between
+    // cases, so a document-wide query would still see the rail rendered above.
+    const { container } = render(
+      <SourceLine
+        source="Synthetic demo data (not real NBA data)"
+        retrievedAt="2026-07-20T12:00:00Z"
+      />,
+    );
+    expect(container.textContent).toContain("Synthetic demo data");
+    expect(container.textContent).not.toContain("NBA.com");
   });
 });
 

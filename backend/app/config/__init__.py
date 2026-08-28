@@ -14,6 +14,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    #: The filename keeps its pre-Pivot spelling deliberately: it points at a real local
+    #: database that developers already have on disk. Renaming the default would silently
+    #: open an empty database instead of theirs.
     database_url: str = "sqlite:///./tradelab.db"
     redis_url: str = ""
 

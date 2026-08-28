@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * RosterLab interface primitives.
+ * Pivot interface primitives.
  *
  * Two rules run through everything here:
  *  - Status is never carried by color alone — every status badge also carries a
@@ -87,7 +87,10 @@ export function PageHeader({
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pt-3">
         <div className="min-w-0">
           {eyebrow && <div className="eyebrow mb-1.5">{eyebrow}</div>}
-          <h1 className="title-lg whitespace-nowrap text-foreground">{title}</h1>
+          {/* Not `whitespace-nowrap`: `title-lg` floors at 24px (globals.css), so a
+              heading that cannot wrap forces the whole page to scroll sideways on a
+              375px viewport. `text-balance` keeps it tidy where it does wrap. */}
+          <h1 className="title-lg text-balance text-foreground">{title}</h1>
           {lede && <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted">{lede}</p>}
         </div>
         {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
@@ -263,14 +266,19 @@ export function StatBlock({
   );
 }
 
-/** Provenance rail — the structural device that carries the honesty standard. */
+/** Provenance rail — the structural device that carries the honesty standard.
+ *
+ * `source` is required and has no default. It used to default to "NBA.com via nba_api",
+ * which meant any rail rendered without the prop asserted NBA.com regardless of where the
+ * data came from — the same defect the API had. Pass what the endpoint served.
+ */
 export function SourceRail({
-  source = "NBA.com via nba_api",
+  source,
   retrievedAt,
   extra,
   className,
 }: {
-  source?: string;
+  source: string;
   retrievedAt?: string | null;
   extra?: React.ReactNode;
   className?: string;
@@ -296,11 +304,11 @@ export function SourceRail({
 }
 
 export function SourceLine({
-  source = "NBA.com via nba_api",
+  source,
   retrievedAt,
   className,
 }: {
-  source?: string;
+  source: string;
   retrievedAt?: string | null;
   className?: string;
 }) {

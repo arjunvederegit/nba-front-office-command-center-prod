@@ -1,8 +1,16 @@
 /**
- * RosterLab mark: a ball's seams where one seam has become a rising line of
- * data. Orange holds the ball, cyan holds the analysis — the same division of
- * labor the whole palette uses.
+ * Pivot mark: a ball's seams where one seam has become a rising line of data, turning
+ * about a fixed point — the pivot foot. Orange holds the ball, cyan holds the analysis —
+ * the same division of labor the whole palette uses.
+ *
+ * The geometry is inherited from the RosterLab mark and deliberately not redrawn: the
+ * visual language developed through R1–R7 is the part of this product that was already
+ * right. What changed is where the data line turns, and the anchored foot it turns on.
  */
+
+export const PRODUCT_NAME = "Pivot";
+export const PRODUCT_TAGLINE = "Basketball Intelligence for Better Decisions";
+
 export function BrandMark({ size = 30 }: { size?: number }) {
   return (
     <svg
@@ -10,7 +18,7 @@ export function BrandMark({ size = 30 }: { size?: number }) {
       height={size}
       viewBox="0 0 40 40"
       role="img"
-      aria-label="RosterLab"
+      aria-label={PRODUCT_NAME}
       className="shrink-0"
       fill="none"
     >
@@ -23,15 +31,17 @@ export function BrandMark({ size = 30 }: { size?: number }) {
         strokeWidth="1.5"
         opacity="0.55"
       />
-      {/* the seam that became data */}
+      {/* the seam that became data, turning about the planted foot */}
       <path
-        d="M6 26l7.5-6.5 6 3L34 10"
+        d="M7 29l7-9 6 5 13-15"
         stroke="var(--signal)"
         strokeWidth="2.6"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="34" cy="10" r="3.2" fill="var(--signal)" />
+      {/* the pivot point: the foot the turn happens on */}
+      <circle cx="14" cy="20" r="2.6" fill="var(--signal)" />
+      <circle cx="33" cy="10" r="3" fill="var(--signal)" />
     </svg>
   );
 }
@@ -40,11 +50,11 @@ export function BrandWordmark({ compact = false }: { compact?: boolean }) {
   return (
     <span className="flex min-w-0 items-baseline gap-2">
       <span className="display text-[1.35rem] leading-none tracking-tight text-foreground">
-        ROSTER<span className="text-brand">LAB</span>
+        PIV<span className="text-brand">O</span>T
       </span>
       {!compact && (
         <span className="eyebrow hidden whitespace-nowrap text-[0.6rem] text-faint xl:inline">
-          Basketball Decision Intelligence
+          {PRODUCT_TAGLINE}
         </span>
       )}
     </span>

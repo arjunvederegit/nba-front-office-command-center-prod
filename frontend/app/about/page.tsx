@@ -2,58 +2,57 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader, Panel } from "@/components/ui";
 
-export const metadata: Metadata = { title: "About — RosterLab" };
+export const metadata: Metadata = { title: "About — Pivot" };
 
-const TOOLS: { name: string; href: string; blurb: string }[] = [
+// R5 and R6 shipped three surfaces an earlier version of this page never mentioned —
+// comparable trades, need-driven acquisition and the decision memo. Each one now sits at
+// the stage of the decision it actually serves, rather than at the end of a flat list.
+const WORKFLOW: { stage: string; blurb: string; surfaces: { name: string; href: string }[] }[] = [
   {
-    name: "Team Outlook",
-    href: "/team-outlook",
+    stage: "Observe",
     blurb:
-      "roster with photos, model-derived strengths and needs, competitive window, payroll status.",
+      "what the roster is right now: players with photos, imported 2025-26 stat lines with per-game derivations, and payroll by season from imported contract snapshots — league percentiles taken only over players whose sample can support one.",
+    surfaces: [
+      { name: "Team Outlook", href: "/team-outlook" },
+      { name: "Player Explorer", href: "/player-explorer" },
+      { name: "Salary-Cap Center", href: "/salary-cap-center" },
+    ],
   },
   {
-    name: "Trade Evaluator",
-    href: "/trade-evaluator",
+    stage: "Diagnose",
+    blurb:
+      "what that roster is short of and what it already does well — model-derived strengths and needs, competitive window, and payroll status that stays fully empty until contracts are imported.",
+    surfaces: [{ name: "Team Outlook", href: "/team-outlook" }],
+  },
+  {
+    stage: "Compare",
+    blurb:
+      "the completed trades a proposal most resembles, retrieved from ten seasons of Basketball-Reference transaction pages — evidence rather than model output — alongside multi-player comparison.",
+    surfaces: [
+      { name: "Comparable trades", href: "/trade-evaluator" },
+      { name: "Player Explorer", href: "/player-explorer" },
+    ],
+  },
+  {
+    stage: "Simulate",
     blurb:
       "2–3-team construction with live backend rules checks, fan verdicts, and advanced analytics behind progressive disclosure.",
+    surfaces: [{ name: "Trade Evaluator", href: "/trade-evaluator" }],
   },
   {
-    name: "Strategy Lab",
-    href: "/strategy-lab",
+    stage: "Recommend",
     blurb:
-      "saved deals side by side with live priority re-weighting, Pareto frontier, and rank-stability analysis.",
+      "saved deals side by side with live priority re-weighting, Pareto frontier and rank-stability analysis; and acquisition candidates that start from the diagnosed shortfall, keep only players who actually improve the roster, and rank by projected wins — each one run through the trade evaluator before it is shown.",
+    surfaces: [
+      { name: "Strategy Lab", href: "/strategy-lab" },
+      { name: "Team Outlook", href: "/team-outlook" },
+    ],
   },
   {
-    name: "Player Explorer",
-    href: "/player-explorer",
-    blurb:
-      "imported 2025-26 player stat lines with photos, per-game derivations, multi-player comparison, and league percentiles taken only over players whose sample can support one.",
-  },
-  {
-    name: "Salary-Cap Center",
-    href: "/salary-cap-center",
-    blurb:
-      "payroll by season from imported contract snapshots; fully honest empty state until contracts are imported.",
-  },
-  // R5 and R6 shipped three surfaces this list did not mention, which made a page
-  // titled "the tool suite" an incomplete description of the tool suite.
-  {
-    name: "Comparable trades",
-    href: "/trade-evaluator",
-    blurb:
-      "the completed trades a proposal most resembles, retrieved from ten seasons of Basketball-Reference transaction pages — evidence rather than model output. Inside the Trade Evaluator, under Precedent.",
-  },
-  {
-    name: "Need-driven acquisition",
-    href: "/team-outlook",
-    blurb:
-      "start from what a roster is short of, filter to players who actually improve it, and rank by projected wins — each candidate run through the trade evaluator before it is shown. Inside Team Outlook.",
-  },
-  {
-    name: "Decision memo",
-    href: "/trade-evaluator",
+    stage: "Explain",
     blurb:
       "the evaluation as a reviewable artifact, including an explicit list of what is not known about the deal. Exportable from a saved trade.",
+    surfaces: [{ name: "Decision memo", href: "/trade-evaluator" }],
   },
 ];
 
@@ -62,35 +61,47 @@ export default function AboutPage() {
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader
         eyebrow="The project"
-        title="About RosterLab"
-        lede="An NBA front-office simulator built as a portfolio project — structured decision-making under real constraints, with data honesty as the core design value."
+        title="About Pivot"
+        lede="A basketball decision-intelligence system built as a portfolio project — structured decision-making under real constraints, with data honesty as the core design value."
       />
 
       <Panel title="The problem it structures">
         <p className="text-sm leading-relaxed text-muted">
           &quot;Should we make this trade?&quot; is an ambiguous, multi-objective question: on-court
           value, cap law, roster fit, timelines, risk and optionality all pull in different
-          directions, and the right answer depends on strategy. RosterLab makes the frame explicit —
+          directions, and the right answer depends on strategy. Pivot makes the frame explicit —
           pick a team and a strategy, build against real rosters, get an honest rules check and an
           explainable multi-component evaluation with uncertainty, then stress-test the conclusion.
-          It&apos;s a decision-support simulator for exploration, not a replacement for a front
-          office.
+          It&apos;s a decision-support system for exploration, not a replacement for a front office.
         </p>
       </Panel>
 
-      <Panel title="The tool suite">
+      <Panel title="The decision workflow">
+        <p className="mb-3 text-sm leading-relaxed text-muted">
+          Pivot is one system rather than a suite of separate tools. The same evaluation runs
+          underneath every screen, and the screens are stages of a single decision:
+        </p>
         <ul className="space-y-2.5">
-          {TOOLS.map((tool) => (
-            <li key={tool.name} className="flex gap-2.5">
+          {WORKFLOW.map((step) => (
+            <li key={step.stage} className="flex gap-2.5">
               <span aria-hidden className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-signal" />
               <span className="min-w-0 text-sm leading-relaxed text-muted">
-                <Link
-                  href={tool.href}
-                  className="title-md whitespace-nowrap text-foreground underline decoration-hairline underline-offset-4 transition-colors hover:text-signal"
-                >
-                  {tool.name}
-                </Link>{" "}
-                — {tool.blurb}
+                <span className="title-md whitespace-nowrap text-foreground">{step.stage}</span> —{" "}
+                {step.blurb}
+                <span className="mt-0.5 block text-xs text-faint">
+                  In{" "}
+                  {step.surfaces.map((surface, i) => (
+                    <span key={surface.name}>
+                      {i > 0 ? ", " : ""}
+                      <Link
+                        href={surface.href}
+                        className="whitespace-nowrap text-muted underline decoration-hairline underline-offset-4 transition-colors hover:text-signal"
+                      >
+                        {surface.name}
+                      </Link>
+                    </span>
+                  ))}
+                </span>
               </span>
             </li>
           ))}
@@ -99,7 +110,7 @@ export default function AboutPage() {
             <span className="min-w-0 text-sm leading-relaxed text-muted">
               <span className="title-md whitespace-nowrap text-foreground">Contract Predictor</span>{" "}
               — deliberately not shipped: it needs historical contract data before a validated model
-              can exist, and RosterLab doesn&apos;t ship fake models.
+              can exist, and Pivot doesn&apos;t ship fake models.
             </span>
           </li>
         </ul>
@@ -156,7 +167,7 @@ export default function AboutPage() {
           <Link href="/data-health" className="text-signal underline">
             Data Health
           </Link>{" "}
-          for what is currently ingested. RosterLab is independent and not affiliated with the NBA;
+          for what is currently ingested. Pivot is independent and not affiliated with the NBA;
           team marks and player images are used locally for identification.
         </p>
       </Panel>

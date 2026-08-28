@@ -115,6 +115,8 @@ jobs:
           retention-days: 7
 
   docker:
+    # The `rosterlab-*` image tags below keep their historical spelling on purpose: they
+    # are only local build tags for this job, and nothing downstream reads them.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
