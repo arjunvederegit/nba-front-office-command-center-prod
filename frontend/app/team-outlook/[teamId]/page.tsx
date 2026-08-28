@@ -10,8 +10,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import { NEED_LABEL, count, height, money, ordinal, payrollDisclosure, pct, tei } from "@/lib/format";
-import { selectStrengths, selectWeaknesses } from "@/lib/needs";
+import { count, height, money, ordinal, payrollDisclosure, pct, tei } from "@/lib/format";
+import { teamProfileSchema } from "@/lib/schemas";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type {
   PayrollResponse,
@@ -19,7 +19,7 @@ import type {
   RosterResponse,
   Scenario,
   Team,
-  TeamNeedItem,
+  TeamProfile,
 } from "@/lib/types";
 import { AcquisitionTargetsPanel } from "@/components/acquisition";
 import { HalfCourt } from "@/components/court";
@@ -125,9 +125,14 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
     queryKey: ["roster", teamId],
     queryFn: () => api.get<RosterResponse>(`/teams/${teamId}/roster`),
   });
-  const { data: needs } = useQuery({
-    queryKey: ["needs", teamId],
-    queryFn: () => api.get<{ needs: TeamNeedItem[]; note: string | null }>(`/teams/${teamId}/needs`),
+  // The roster profile: skill coverage, archetype distribution, and needs already sorted
+  // into strengths and weaknesses. That classification is a basketball judgement and is
+  // made once, on the server (`app/domain/needs.py`), so this page renders the rule rather
+  // than deciding it — see the note at the top of `lib/needs.ts`.
+  const { data: profile, error: profileError } = useQuery({
+    queryKey: ["team-profile", teamId],
+    queryFn: () =>
+      api.get<TeamProfile>(`/intelligence/teams/${teamId}/profile`, teamProfileSchema),
   });
   const { data: payroll } = useQuery({
     queryKey: ["payroll", teamId],
@@ -164,9 +169,8 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
     : null;
   const competitiveWindow = windowLabel(avgRotationAge);
 
-  const sortedNeeds = needs?.needs ?? [];
-  const weaknesses = selectWeaknesses(sortedNeeds);
-  const strengths = selectStrengths(sortedNeeds);
+  const weaknesses = profile?.weaknesses ?? [];
+  const strengths = profile?.strengths ?? [];
 
   const groups: Record<Group, RosterPlayer[]> = { Guards: [], Wings: [], Bigs: [] };
   for (const player of rosterPlayers) groups[positionGroup(player.position)].push(player);
@@ -384,7 +388,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
               <SourceRail
                 source={roster.source}
                 retrievedAt={roster.source_retrieved_at}
-                extra={<span>· impact estimated by RosterLab, not a provider metric</span>}
+                extra={<span>· impact estimated by Pivot, not a provider metric</span>}
               />
             </div>
           )}
@@ -396,10 +400,12 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
             title="Strengths & needs"
             subtitle="Percentile rules over real league stats — no scouting opinions"
           >
-            {!needs ? (
+            {profileError ? (
+              <ErrorState message={`Could not load the roster profile: ${String(profileError)}`} />
+            ) : !profile ? (
               <SkeletonRows rows={5} height="h-8" />
-            ) : sortedNeeds.length === 0 ? (
-              <UnavailableNotice reason="Team needs haven't been computed for this season yet — run `make score` on the backend." />
+            ) : !profile.needs_available ? (
+              <UnavailableNotice reason={profile.needs_unavailable_reason} />
             ) : (
               <div className="space-y-4">
                 {strengths.length > 0 && (
@@ -407,11 +413,9 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
                     <h4 className="eyebrow text-legal">Strengths</h4>
                     <ul className="mt-2 space-y-2">
                       {strengths.map((need) => (
-                        <li key={need.need_key} title={need.explanation}>
+                        <li key={need.key} title={need.explanation}>
                           <div className="flex items-baseline justify-between gap-3 text-[13px]">
-                            <span className="min-w-0 truncate text-foreground">
-                              {NEED_LABEL[need.need_key] ?? need.need_key}
-                            </span>
+                            <span className="min-w-0 truncate text-foreground">{need.label}</span>
                             <span className="data shrink-0 text-[11px] text-muted">
                               {ordinal(need.percentile)}
                             </span>
@@ -421,7 +425,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
                             max={100}
                             color="var(--legal)"
                             className="mt-1"
-                            label={`${NEED_LABEL[need.need_key] ?? need.need_key} at the ${ordinal(need.percentile)} percentile`}
+                            label={`${need.label} at the ${ordinal(need.percentile)} percentile`}
                           />
                         </li>
                       ))}
@@ -434,9 +438,10 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
                   {/* The old fallback rendered the first four rows by severity order
                       regardless of severity, so Atlanta showed "Defensive rebounding
                       67th" under Strengths *and* under Needs, with a zero-length bar
-                      beneath the caption "longer bar = larger shortfall". Deleting the
-                      fallback outright would leave ATL and CLE with an empty <ul> under
-                      a bare heading, so the empty case gets a real state. */}
+                      beneath the caption "longer bar = larger shortfall". The server
+                      does not reproduce that fallback either, and leaving ATL and CLE
+                      with an empty <ul> under a bare heading would be its own defect,
+                      so the empty case gets a real state. */}
                   {weaknesses.length === 0 ? (
                     <p className="mt-2 rounded-lg border border-hairline bg-panel2 px-3 py-2.5 text-[13px] leading-relaxed text-muted">
                       No pressing needs. Every measured category sits at or above the
@@ -445,11 +450,9 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
                   ) : (
                     <ul className="mt-2 space-y-2">
                       {weaknesses.map((need) => (
-                        <li key={need.need_key} title={need.explanation}>
+                        <li key={need.key} title={need.explanation}>
                           <div className="flex items-baseline justify-between gap-3 text-[13px]">
-                            <span className="min-w-0 truncate text-foreground">
-                              {NEED_LABEL[need.need_key] ?? need.need_key}
-                            </span>
+                            <span className="min-w-0 truncate text-foreground">{need.label}</span>
                             <span className="data shrink-0 text-[11px] text-muted">
                               {ordinal(need.percentile)}
                             </span>
@@ -458,13 +461,19 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
                             value={need.severity}
                             color={need.severity > 0.5 ? "var(--illegal)" : "var(--conditional)"}
                             className="mt-1"
-                            label={`${NEED_LABEL[need.need_key] ?? need.need_key} severity ${(need.severity * 100).toFixed(0)} percent`}
+                            label={`${need.label} severity ${(need.severity * 100).toFixed(0)} percent`}
                           />
                         </li>
                       ))}
                     </ul>
                   )}
                 </div>
+
+                {/* The rule itself, in words, next to what it produced — so a reader can
+                    see why a category is on one list and not the other. */}
+                <p className="border-t border-hairline pt-3 text-[11px] leading-relaxed text-muted">
+                  {profile.classification_note}
+                </p>
 
                 <p className="text-[11px] leading-relaxed text-faint">
                   {weaknesses.length > 0 ? "Longer bar under Needs = larger shortfall. " : ""}
@@ -535,6 +544,12 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
         </div>
       </div>
 
+      {/* ------------------------------------------------------ roster profile */}
+      <div className="grid items-start gap-3 lg:grid-cols-2">
+        <SkillCoveragePanel profile={profile} error={profileError} accent={identity.bright} />
+        <ArchetypePanel profile={profile} error={profileError} accent={identity.bright} />
+      </div>
+
       {/* ------------------------------------------- need-driven discovery */}
       <AcquisitionTargetsPanel teamId={detail.team.id} />
 
@@ -589,7 +604,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
 
         {/* ---------------------------------------------------- draft capital */}
         <Panel title="Draft capital" className="min-w-0">
-          <UnavailableNotice reason="Verified draft-pick ownership isn't configured, and RosterLab won't guess it. Hypothetical picks can still be added inside a trade, clearly labeled as hypothetical." />
+          <UnavailableNotice reason="Verified draft-pick ownership isn't configured, and Pivot won't guess it. Hypothetical picks can still be added inside a trade, clearly labeled as hypothetical." />
         </Panel>
       </div>
     </div>
@@ -625,6 +640,141 @@ function TeamStat({
         note={note}
         accent={value === undefined || value === null ? "var(--unknown)" : accent}
       />
+    </Panel>
+  );
+}
+
+/**
+ * What the rotation is strong at, skill by skill.
+ *
+ * Each entry is a Measurement, and an unmeasured skill says so with its reason. It is
+ * deliberately not drawn as a midpoint bar: a roster whose skill cannot be seen is not a
+ * roster that is average at it, and a bar at 50 would claim the second thing.
+ */
+function SkillCoveragePanel({
+  profile,
+  error,
+  accent,
+}: {
+  profile: TeamProfile | undefined;
+  error: unknown;
+  accent: string;
+}) {
+  const coverage = profile?.skill_coverage ?? [];
+  const measured = coverage.filter((skill) => skill.available);
+  return (
+    <Panel
+      className="min-w-0"
+      title="Skill coverage"
+      subtitle="Where the rotation stands in each measured skill — the third-best value among the rotation, the same statistic the evaluator prices redundancy against"
+    >
+      {error ? (
+        <ErrorState message={`Could not load skill coverage: ${String(error)}`} />
+      ) : !profile ? (
+        <SkeletonRows rows={8} height="h-8" />
+      ) : coverage.length === 0 ? (
+        <UnavailableNotice reason="No skill dimensions were returned for this roster." />
+      ) : (
+        <>
+          <ul className="space-y-2.5">
+            {coverage.map((skill) => (
+              <li key={skill.key} title={skill.available ? skill.method : skill.reason}>
+                <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                  <span className="min-w-0 truncate text-foreground">{skill.label}</span>
+                  {skill.available ? (
+                    <span className="data shrink-0 text-[11px] text-muted">
+                      {ordinal((skill.value ?? 0) * 100)} ·{" "}
+                      {count(skill.rotation_players_measured, "player")}
+                    </span>
+                  ) : (
+                    <Badge status="unavailable">not measured</Badge>
+                  )}
+                </div>
+                {skill.available ? (
+                  <MeterBar
+                    value={skill.value ?? 0}
+                    max={1}
+                    color={accent}
+                    className="mt-1"
+                    label={`${skill.label}: the rotation's third-best value sits at the ${ordinal(
+                      (skill.value ?? 0) * 100,
+                    )} percentile`}
+                  />
+                ) : (
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">{skill.reason}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-[11px] leading-relaxed text-faint">
+            {measured.length} of {coverage.length} declared skills are measured for this
+            rotation. The rest are listed with the reason rather than dropped.
+          </p>
+          <SourceRail source={measured[0]?.source} />
+        </>
+      )}
+    </Panel>
+  );
+}
+
+/** Which functional archetypes the roster actually holds, and how many of each. */
+function ArchetypePanel({
+  profile,
+  error,
+  accent,
+}: {
+  profile: TeamProfile | undefined;
+  error: unknown;
+  accent: string;
+}) {
+  const rows = profile?.archetype_distribution ?? [];
+  const labeled = rows.reduce((sum, row) => sum + row.count, 0);
+  const most = rows.reduce((max, row) => Math.max(max, row.count), 1);
+  const unlabeled = Math.max((profile?.roster_size ?? labeled) - labeled, 0);
+  return (
+    <Panel
+      className="min-w-0"
+      title="Roster archetypes"
+      subtitle="What this roster contains, by functional role rather than by listed position"
+    >
+      {error ? (
+        <ErrorState message={`Could not load the archetype distribution: ${String(error)}`} />
+      ) : !profile ? (
+        <SkeletonRows rows={6} height="h-8" />
+      ) : rows.length === 0 ? (
+        <UnavailableNotice reason="No player on this roster carries an archetype label for this season, so its functional composition is unknown." />
+      ) : (
+        <>
+          <ul className="space-y-2.5">
+            {rows.map((row) => (
+              <li key={row.key}>
+                <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                  <span className="min-w-0 truncate text-foreground">{row.label}</span>
+                  <span className="flex shrink-0 items-baseline gap-2">
+                    {row.family && <span className="eyebrow text-[0.5rem]">{row.family}</span>}
+                    <span className="numeral text-[15px] leading-none" style={{ color: accent }}>
+                      {row.count}
+                    </span>
+                  </span>
+                </div>
+                <MeterBar
+                  value={row.count}
+                  max={most}
+                  color={accent}
+                  className="mt-1"
+                  label={`${count(row.count, "player")} labelled ${row.label}`}
+                />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-[11px] leading-relaxed text-faint">
+            {count(labeled, "player")} of {profile.roster_size} labelled
+            {unlabeled > 0
+              ? `; ${count(unlabeled, "player")} carry no archetype for this season and are not counted above.`
+              : "."}
+          </p>
+        </>
+      )}
     </Panel>
   );
 }

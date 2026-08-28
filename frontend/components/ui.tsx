@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * RosterLab interface primitives.
+ * Pivot interface primitives.
  *
  * Two rules run through everything here:
  *  - Status is never carried by color alone — every status badge also carries a

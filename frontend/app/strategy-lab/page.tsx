@@ -71,7 +71,7 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-const ENGINE_SOURCE = "RosterLab evaluation engine · NBA.com via nba_api";
+const ENGINE_SOURCE = "Pivot evaluation engine · NBA.com via nba_api";
 
 /* ---------------------------------------------------------------- scoring */
 
@@ -1547,7 +1547,7 @@ function FinancialView({
     <div>
       <ViewIntro>
         Contract value weighs salary paid against estimated on-court value, and payroll-after is
-        the team&apos;s book once the deal lands. Both come from imported contract data — RosterLab
+        the team&apos;s book once the deal lands. Both come from imported contract data — Pivot
         never estimates a salary.
       </ViewIntro>
 

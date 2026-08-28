@@ -7,6 +7,18 @@
  * stays on one line down to 1024px — module names are set in the condensed
  * display face, which is what buys the horizontal room. Below that the header
  * is replaced by a purpose-built drawer rather than a wrapped desktop bar.
+ *
+ * **Navigation follows the decision workflow, not the module inventory.** Pivot's
+ * order is observe -> diagnose -> test -> decide, so the primary bar reads
+ * Players, Teams, GM Lab, Research. The previous bar led with the Trade Evaluator,
+ * which put the last step first and made the product read as a calculator
+ * collection rather than as one decision system.
+ *
+ * **Route paths are deliberately unchanged.** Only the grouping and the labels
+ * move. Renaming paths would break the ten legacy redirects in next.config.ts,
+ * the fourteen-route visual-QA manifest, the e2e specs and every shared
+ * Trade Evaluator link — for no gain a reader would notice, since the labels are
+ * what a user actually reads.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -16,23 +28,47 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { dataHealthSchema } from "@/lib/schemas";
 import type { DataHealth, Team } from "@/lib/types";
-import { BrandMark, BrandWordmark } from "@/components/brand";
+import { BrandMark, BrandWordmark, PRODUCT_TAGLINE } from "@/components/brand";
 import { TeamLogo } from "@/components/media";
 
-const PRIMARY = [
-  { href: "/", label: "Overview", exact: true },
-  { href: "/trade-evaluator", label: "Trade Evaluator" },
-  { href: "/strategy-lab", label: "Strategy Lab" },
-  { href: "/player-explorer", label: "Player Explorer" },
+interface NavLink {
+  href: string;
+  label: string;
+  hint?: string;
+  exact?: boolean;
+}
+
+/** Single destinations, in workflow order: observe, then diagnose. */
+const PRIMARY: NavLink[] = [
+  { href: "/", label: "Command Center", exact: true },
+  { href: "/player-explorer", label: "Players" },
+  { href: "/team-outlook", label: "Teams" },
 ];
 
-const SECONDARY = [
-  { href: "/team-outlook", label: "Team Outlook", hint: "Roster, needs and window" },
-  { href: "/salary-cap-center", label: "Salary-Cap Center", hint: "Payroll and commitments" },
+/**
+ * GM Lab is a real grouping, not a page.
+ *
+ * The brief's information architecture puts Trade, Contracts, Targets, Fit and Scenario
+ * under one heading. Three of those exist today and two do not, so this is a menu over
+ * the three rather than an index page with placeholder tiles — an empty page that
+ * promises a module Pivot has not built would be the presentation-layer version of a
+ * fabricated number.
+ */
+const GM_LAB: NavLink[] = [
+  { href: "/trade-evaluator", label: "Trade Evaluator", hint: "Build a deal and test it" },
+  { href: "/strategy-lab", label: "Decision Board", hint: "Compare saved deals side by side" },
+  { href: "/salary-cap-center", label: "Contracts & Cap", hint: "Payroll and commitments" },
+];
+
+/** How the product explains itself. */
+const SECONDARY: NavLink[] = [
   { href: "/methodology", label: "Methodology", hint: "How every number is produced" },
   { href: "/data-health", label: "Data Health", hint: "Sources, freshness and gaps" },
-  { href: "/about", label: "About", hint: "What RosterLab is" },
+  { href: "/about", label: "About Pivot", hint: "What Pivot is, and what it will not ship" },
 ];
+
+/** Every destination the header can reach, for the mobile drawer. */
+export const ALL_DESTINATIONS: NavLink[] = [...PRIMARY, ...GM_LAB, ...SECONDARY];
 
 function isActive(pathname: string, href: string, exact?: boolean) {
   return exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
@@ -220,12 +256,23 @@ function GlobalSearch({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-/* -------------------------------------------------------------- more menu */
+/* --------------------------------------------------------------- nav group */
 
-function MoreMenu({ pathname }: { pathname: string }) {
+/** A labelled dropdown over several destinations. Used for GM Lab and for More. */
+function NavGroup({
+  label,
+  items,
+  pathname,
+  align = "right",
+}: {
+  label: string;
+  items: NavLink[];
+  pathname: string;
+  align?: "left" | "right";
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const anySecondaryActive = SECONDARY.some((item) => isActive(pathname, item.href));
+  const anyActive = items.some((item) => isActive(pathname, item.href));
 
   useEffect(() => {
     function onPointer(event: MouseEvent) {
@@ -249,23 +296,29 @@ function MoreMenu({ pathname }: { pathname: string }) {
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}
-        className={`display whitespace-nowrap rounded-md px-2.5 py-1.5 text-[15px] tracking-wide transition-colors ${
-          anySecondaryActive || open
+        className={`display relative whitespace-nowrap rounded-md px-2.5 py-1.5 text-[15px] tracking-wide transition-colors ${
+          anyActive || open
             ? "bg-panel2 text-foreground"
             : "text-muted hover:bg-panel2 hover:text-foreground"
         }`}
       >
-        More
+        {label}
         <span aria-hidden className="ml-1 text-[10px]">
           ▾
         </span>
+        {anyActive && (
+          <span
+            aria-hidden
+            className="absolute inset-x-2.5 -bottom-[7px] h-0.5 rounded-full bg-signal"
+          />
+        )}
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-11 z-50 w-64 overflow-hidden rounded-lg border border-line bg-panel py-1 shadow-[var(--shadow-pop)]"
+          className={`absolute ${align === "right" ? "right-0" : "left-0"} top-11 z-50 w-64 overflow-hidden rounded-lg border border-line bg-panel py-1 shadow-[var(--shadow-pop)]`}
         >
-          {SECONDARY.map((item) => (
+          {items.map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -276,7 +329,7 @@ function MoreMenu({ pathname }: { pathname: string }) {
               }`}
             >
               <span className="block text-sm text-foreground">{item.label}</span>
-              <span className="block text-[11px] text-muted">{item.hint}</span>
+              {item.hint && <span className="block text-[11px] text-muted">{item.hint}</span>}
             </Link>
           ))}
         </div>
@@ -302,7 +355,7 @@ export function AppNav() {
   return (
     <header className="sticky top-0 z-40 border-b border-hairline bg-court/92 backdrop-blur-md">
       <div className="mx-auto flex max-w-[1600px] items-center gap-3 px-4 py-2.5 lg:px-8">
-        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="RosterLab — home">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="Pivot — home">
           <BrandMark size={30} />
           <BrandWordmark />
         </Link>
@@ -332,7 +385,8 @@ export function AppNav() {
               </Link>
             );
           })}
-          <MoreMenu pathname={pathname} />
+          <NavGroup label="GM Lab" items={GM_LAB} pathname={pathname} align="left" />
+          <NavGroup label="More" items={SECONDARY} pathname={pathname} />
         </nav>
 
         <div className="ml-auto hidden items-center gap-2 lg:ml-3 lg:flex">
@@ -365,8 +419,8 @@ export function AppNav() {
             <GlobalSearch onNavigate={() => setDrawer(false)} />
           </div>
           <nav aria-label="Primary" className="pb-3">
-            {[...PRIMARY, ...SECONDARY].map((item) => {
-              const active = isActive(pathname, item.href, "exact" in item ? item.exact : false);
+            {ALL_DESTINATIONS.map((item) => {
+              const active = isActive(pathname, item.href, item.exact);
               return (
                 <Link
                   key={item.href}
@@ -379,7 +433,7 @@ export function AppNav() {
                   }`}
                 >
                   <span className="display text-[17px] tracking-wide">{item.label}</span>
-                  {"hint" in item && item.hint && (
+                  {item.hint && (
                     <span className="ml-3 truncate text-[11px] text-faint">{item.hint}</span>
                   )}
                 </Link>
@@ -399,10 +453,10 @@ export function AppFooter() {
         <div className="flex shrink-0 items-center gap-2.5">
           <BrandMark size={22} />
           <span className="display whitespace-nowrap text-base tracking-tight">
-            ROSTER<span className="text-brand">LAB</span>
+            PIV<span className="text-brand">O</span>T
           </span>
           <span className="eyebrow whitespace-nowrap text-[0.5625rem]">
-            Basketball Decision Intelligence
+            {PRODUCT_TAGLINE}
           </span>
         </div>
         <p className="max-w-3xl text-[11px] leading-relaxed text-faint">

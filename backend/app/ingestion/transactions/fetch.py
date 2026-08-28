@@ -57,7 +57,7 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 #: Identifies the client and gives a human a way to complain. A generic browser string
 #: would misrepresent what is making the request.
 USER_AGENT = (
-    "RosterLab/0.6 (local research project; one request per season page; "
+    "Pivot/0.6 (local research project; one request per season page; "
     "honours robots.txt Crawl-delay)"
 )
 

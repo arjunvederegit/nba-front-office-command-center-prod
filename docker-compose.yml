@@ -1,3 +1,7 @@
+# The postgres role, password and database are still named "tradelab". That is
+# deliberate: they are credentials baked into existing local volumes and into the
+# DATABASE_URL below, so renaming them would point Pivot at a database that does not
+# exist. The product name is Pivot; this is only the storage layer's historical spelling.
 services:
   postgres:
     image: postgres:16-alpine

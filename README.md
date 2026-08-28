@@ -1,16 +1,33 @@
-# RosterLab — Basketball Decision Intelligence
+# Pivot — Basketball Intelligence for Better Decisions
 
-**Build the next move: evaluate trades against live NBA rosters, compare roster strategies, and understand the decisions shaping a team — every number traceable to its source.**
+**Understand a roster, find what it is missing, test a move, and read why — on live NBA data, with every number traced to how it was produced and what it cannot support.**
 
-RosterLab is a full-stack basketball decision platform: real provider-backed NBA data, a CBA-aware rules engine with a four-state honesty standard, validated player-impact modeling, and a broadcast-grade product layer (team identity, player photos, plain-language verdicts) over serious, inspectable analytics.
+Pivot is a basketball decision-intelligence platform: real provider-backed NBA data, a CBA-aware rules engine with a four-state honesty standard, validated player-impact modeling, and a broadcast-grade product layer over serious, inspectable analytics.
 
-![RosterLab overview](docs/screenshots/overview.png)
+The product philosophy is one loop:
+
+```
+OBSERVE  →  DIAGNOSE  →  COMPARE  →  SIMULATE  →  RECOMMEND  →  EXPLAIN
+```
+
+![Pivot Command Center](docs/screenshots/overview.png)
 
 > **Status:** fully functional local build. Data below was ingested live from NBA.com (July 2026), enriched from a user CSV, the Kaggle basketball database, and local image datasets. **Not affiliated with the NBA.**
+>
+> Pivot was called **RosterLab** through its R1–R7 generation; those release reports are kept under their original names as the provenance record. A few infrastructure identifiers (the `tradelab-backend` distribution, the default `tradelab.db` filename, the `tradelab:` cache prefix, and the `TEI` acronym) deliberately keep their historical spelling — renaming them would move a database, invalidate a cache namespace, or change the meaning of a persisted column without changing anything a user sees. See [ADR-24](docs/decision-log.md).
 
 ---
 
-## The tool suite
+## The decision workflow
+
+| Step | Module | What it answers |
+| --- | --- | --- |
+| **1 · Understand the roster** | Teams | What does this team actually contain — rotation, roles, measured strengths, and the needs that follow? |
+| **2 · Identify the edge** | Players | Who is out there, what do they do, and which of them answers a need this roster has? |
+| **3 · Test the move** | Trade Evaluator | Two- and three-team deals with a live rules check, projected impact, fit, cost and risk |
+| **4 · Make the decision** | Decision Board | The options side by side under your own priorities, with the trade-off frontier and rank stability |
+
+## The modules
 
 | Module | What it does | Status |
 | --- | --- | --- |
@@ -22,7 +39,7 @@ RosterLab is a full-stack basketball decision platform: real provider-backed NBA
 | **Precedent** | Ten seasons of completed trades, normalized locally. Ask what a proposal resembles and get back real transactions with a per-dimension similarity breakdown — and the statement that resemblance is not consequence | available |
 | **Who fixes this?** | Start from a diagnosed need instead of a trade: filtered candidates, ranked by projected wins, each one already run through the trade evaluator with a balancing package | available |
 | **Decision memo** | The whole analysis as one reviewable document — recommendation, rotation consequences, fit, cost, rules, precedent, risks, and one consolidated section naming what could not be established | available |
-| **Contract Predictor** | Deliberately **on the roadmap**: needs historical contract data before a validated model can exist — RosterLab ships no fake models | roadmap |
+| **Contract Predictor** | Deliberately **on the roadmap**: needs historical contract data before a validated model can exist — Pivot ships no fake models | roadmap |
 
 Routes were renamed to match these module names; every previous URL still redirects (share links keep their query strings).
 
@@ -128,11 +145,26 @@ No NBA data, images, or licensed datasets are committed — everything is fetche
 
 ## Documentation
 
-[Enhancement plan](docs/rosterlab-enhancement-plan.md) · [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) · [CBA coverage](docs/cba-rule-coverage.md) · [Data sources](docs/data-sources.md) · [Data dictionary](docs/data-dictionary.md) · [Identity resolution](docs/identity-resolution.md) · [Kaggle setup](docs/kaggle-setup.md) · [Decision log](docs/decision-log.md) · [Model cards](docs/model-card-player-impact.md) · [Limitations](docs/limitations.md) · [Demo script](docs/demo-script.md) · [Interview guide](docs/interview-guide.md)
+[Pivot audit](docs/pivot/audit.md) · [Target architecture](docs/pivot/target-architecture.md) · [Gap analysis](docs/pivot/gap-analysis.md) · [R8 readiness](docs/pivot/r8-readiness.md) · [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) · [CBA coverage](docs/cba-rule-coverage.md) · [Data sources](docs/data-sources.md) · [Data dictionary](docs/data-dictionary.md) · [Identity resolution](docs/identity-resolution.md) · [Kaggle setup](docs/kaggle-setup.md) · [Decision log](docs/decision-log.md) · [Model cards](docs/model-card-player-impact.md) · [Limitations](docs/limitations.md) · [Demo script](docs/demo-script.md) · [Interview guide](docs/interview-guide.md) · [Enhancement plan (historical)](docs/rosterlab-enhancement-plan.md)
 
 ## Roadmap
 
-Salary Predictor (once historical contract data exists) · Free Agency Planner · Draft Fit · Rotation Builder · Extension Simulator — represented in the product as honest "coming soon" states, never fake functionality.
+The next phase is the **GM Intelligence** progression, mapped release by release in
+[docs/pivot/gap-analysis.md](docs/pivot/gap-analysis.md):
+
+| | | Status |
+| --- | --- | --- |
+| **R8** | Canonical basketball data foundation | [next — concrete plan](docs/pivot/r8-readiness.md) |
+| **R9** | Player intelligence engine | 9 of 22 declared dimensions measured; the rest need tracking or matchup data |
+| **R10** | Archetype engine | 14 functional archetypes ship; multi-membership needs a schema change |
+| **R11** | Roster intelligence / needs | profile and needs ship; scarcity and complementarity do not |
+| **R12** | Team-conditional fit | addressable and measured; must survive a sparse need vector |
+| **R13** | Scenario engine | `RosterState` / `Move` / `apply` exist; no engine consumes them yet |
+| **R14** | GM Copilot | 4 of 10 tools implemented, 6 declared with reasons |
+
+Earlier ideas — Salary Predictor (once historical contract data exists), Free Agency Planner,
+Draft Fit, Rotation Builder, Extension Simulator — remain honest "not built" states in the
+product, never fake functionality.
 
 ## Disclaimer
 

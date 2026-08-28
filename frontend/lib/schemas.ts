@@ -135,3 +135,98 @@ export const comparablesResponseSchema = z
       }),
   })
   .passthrough();
+
+/* ----------------------------------------------------------- intelligence (Pivot) */
+
+/**
+ * The `Measurement` envelope every intelligence value arrives in.
+ *
+ * Validated because it carries an invariant the type system cannot: `value` and `reason`
+ * are mutually exclusive, and `available` must agree with which one is present. A backend
+ * that returned `available: true` with a null value would render a blank where a number
+ * belongs, and a client reading `value` without checking `available` would print "null"
+ * as a percentile — the exact class of failure the zod boundary exists for.
+ */
+const measurement = z
+  .object({
+    value: z.number().nullable(),
+    available: z.boolean(),
+    evidence: z.enum(["observed", "derived", "inferred"]).nullable(),
+    confidence: z.enum(["validated", "measured", "heuristic", "unavailable"]),
+    reason: z.string(),
+  })
+  .passthrough()
+  .refine((m) => m.available === (m.value !== null), {
+    message: "available must agree with whether a value is present",
+  })
+  .refine((m) => m.available || m.reason.length > 0, {
+    message: "an unavailable measurement must state why",
+  });
+
+export const playerIntelligenceSchema = z
+  .object({
+    player: z.object({ id: z.string(), full_name: z.string() }).passthrough(),
+    season: z.string(),
+    skills: z.array(measurement.and(z.object({ key: z.string(), label: z.string() }))),
+    skills_measured: z.number(),
+    skills_declared: z.number(),
+    impact: measurement,
+  })
+  .passthrough()
+  // The gap between declared and measured is the product's honesty claim made numeric.
+  // A response where they are equal means the declared-but-unavailable dimensions were
+  // dropped somewhere, which is precisely the silent omission Pivot refuses.
+  .refine((p) => p.skills_declared >= p.skills_measured, {
+    message: "more dimensions measured than declared",
+  })
+  .refine((p) => p.skills.length === p.skills_declared, {
+    message: "the skills array does not carry every declared dimension",
+  });
+
+const needRow = z
+  .object({
+    key: z.string(),
+    label: z.string(),
+    severity: z.number(),
+    percentile: z.number().nullable(),
+    addressed_by: z.string().nullable(),
+  })
+  .passthrough();
+
+export const teamProfileSchema = z
+  .object({
+    team: z.object({ id: z.string(), abbreviation: z.string() }).passthrough(),
+    season: z.string(),
+    roster_size: z.number(),
+    skill_coverage: z.array(measurement.and(z.object({ key: z.string(), label: z.string() }))),
+    needs: z.array(needRow),
+    weaknesses: z.array(needRow),
+    strengths: z.array(needRow),
+    needs_available: z.boolean(),
+  })
+  .passthrough()
+  // QA-9: a franchise once appeared under Strengths *and* Needs for the same row, with a
+  // zero-length bar under a caption promising a longer bar meant a larger shortfall. The
+  // classification is server-side now, and this is the assertion that it stayed disjoint.
+  .refine(
+    (p) => {
+      const weak = new Set(p.weaknesses.map((r) => r.key));
+      return p.strengths.every((r) => !weak.has(r.key));
+    },
+    { message: "a need appears as both a strength and a weakness" },
+  );
+
+export const playerTeamFitSchema = z
+  .object({
+    player: z.object({ id: z.string(), full_name: z.string() }).passthrough(),
+    team: z.object({ id: z.string(), abbreviation: z.string() }).passthrough(),
+    available: z.boolean(),
+    score: z.number().nullable(),
+    already_on_roster: z.boolean(),
+  })
+  .passthrough()
+  // A withheld fit must be withheld, not zeroed. `score: 0` on an unavailable fit would
+  // read as "the worst possible fit" rather than "no answer".
+  .refine((f) => f.available === (f.score !== null), {
+    message: "a fit score must be present exactly when it is available",
+  });

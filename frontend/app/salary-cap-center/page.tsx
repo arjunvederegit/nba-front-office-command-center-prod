@@ -352,7 +352,7 @@ function ContractsNotImported({
               </div>
               <h2 className="title-xl mt-2.5 text-foreground">One import away.</h2>
               <p className="mt-2.5 max-w-xl text-[15px] leading-relaxed text-muted">
-                RosterLab will not guess a salary. Until a contracts snapshot is loaded, the payroll
+                Pivot will not guess a salary. Until a contracts snapshot is loaded, the payroll
                 view for {teamName} stays empty on purpose — no placeholder totals, no modelled cap
                 space, no invented apron position.
               </p>
@@ -402,7 +402,7 @@ function ContractsNotImported({
             ))}
           </ol>
           <p className="mt-4 border-t border-hairline pt-3 text-[11px] leading-relaxed text-muted">
-            The parser reads only the local snapshot you saved — RosterLab does not scrape
+            The parser reads only the local snapshot you saved — Pivot does not scrape
             Basketball-Reference at runtime. Provenance for every imported row shows up in the
             contracts table and in Data Health.
           </p>
@@ -613,7 +613,7 @@ function CapOutlookView({
             {outlook.note}
           </p>
           <p className="mt-2 text-[11px] leading-relaxed text-unavail">
-            Cap space, apron position and tax bills are not derived here — RosterLab reports only
+            Cap space, apron position and tax bills are not derived here — Pivot reports only
             what the import contains.
           </p>
         </Panel>
@@ -727,7 +727,7 @@ function CapOutlookView({
             </div>
             <p className="mt-2.5 text-[11px] leading-relaxed text-muted">
               A dash means no salary is recorded for that player in that season — it is not a zero.
-              Option years are shown at their stated value; RosterLab does not model whether an
+              Option years are shown at their stated value; Pivot does not model whether an
               option will be exercised.
             </p>
           </>

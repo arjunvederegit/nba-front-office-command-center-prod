@@ -27,9 +27,9 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RosterLab — Basketball Decision Intelligence",
+  title: "Pivot — Basketball Intelligence for Better Decisions",
   description:
-    "Evaluate trades, compare roster strategies, and understand the decisions shaping an NBA team — on real data, with honest rules checks and explainable analytics.",
+    "Understand a roster, find what it is missing, test a move, and read why — on real NBA data, with every number traced to how it was produced and what it cannot support.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

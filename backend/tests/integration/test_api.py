@@ -223,7 +223,7 @@ def test_trade_save_report_and_comparison(client, seeded):
     assert "## 5. Precedent" in report.text
 
     html = client.get(f"/api/v1/trades/{trade1['id']}/report", params={"format": "html"})
-    assert "<title>RosterLab decision memo</title>" in html.text
+    assert "<title>Pivot decision memo</title>" in html.text
 
     t2 = client.post("/api/v1/trades", json=trade_payload("Deal 2", seeded["a2"], seeded["b1"]))
     comparison = client.post(

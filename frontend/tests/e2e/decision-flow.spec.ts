@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Core RosterLab flows against a live local stack with an ingested database
+ * Core Pivot flows against a live local stack with an ingested database
  * (`make sync-data && make train && make score`, plus `make index-assets` /
  * `make import-stats-csv` for full coverage). No NBA.com calls happen here.
  */
 
 test("overview presents the platform with honest data status", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "RosterLab — home" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Pivot — home" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Build the next move." })).toBeVisible();
   // primary and secondary calls to action
   await expect(page.getByRole("link", { name: "Open the Trade Evaluator" })).toBeVisible();
@@ -129,13 +129,13 @@ test("full flow: team outlook → strategy → trade evaluator → rules → eva
   }
 
   // 7. Save the deal → full report
-  await page.getByLabel(/Deal name/i).fill("E2E RosterLab deal");
+  await page.getByLabel(/Deal name/i).fill("E2E Pivot deal");
   await page.getByRole("button", { name: /^Save deal$/i }).click();
-  await expect(page.getByRole("heading", { name: "E2E RosterLab deal" })).toBeVisible({
+  await expect(page.getByRole("heading", { name: "E2E Pivot deal" })).toBeVisible({
     timeout: 40_000,
   });
 
   // 8. Strategy Lab lists it
   await page.goto("/strategy-lab");
-  await expect(page.getByText("E2E RosterLab deal").first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("E2E Pivot deal").first()).toBeVisible({ timeout: 20_000 });
 });

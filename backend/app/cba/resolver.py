@@ -34,6 +34,7 @@ from app.db.models import (
 
 from .context import PayrollCoverage
 
+#: Historical spelling kept on purpose — this key namespaces a live per-session cache.
 _CACHE_KEY = "rosterlab_resolver_cache"
 
 

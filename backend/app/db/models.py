@@ -1,4 +1,4 @@
-"""Normalized RosterLab schema.
+"""Normalized Pivot schema.
 
 Conventions
 - Internal primary keys are UUID strings; external provider identifiers (NBA.com team
@@ -370,7 +370,7 @@ class HistoricalTradeAsset(Base, TimestampMixin):
     #: The name the source printed. Retained even when resolution succeeds, so a wrong
     #: match is visible rather than hidden behind this database's spelling.
     player_name: Mapped[str | None] = mapped_column(String(120))
-    #: Basketball-Reference's own player id. Not a RosterLab identity — kept so a
+    #: Basketball-Reference's own player id. Not a Pivot identity — kept so a
     #: resolution can be re-checked against the source rather than only against a name.
     source_player_slug: Mapped[str | None] = mapped_column(String(20))
     #: How the name became a player here: nba_player_id | exact_name | unaccented |
@@ -513,7 +513,7 @@ class PlayerImpactEstimate(Base, TimestampMixin):
     player_id: Mapped[str] = mapped_column(ForeignKey("players.id"), index=True)
     season: Mapped[str] = mapped_column(String(10), index=True)
     model_version_id: Mapped[str] = mapped_column(ForeignKey("model_versions.id"))
-    #: RosterLab Estimated Impact, per-100 scale. The acronym predates the rename from
+    #: Pivot Estimated Impact, per-100 scale. The acronym predates the renames from
     #: TradeLab and is kept because it names this column and every API field built on
     #: it; see `analytics/impact.py`.
     tei: Mapped[float] = mapped_column(Float)

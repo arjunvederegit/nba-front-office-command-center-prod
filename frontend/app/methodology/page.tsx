@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader, Panel } from "@/components/ui";
 
-export const metadata: Metadata = { title: "Methodology — RosterLab" };
+export const metadata: Metadata = { title: "Methodology — Pivot" };
 
 function Formula({ children }: { children: React.ReactNode }) {
   return (
@@ -32,7 +32,7 @@ export default function MethodologyPage() {
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader
         eyebrow="Documentation"
-        title="How RosterLab thinks"
+        title="How Pivot thinks"
         lede={
           <>
             Plain-language explanations first; the exact formulas and validation numbers are in the
@@ -45,7 +45,7 @@ export default function MethodologyPage() {
 
       <Panel title="What the model evaluates — and what it can't know">
         <p className="text-sm leading-relaxed text-muted">
-          RosterLab evaluates a trade the way a front office frames it: does the deal make the team
+          Pivot evaluates a trade the way a front office frames it: does the deal make the team
           better on the court, does it fit the roster, is the money sensible, does it match the
           competitive window, what flexibility does it cost, and what&apos;s the downside? It does{" "}
           <em>not</em> know locker-room chemistry, medical files, private negotiations, or the
@@ -89,11 +89,11 @@ export default function MethodologyPage() {
         <div id="tei" className="scroll-mt-24">
           <p className="text-sm leading-relaxed text-muted">
             Every rostered player carries an <strong className="text-foreground">estimated
-            impact</strong> number on RosterLab&apos;s own index scale. It is deliberately{" "}
+            impact</strong> number on Pivot&apos;s own index scale. It is deliberately{" "}
             <em>not</em> labelled &ldquo;points per 100 possessions&rdquo;: the index is a weighted
             z-score, and the fitted conversion from a team&apos;s minutes-weighted index to
             net-rating points is <strong className="text-foreground">≈15</strong>, not 1. Full name:
-            RosterLab Estimated Impact, TEI), built from three seasons of real box-score
+            Pivot Estimated Impact, TEI), built from three seasons of real box-score
             data, and it is <em>not</em> RAPTOR, EPM, LEBRON or BPM. Because it only sees box
             scores, defense is under-measured — treat small differences as noise; the uncertainty
             band on player pages is there for a reason.
@@ -124,7 +124,7 @@ export default function MethodologyPage() {
 
       <Panel title="Projected wins and the rotation">
         <p className="text-sm leading-relaxed text-muted">
-          A trade changes who plays, not just who&apos;s on the roster. RosterLab reallocates the 240
+          A trade changes who plays, not just who&apos;s on the roster. Pivot reallocates the 240
           minutes in an NBA game across the post-trade roster (proportional to established roles,
           capped per player), discounts by each player&apos;s historical availability, and charges
           any minutes the roster cannot fill to a replacement-level player. The team-quality change
@@ -167,11 +167,83 @@ export default function MethodologyPage() {
         </div>
       </Panel>
 
+      <Panel title="Player skills — the nine Pivot measures, and the thirteen it does not">
+        <div id="skills" className="scroll-mt-24">
+          <p className="text-sm leading-relaxed text-muted">
+            Pivot describes a player by what he does, not by where he stands. Nine capabilities are
+            measured from ingested box-score data as{" "}
+            <strong className="text-foreground">league percentiles</strong> — shooting volume and
+            accuracy, shot creation, ball security, team defense, rim protection, rebounding,
+            positional size and scoring. A skill whose inputs are missing is{" "}
+            <em>omitted</em>, never filled with a league median: 0.5 is not a measurement.
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            Pivot also declares{" "}
+            <strong className="text-foreground">thirteen dimensions it cannot see</strong> —
+            switchability, screen navigation, rim pressure, off-ball gravity and the rest — and shows
+            them on every player page with the reason. They need player-tracking or matchup data,
+            and no amount of modelling substitutes for it. Naming them is the point: a reader should
+            learn that Pivot cannot see switchability, not conclude that switchability does not
+            matter.
+          </p>
+          <Tech>
+            <p>
+              One dimension was <strong className="text-foreground">built and then withdrawn</strong>.
+              A point-of-attack defense composite scored <em>worse</em> than the steals proxy it was
+              meant to replace, on its own pre-registered class (0.630 against 0.611), because
+              gambling for steals is what a box score records and staying in front of a ball handler
+              is not. The team-side need is still measured and still shown; no player skill claims to
+              fix it.
+            </p>
+            <p>
+              Every value carries its evidence class —{" "}
+              <code className="data text-[13px]">observed</code> (a provider reported it),{" "}
+              <code className="data text-[13px]">derived</code> (arithmetic over observations), or{" "}
+              <code className="data text-[13px]">inferred</code> (a basketball attribute asserted
+              from them) — because an inference can be wrong in a way a derivation cannot.
+            </p>
+          </Tech>
+        </div>
+      </Panel>
+
+      <Panel title="Archetypes — what kind of player, not what position">
+        <div id="archetypes" className="scroll-mt-24">
+          <p className="text-sm leading-relaxed text-muted">
+            &quot;Power forward&quot; describes where a player once stood; &quot;stretch big&quot;
+            describes what he does to a defense. Pivot places every player into one of{" "}
+            <strong className="text-foreground">fourteen functional archetypes</strong> using a
+            deterministic rule chain over league percentile cut points — nothing is fitted, nothing
+            is random, and repeated runs are byte-identical.
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            Size gates first, deliberately: a creation-first ordering — the intuitive one — labelled
+            Victor Wembanyama a secondary creator.
+          </p>
+          <Tech>
+            <p>
+              The chain replaced k-means clustering in R4-3, which was not merely imprecise but
+              degenerate: only 5 of its 10 label branches ever fired, 34.3 % of players carried a
+              numeric suffix because clusters collided, and{" "}
+              <strong className="text-foreground">
+                dropping a random 10 % of players rewrote 65.7 % of the survivors&apos; labels
+              </strong>
+              . The replacement moves 1.78 % on the identical protocol, and all fourteen roles fire.
+            </p>
+            <p>
+              An archetype is an <em>inference</em>, and Pivot never calls it validated: no
+              ground-truth archetype set exists to check the labels against. A player holds exactly
+              one today; the data model already allows several with weights, which is where a future
+              engine will put a second claim.
+            </p>
+          </Tech>
+        </div>
+      </Panel>
+
       <Panel title="Strategy weights and sensitivity">
         <div id="weights" className="scroll-mt-24">
           <p className="text-sm leading-relaxed text-muted">
             Your strategy (contend, rebuild, re-tool…) sets how much each component matters. Because
-            weights are a judgment call, RosterLab stress-tests every comparison: it re-runs the
+            weights are a judgment call, Pivot stress-tests every comparison: it re-runs the
             ranking under hundreds of nearby weightings and reports how often each deal finishes
             first. A deal that only wins under one exact weighting isn&apos;t a robust
             recommendation — and the product says so.

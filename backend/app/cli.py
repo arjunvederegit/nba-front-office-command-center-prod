@@ -1,4 +1,4 @@
-"""RosterLab operational CLI.
+"""Pivot operational CLI.
 
 Usage: python -m app.cli <command>
 
@@ -88,7 +88,8 @@ from app.db.base import SessionLocal
 
 logger = get_logger(__name__)
 
-#: Commands that reach a third party. `ROSTERLAB_OFFLINE=1` refuses them.
+#: Commands that reach a third party. `ROSTERLAB_OFFLINE=1` refuses them. The variable
+#: name predates the rename to Pivot and is kept because the test suite and CI set it.
 #:
 #: The test suite sets it, and it has to: `test_every_documented_command_is_reachable`
 #: executes every command named in this docstring, which for these two means a real

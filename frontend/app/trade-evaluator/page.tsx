@@ -101,7 +101,7 @@ const RULE_STATUS_WORD: Record<string, string> = {
 };
 
 const CONTRACT_TOOLTIP =
-  "Contract data isn't imported, so salaries and contract years can't be shown. RosterLab never estimates a salary.";
+  "Contract data isn't imported, so salaries and contract years can't be shown. Pivot never estimates a salary.";
 
 const HOW_IT_WORKS: { step: string; title: string; body: string }[] = [
   {
@@ -1692,7 +1692,7 @@ function RulesCheck({
         ) : (
           <EmptyState
             title="No check to run yet"
-            hint="Move at least one player between the teams and RosterLab validates the deal against the 2023 CBA rules it can verify."
+            hint="Move at least one player between the teams and Pivot validates the deal against the 2023 CBA rules it can verify."
           />
         )
       ) : (
@@ -1716,7 +1716,7 @@ function RulesCheck({
             </p>
             {status !== "verified_legal" && (
               <p className="mt-2 text-[12px] leading-relaxed text-faint">
-                RosterLab never reports a deal as legal while a required check is missing — an
+                Pivot never reports a deal as legal while a required check is missing — an
                 incomplete check stays incomplete.
               </p>
             )}
@@ -2198,7 +2198,7 @@ function TeamEvaluationView({
       </div>
 
       <SourceRail
-        source="RosterLab evaluation model over ingested NBA data"
+        source="Pivot evaluation model over ingested NBA data"
         retrievedAt={teamEval.evaluated_at}
       />
     </div>

@@ -12,9 +12,17 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { use, useState } from "react";
 import { api } from "@/lib/api";
-import { height, money, pct, tei } from "@/lib/format";
+import { count, height, money, ordinal, pct, tei } from "@/lib/format";
+import { playerIntelligenceSchema } from "@/lib/schemas";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
-import type { ArchetypeAssignment, ComparablePlayer, Team } from "@/lib/types";
+import type {
+  ArchetypeAssignment,
+  ComparablePlayer,
+  Measurement,
+  PlayerIntelligence,
+  SkillEntry,
+  Team,
+} from "@/lib/types";
 import { TeamLogo, PlayerPhoto } from "@/components/media";
 import {
   Badge,
@@ -422,6 +430,9 @@ export default function PlayerPage({ params }: { params: Promise<{ playerId: str
           </Panel>
         </div>
       </section>
+
+      {/* -------------------------------------------------- player intelligence */}
+      <PlayerIntelligencePanel playerId={playerId} />
     </div>
   );
 }
@@ -509,4 +520,283 @@ function PlayerSkeleton() {
       </div>
     </div>
   );
+}
+
+/* ----------------------------------------------------------- intelligence */
+
+/** Declared order of the sides, so the reader meets them the same way every time. */
+const SKILL_SIDES = [
+  ["offense", "Offense"],
+  ["defense", "Defense"],
+  ["physical", "Physical"],
+] as const;
+
+/** A dimension that carries a number. Narrowed, never defaulted — there is no `?? 0` here. */
+type MeasuredSkill = SkillEntry & { percentile: number };
+
+/**
+ * Player intelligence — what Pivot measures about this player, and what it does not.
+ *
+ * The unmeasured dimensions are not an appendix and are not collapsed: a reader who saw
+ * only the bars would conclude Pivot has seen everything, so each declared-but-unavailable
+ * dimension is listed at full size with the reason it is unavailable. The gap belongs to
+ * Pivot, not to the player.
+ *
+ * Nothing basketball is decided in here. The percentiles, the counts, the archetype and
+ * the coverage sentence all arrive decided; this component groups, formats and orders.
+ */
+function PlayerIntelligencePanel({ playerId }: { playerId: string }) {
+  const { data, error } = useQuery({
+    queryKey: ["player-intelligence", playerId],
+    queryFn: () =>
+      api.get<PlayerIntelligence>(`/intelligence/players/${playerId}`, playerIntelligenceSchema),
+  });
+
+  const measured =
+    data?.skills.filter((s): s is MeasuredSkill => s.available && s.percentile !== null) ?? [];
+  const unmeasured = data?.skills.filter((s) => !s.available) ?? [];
+
+  return (
+    <Panel
+      title="Player intelligence"
+      subtitle="The measured dimensions, the dimensions Pivot cannot see, and the role it infers"
+      accent="var(--signal)"
+      actions={
+        <Link href="/methodology" className="eyebrow whitespace-nowrap text-signal">
+          What Pivot measures →
+        </Link>
+      }
+    >
+      {error ? (
+        <ErrorState message={`Could not load player intelligence: ${String(error)}`} />
+      ) : !data ? (
+        <SkeletonRows rows={6} height="h-9" />
+      ) : (
+        <div className="space-y-5">
+          {/* --------------------------------------------------------- coverage */}
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="numeral text-2xl leading-none text-signal">
+              {data.skills_measured}
+              <span className="text-muted"> / {data.skills_declared}</span>
+            </span>
+            <span className="eyebrow text-[0.625rem]">declared dimensions measured</span>
+            <span className="data text-[11px] text-muted">{data.season}</span>
+          </div>
+          <p className="text-[12px] leading-relaxed text-muted">{data.coverage_note}</p>
+
+          <div className="grid gap-5 border-t border-hairline pt-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+            {/* ------------------------------------------------------- measured */}
+            <div className="min-w-0 space-y-4">
+              <h3 className="eyebrow">Measured dimensions</h3>
+              {measured.length === 0 ? (
+                <UnavailableNotice reason="None of the declared dimensions could be measured for this player." />
+              ) : (
+                <>
+                  {SKILL_SIDES.map(([side, label]) => {
+                    const rows = measured.filter((skill) => skill.side === side);
+                    if (rows.length === 0) return null;
+                    return (
+                      <div key={side}>
+                        <h4 className="eyebrow text-[0.5625rem] text-faint">{label}</h4>
+                        <ul className="mt-2 space-y-2.5">
+                          {rows.map((skill) => (
+                            <li key={skill.key} className="min-w-0" title={methodTitle(skill)}>
+                              <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                                <span className="min-w-0 truncate text-foreground">
+                                  {skill.label}
+                                </span>
+                                <span className="data shrink-0 text-[11px] text-muted">
+                                  {ordinal(skill.percentile * 100)} percentile
+                                </span>
+                              </div>
+                              <div
+                                role="img"
+                                aria-label={`${skill.label} at the ${ordinal(
+                                  skill.percentile * 100,
+                                )} league percentile`}
+                                className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-panel2"
+                              >
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{
+                                    width: `${skill.percentile * 100}%`,
+                                    background: "var(--signal)",
+                                  }}
+                                />
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                  {/* A number is never shown without its method being reachable. The row
+                      title carries it on hover; this carries it to a keyboard as well. */}
+                  <details className="group">
+                    <summary className="eyebrow cursor-pointer list-none text-muted transition-colors hover:text-foreground">
+                      <span
+                        aria-hidden
+                        className="mr-1.5 inline-block transition-transform group-open:rotate-90"
+                      >
+                        ›
+                      </span>
+                      How each measured dimension is computed
+                    </summary>
+                    <ul className="mt-2.5 space-y-3">
+                      {measured.map((skill) => (
+                        <li key={skill.key} className="text-[12px] leading-relaxed">
+                          <span className="text-foreground">{skill.label}</span>
+                          <span className="text-faint">
+                            {" "}
+                            · {skill.evidence} · {skill.confidence}
+                          </span>
+                          {skill.definition && <p className="text-muted">{skill.definition}</p>}
+                          <p className="text-muted">{skill.method}</p>
+                          <Limitations limitations={skill.limitations} />
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                  <SourceRail source={measured[0].source} />
+                </>
+              )}
+            </div>
+
+            <div className="min-w-0 space-y-5">
+              {/* ----------------------------------------------------- impact */}
+              <div>
+                <h3 className="eyebrow">Impact</h3>
+                {data.impact.available && data.impact.value !== null ? (
+                  <div className="mt-2 space-y-2.5">
+                    <StatBlock
+                      label="Impact index (TEI)"
+                      value={tei(data.impact.value)}
+                      note="scoring margin per 100 possessions"
+                      accent="var(--signal)"
+                      title={methodTitle(data.impact)}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <Badge status="derived">{data.impact.evidence}</Badge>
+                      <Badge status="info">{data.impact.confidence}</Badge>
+                    </div>
+                    <details className="group">
+                      <summary className="eyebrow cursor-pointer list-none text-muted transition-colors hover:text-foreground">
+                        <span
+                          aria-hidden
+                          className="mr-1.5 inline-block transition-transform group-open:rotate-90"
+                        >
+                          ›
+                        </span>
+                        Method and limitations
+                      </summary>
+                      <div className="mt-2 space-y-1 text-[12px] leading-relaxed">
+                        <p className="text-muted">{data.impact.method}</p>
+                        <p className="text-faint">Source: {data.impact.source}</p>
+                        <Limitations limitations={data.impact.limitations} />
+                      </div>
+                    </details>
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <UnavailableNotice reason={data.impact.reason} />
+                  </div>
+                )}
+              </div>
+
+              {/* -------------------------------------------------- archetypes */}
+              <div>
+                <h3 className="eyebrow">Archetype</h3>
+                {data.archetypes.length === 0 ? (
+                  <p className="mt-2 rounded-lg border border-hairline bg-panel2 px-3 py-2.5 text-[13px] leading-relaxed text-muted">
+                    No archetype has been assigned to this player for {data.season}.
+                  </p>
+                ) : (
+                  <ul className="mt-2 space-y-2.5">
+                    {data.archetypes.map((archetype) => (
+                      <li
+                        key={archetype.key}
+                        className="rounded-lg border border-hairline bg-panel2 px-3 py-2.5"
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm text-foreground">{archetype.label}</span>
+                          {archetype.primary && <Badge status="info">primary</Badge>}
+                          <Badge status="derived">
+                            {archetype.evidence} · {archetype.confidence}
+                          </Badge>
+                        </div>
+                        {archetype.definition && (
+                          <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
+                            {archetype.definition}
+                          </p>
+                        )}
+                        <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
+                          An inference drawn from the measured dimensions, not something
+                          observed. {archetype.method}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ------------------------------------------------------ unmeasured */}
+          {unmeasured.length > 0 && (
+            <div className="border-t border-hairline pt-4">
+              <h3 className="eyebrow text-unavail">
+                Declared, not measured · {count(unmeasured.length, "dimension")}
+              </h3>
+              <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
+                Pivot declares these dimensions and cannot see them in the data it ingests.
+                They are listed rather than dropped, because a missing dimension is a limit
+                of the model and not a statement that the dimension does not matter.
+              </p>
+              <ul className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                {unmeasured.map((skill) => (
+                  <li key={skill.key} className="min-w-0">
+                    <div className="flex items-baseline gap-2">
+                      <span aria-hidden className="font-mono text-[11px] text-unavail">
+                        —
+                      </span>
+                      <span className="text-[13px] text-foreground">{skill.label}</span>
+                      <span className="eyebrow text-[0.5rem] text-faint">{skill.side}</span>
+                    </div>
+                    <p className="mt-0.5 pl-5 text-[12px] leading-relaxed text-muted">
+                      {skill.reason}
+                    </p>
+                    {skill.definition && (
+                      <p className="mt-0.5 pl-5 text-[11px] leading-relaxed text-faint">
+                        {skill.definition}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function Limitations({ limitations }: { limitations: string[] }) {
+  if (!limitations || limitations.length === 0) return null;
+  return (
+    <ul className="mt-0.5 space-y-0.5 pl-4 text-[11px] leading-relaxed text-faint">
+      {limitations.map((limitation) => (
+        <li key={limitation} className="list-disc">
+          {limitation}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The hover-reachable half of the method rule; the disclosures carry the rest. */
+function methodTitle(m: Measurement): string {
+  const parts = [m.method];
+  if (m.limitations?.length) parts.push(`Limitations: ${m.limitations.join(" ")}`);
+  return parts.filter(Boolean).join(" — ");
 }

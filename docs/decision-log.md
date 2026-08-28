@@ -315,3 +315,176 @@ and nothing here holds a held-out target to validate a synergy model against.
 against the league's own distribution — labelled in its own text as not lineup data.
 `make lineup-availability` re-runs the measurement, so the refusal is falsifiable rather
 than permanent.
+
+---
+
+# Pivot restructure (ADR-22 … ADR-28)
+
+*The R1–R7 product was renamed and restructured into Pivot, a basketball
+decision-intelligence platform. These record the decisions that were not obvious, including
+the ones that were to leave something alone.*
+
+## ADR-22 · `Scenario` means two things; the domain gets the new one, the database keeps the old
+
+**Context:** the `scenarios` table does not hold scenarios in the sense Pivot's roadmap
+means. It holds a team's *decision mandate* — strategy, horizon, risk tolerance, apron
+willingness, untouchable players, and the six component weights scoring runs under. It is a
+settings bag attached to a team and it never changes as a result of a move. R13's Scenario is
+a roster-state trajectory: state → move → state. Two different nouns, one word, and the
+collision would have poisoned the scenario layer had it not been named before anything was
+built on it.
+
+**Decision:** the stored entity keeps its table name, its `/scenarios` routes and its API
+shape. The domain vocabulary calls it `TeamMandate` (`domain/mandate.py`), and that module is
+where the mapping is written down. `Scenario` in the R13 sense is `domain.moves.ScenarioStep`.
+
+**Alternatives:** rename the table and the routes (rejected: a migration, a breaking API
+change, and a rewrite of the share links and query parameters that seed the trade evaluator —
+all to relabel a concept users already see under a different word, since the UI has always
+called it a *strategy*); leave the collision unnamed (rejected: the next person to read
+`ScenarioStep` and `Scenario` in one file would have to guess).
+
+**Consequences:** one word means two things in the codebase, and there is now exactly one
+place that says so.
+
+## ADR-23 · The domain layer owns the vocabulary, and the analytics re-export it
+
+**Context:** `SKILL_KEYS`, `ROLE_ID`, `NEED_TO_SKILL`, `UNADDRESSABLE_NEEDS` and the strategy
+weight table were each declared inside the module that happened to use them first. Every
+future engine needs the same vocabulary, and copying it would create exactly the drift the
+product cannot afford — a skill described to a user that no engine computes.
+
+**Decision:** `app/domain` owns the vocabulary and computes nothing. The constants **move**
+there; `analytics.archetypes`, `analytics.needs` and `services.evaluation` re-export them, so
+every existing import keeps working. An AST test asserts `domain` imports nothing from pandas,
+SQLAlchemy, FastAPI, `app.analytics`, `app.services`, `app.db` or `app.api`.
+
+**Why the move was safe, measured rather than assumed:** every moved value is asserted
+byte-identical to what shipped, and `skill_schema_fingerprint()` is unchanged at
+`14a7dac41af3` — it hashes the *contents* of `SKILL_KEYS`, not its address, so no cached skill
+vector was orphaned. `ROLE_ID` remains frozen and append-only; `player_archetypes.role_id` is
+persisted per player-season and renumbering would silently rewrite the meaning of every
+historical row.
+
+**Consequences:** two names for one list (`domain.skills.SKILL_KEYS` and the re-export). The
+alternative — a flag day migrating 30+ call sites — buys nothing and risks the fingerprint.
+
+## ADR-24 · Rename what a user reads; keep the identifiers that point at something
+
+**Context:** 95 occurrences of the old naming across 40 files, and four of them are
+load-bearing in ways a search-and-replace would not notice.
+
+**Decision — renamed:** all rendered UI copy, the wordmark, page titles, the OpenAPI title and
+root payload, the decision-memo `<title>`, the outbound Basketball-Reference User-Agent, the
+`pyproject` description, README and docs prose, module docstrings.
+
+**Decision — deliberately not renamed:**
+
+| Identifier | Why |
+| --- | --- |
+| `tradelab-backend` (distribution name) | the import root is the generic `app`; there is no `import tradelab_backend` anywhere, so the rename touches only build artifacts |
+| `sqlite:///./tradelab.db` | points at a live 40 MB ingested database on the operator's disk |
+| `tradelab:` cache prefix | namespaces every cached entry; the data-version counter under it carries a ten-year TTL |
+| `TEI` | names a DB column, an API field and every registered `ModelVersion`. The **expansion** became "Pivot Estimated Impact"; the acronym did not move |
+| `ROSTERLAB_OFFLINE` | the test suite's third-party network interlock, read in `cli.py` and set in `conftest.py` |
+| `rosterlab.favoriteTeam` | renaming silently discards every user's saved team |
+| 13 `ROSTERLAB_*.md` reports | the provenance record of what was built under what name |
+
+Each site that keeps a historical name carries a comment saying why, so the next reader does
+not "fix" it.
+
+**Also fixed:** the repository shipped *three* taglines simultaneously — "Basketball Decision
+Intelligence", "NBA Front Office Simulator", and a third in page copy. Pivot has one, exported
+once from `components/brand.tsx` and asserted by a test.
+
+## ADR-25 · Navigation follows the workflow; route paths do not move
+
+**Context:** the primary nav led with the Trade Evaluator — the *last* step of the decision
+workflow — which made the product read as a collection of calculators that share a header.
+The brief's information architecture groups modules under Players / Teams / GM Lab.
+
+**Decision:** regroup and relabel navigation around observe → diagnose → test → decide, and
+change **no route paths**. GM Lab is a nav group over three real modules, not an index page.
+
+**Alternatives:** rename paths to match the IA (rejected: breaks ten legacy redirects, a
+fourteen-route visual-QA manifest, the e2e specs and every shared Trade Evaluator link —
+which carries a `?state=` query string — for no gain a user notices, since labels are what a
+user reads); add a GM Lab landing page (rejected: the brief forbids empty pages, and a page
+promising a module Pivot has not built is the presentation-layer version of a fabricated
+number).
+
+**Consequences:** the nav label and the URL differ for some destinations. A new test
+(`tests/unit/navigation.test.ts`) reads the route manifest off disk and asserts every nav
+entry resolves to a real App Router directory, which nothing checked before.
+
+## ADR-26 · A basketball judgement belongs on the server, even a small one
+
+**Context:** the thresholds that turn a need row into a headline strength or weakness —
+severity 0.35, percentile 65 — were constants in the browser (`frontend/lib/needs.ts`). That
+made "is this team bad at this?" a presentation-layer decision no backend test could reach,
+and it is how QA-9 happened: a franchise appeared under Strengths *and* Needs for the same
+row, with a zero-length bar under a caption promising a longer bar meant a larger shortfall.
+
+**Decision:** the thresholds live in `domain/needs.py` and are applied by
+`IntelligenceService.team_profile`, which returns pre-classified `weaknesses` and `strengths`.
+The two lists are disjoint by construction — a weakness needs real severity, a strength needs
+severity *exactly* zero — and a zod refinement at the client boundary asserts it.
+
+The old browser fallback ("if nothing clears the threshold, show the top four by severity
+anyway") is deliberately not reproduced: 135 of 279 stored rows have severity 0, so it
+presented teams with a weakness list they did not have.
+
+**Consequences:** `lib/needs.ts` and its tests are retained for the legacy `/teams/{id}/needs`
+shape, with a docstring recording that the rule is now server-authoritative and that the two
+copies must not drift.
+
+## ADR-27 · Fit is exposed conditionally, and withheld where it inverts
+
+**Context:** the brief's position is that no universal player fit score exists. `fit_score`
+was already team-conditional but only reachable through a trade, so "would this player fit
+here?" could not be asked.
+
+**Decision:** `Fit(player, team)` is addressable, with `team_id` **required** — a request
+without one is a 422, not a default. There is no `fit(player)` entry point, because a
+signature that permitted a universal score would contradict the product's position before any
+handler ran.
+
+**And it was measured before it was exposed.** Across the 30 ingested rosters, where the need
+vector has signal it discriminates correctly — DEN's best fits are rim protectors (needs POA
+defense 1.00, rim protection 0.86; n=127, median 63.9, sd 28.9), SAC's are shooting bigs,
+MEM's are rebounding bigs. Where no need clears the severity threshold it **inverts**: fit is
+a needs term minus a redundancy term, so with the needs term near zero it becomes a pure
+redundancy penalty and ranks *better* players lower — on ATL (max severity 0.172), 88.6 % of
+candidates score below neutral and the worst-ranked player is Donovan Mitchell.
+
+Two of thirty rosters are in that state. They return an explicit unavailable with the reason
+rather than a number that would rank a star last.
+
+**Alternatives:** ship it unqualified (rejected: it would be wrong for two teams and nothing
+would say so); withdraw the endpoint entirely (rejected: it is correct for 28 of 30, and the
+failure mode is precisely characterised); change the one-way baseline to `REPLACEMENT_SKILLS`
+(rejected: measured, and *worse* — 91.1 % below neutral, with replacement-level players
+ranking highest).
+
+**Consequences:** a documented, testable gate that R12 must remove by building a fit model
+that survives a sparse need vector, rather than by lowering the threshold.
+
+## ADR-28 · The Copilot boundary is a registry, and it is read-only
+
+**Context:** §12 of the brief requires that a future assistant not be the analytical engine.
+That is an architectural property, and architectural properties that live only in a document
+do not hold.
+
+**Decision:** `services/tools.py` declares the tool vocabulary as data — ten named tools with
+JSON Schema parameters, four implemented and six declared with the reason they cannot be. Two
+properties are asserted by tests: `ToolSpec` raises on construction if `readonly=False`, so a
+conversation can never change state a person did not confirm; and an unavailable tool has no
+handler, so it cannot be quietly callable and return something adjacent.
+
+Each tool carries `result_caveats` that travel with its result — `calculate_fit` carries "fit
+measures the direction of a change, not its size", which is exactly the misreading a fluent
+model would otherwise produce.
+
+**Consequences:** no LLM exists and none is implied. The six unbuilt tools are the concrete
+R8 work list, because each is blocked by a real structural problem (most importantly: the
+evaluation composite has no single entry point, being duplicated across four API handlers).

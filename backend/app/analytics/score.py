@@ -42,6 +42,7 @@ def _advanced_ast_pct(db: Session, season: str) -> dict[str, float]:
     SELECTs per `make score`, on top of the lazy `RosterEntry.player` load beside it.
     Cached on the session so all 30 teams share one pass.
     """
+    # Historical key spelling, kept on purpose: it namespaces a live per-session cache.
     cache = db.info.setdefault("rosterlab_ast_pct", {})
     if season not in cache:
         by_player: dict[str, float] = {}

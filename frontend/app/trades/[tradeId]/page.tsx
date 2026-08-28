@@ -310,7 +310,7 @@ export default function TradeReportPage({ params }: { params: Promise<{ tradeId:
                   </ul>
                 )}
                 <SourceRail
-                  source="RosterLab evaluation engine"
+                  source="Pivot evaluation engine"
                   retrievedAt={evaluation.evaluated_at}
                 />
               </Panel>

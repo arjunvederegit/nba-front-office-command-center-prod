@@ -2,8 +2,10 @@
 
 The dev database accumulated 22 trade proposals, 16 scenarios and 50 comparison sets
 from repeated end-to-end and manual runs — `E2E RosterLab deal`, `Smoke test deal`,
-`BOS — Contend now` fourteen times over. `CONTRIBUTING.md` rule 1 requires fixtures to
-live only under `backend/tests`, and no document disclosed that they were here.
+`BOS — Contend now` fourteen times over. Those are quoted as they were written to disk,
+under the name the product carried at the time; they are row data, not the product name.
+`CONTRIBUTING.md` rule 1 requires fixtures to live only under `backend/tests`, and no
+document disclosed that they were here.
 
 The cause is fixed elsewhere: the end-to-end suite runs against its own database
 (`make seed-demo`). This clears what earlier runs already left behind.

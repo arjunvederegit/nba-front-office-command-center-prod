@@ -769,3 +769,164 @@ export interface RiskDetail {
   unavailable?: string;
 }
 
+
+/* ------------------------------------------------------------- intelligence (Pivot)
+ *
+ * The read surface the decision workflow starts from: `/intelligence/players/{id}`,
+ * `/intelligence/teams/{id}/profile` and `/intelligence/fit`.
+ *
+ * Every value that can be absent arrives inside a `Measurement`, which carries the reason
+ * for the absence alongside the gap. That is the shape the whole family shares, and the
+ * reason a client never has to invent copy for a missing number.
+ */
+
+/** The rung of the evidence ladder a number sits on. */
+export type Evidence = "observed" | "derived" | "inferred";
+
+/** How much weight a claim can bear. */
+export type Confidence = "validated" | "measured" | "heuristic" | "unavailable";
+
+/**
+ * A value with its provenance, or an explicit absence with its reason.
+ *
+ * `value` and `reason` are mutually exclusive by construction and both keys are always
+ * present, so branching on `available` is always sufficient.
+ */
+export interface Measurement {
+  value: number | null;
+  available: boolean;
+  evidence: Evidence | null;
+  confidence: Confidence;
+  method: string;
+  source: string;
+  limitations: string[];
+  reason: string;
+}
+
+export interface SkillEntry extends Measurement {
+  key: string;
+  label: string;
+  side: "offense" | "defense" | "physical";
+  definition: string;
+  /** Alias of `value`, kept because the dimension is a percentile in 0..1. */
+  percentile: number | null;
+}
+
+export interface ArchetypeMembership {
+  key: string;
+  label: string;
+  family: "guard" | "wing" | "big" | "unclassified" | null;
+  definition: string;
+  weight: number;
+  primary: boolean;
+  evidence: Evidence;
+  confidence: Confidence;
+  method: string;
+}
+
+export interface ImpactEntry extends Measurement {
+  sigma?: number | null;
+  availability?: number | null;
+  minutes?: number | null;
+}
+
+export interface PlayerIntelligence {
+  player: {
+    id: string;
+    full_name: string;
+    position: string | null;
+    height_inches: number | null;
+  };
+  season: string;
+  skills: SkillEntry[];
+  /** Measured out of declared — the gap is deliberate and is shown, not hidden. */
+  skills_measured: number;
+  skills_declared: number;
+  archetypes: ArchetypeMembership[];
+  impact: ImpactEntry;
+  coverage_note: string;
+}
+
+export interface ProfileNeedRow {
+  key: string;
+  label: string;
+  severity: number;
+  percentile: number | null;
+  explanation: string;
+  /** The player skill that addresses it, or null where Pivot claims none does. */
+  addressed_by: string | null;
+  unaddressable_reason: string;
+}
+
+export interface SkillCoverageEntry extends Measurement {
+  key: string;
+  label: string;
+  side: "offense" | "defense" | "physical";
+  rotation_players_measured: number;
+}
+
+export interface TeamProfile {
+  team: { id: string; abbreviation: string; full_name: string };
+  season: string;
+  roster_size: number;
+  skill_coverage: SkillCoverageEntry[];
+  needs: ProfileNeedRow[];
+  /** Classified on the server so every client agrees. Disjoint from `strengths`. */
+  weaknesses: ProfileNeedRow[];
+  strengths: ProfileNeedRow[];
+  archetype_distribution: {
+    key: string;
+    label: string;
+    family: string | null;
+    count: number;
+  }[];
+  players_without_impact_estimate: { id: string; name: string }[];
+  needs_available: boolean;
+  needs_unavailable_reason: string;
+  classification_note: string;
+}
+
+export interface PlayerTeamFit {
+  player: { id: string; full_name: string };
+  team: { id: string; abbreviation: string; full_name: string };
+  season: string;
+  already_on_roster: boolean;
+  available: boolean;
+  /** null whenever `available` is false — never 0 as a stand-in. */
+  score: number | null;
+  scale_note: string;
+  detail: Record<string, unknown> & { unavailable?: string };
+  conditional_note: string;
+}
+
+export interface VocabularyEntry {
+  key: string;
+  label: string;
+  definition: string;
+}
+
+export interface Vocabulary {
+  skills: (VocabularyEntry & {
+    side: string;
+    available: boolean;
+    method: string;
+    unavailable_reason: string;
+    evidence: Evidence;
+    confidence: Confidence;
+    limitations: string[];
+  })[];
+  archetypes: (VocabularyEntry & { family: string; contributes: string[]; role_id: number })[];
+  needs: (VocabularyEntry & {
+    source: string;
+    addressed_by: string | null;
+    unaddressable_reason: string;
+    proxy_note: string;
+  })[];
+  evidence_ladder: VocabularyEntry[];
+  confidence_levels: VocabularyEntry[];
+  thresholds: {
+    need_severity: number;
+    strength_percentile: number;
+    headline_rows: number;
+  };
+}

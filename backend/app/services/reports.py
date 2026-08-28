@@ -199,7 +199,7 @@ def build_report_markdown(
     lines.append("## Assumptions and provenance")
     lines.append("")
     lines.append(
-        "- Player impact uses RosterLab Estimated Impact (TEI), this project's own "
+        "- Player impact uses Pivot Estimated Impact (TEI), this project's own "
         "portfolio-model estimate with documented validation — not a proprietary metric."
     )
     lines.append(
@@ -550,7 +550,7 @@ def _risk_section(
 def report_to_html(markdown_text: str) -> str:
     body = md_lib.markdown(markdown_text, extensions=["tables"])
     return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>RosterLab decision memo</title>
+<title>Pivot decision memo</title>
 <style>
 body {{ font-family: Georgia, serif; max-width: 780px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; }}
 h1 {{ font-size: 1.6rem; border-bottom: 2px solid #1a1a2e; padding-bottom: 8px; }}

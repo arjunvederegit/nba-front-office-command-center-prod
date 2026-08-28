@@ -101,7 +101,7 @@ export function SuggestedDeals({
           })}
         </ul>
       )}
-      <SourceRail source="RosterLab candidate search over ingested rosters and impact estimates" />
+      <SourceRail source="Pivot candidate search over ingested rosters and impact estimates" />
     </Panel>
   );
 }

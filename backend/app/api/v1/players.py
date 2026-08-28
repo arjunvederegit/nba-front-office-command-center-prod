@@ -162,7 +162,7 @@ def get_player(player_id: str, db: Session = Depends(get_db)) -> dict:
             else None,
             "minutes_estimate": impact.minutes_estimate,
             "model": f"{impact_model.algorithm} ({impact_model.version})" if impact_model else None,
-            "note": "RosterLab Estimated Impact — a portfolio-model estimate, not a "
+            "note": "Pivot Estimated Impact — a portfolio-model estimate, not a "
             "proprietary metric. See /methodology.",
         }
         if impact
@@ -218,7 +218,7 @@ def get_player_contract(player_id: str, db: Session = Depends(get_db)) -> dict:
                 "Contract data unavailable from the configured provider."
                 if configured
                 else "No contract provider is configured — nba_api does not supply "
-                "contract data, and RosterLab never invents salaries. "
+                "contract data, and Pivot never invents salaries. "
                 "See data/contracts/README.md."
             ),
         }
