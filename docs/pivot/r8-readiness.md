@@ -13,7 +13,7 @@ R9–R14 impossible or duplicative, in an order where each step is independently
 
 | # | Work | Size | Unblocks | Risk |
 | --- | --- | --- | --- | --- |
-| **1** | Fix the provenance-labelling defect | S | honesty | low |
+| ~~1~~ | ~~Fix the provenance-labelling defect~~ — **done**, see [validation report §9](validation-report.md) | S | honesty | low |
 | **2** | One evaluation entry point | M | R13, R14, and the two search services | medium |
 | **3** | Persist the skill vector | M | R9, R11, R12 | medium |
 | **4** | Multi-membership archetypes | S | R10 | low |
@@ -25,9 +25,15 @@ Items 1–4 are the ones that matter. 5–7 are hygiene that R8 is the natural h
 
 ---
 
-## 1. Fix the provenance-labelling defect
+## 1. Fix the provenance-labelling defect — **DONE, not R8 work**
 
-**This is a correctness bug in the product's core claim, and it should go first because it is
+> Fixed while closing the restructure, as a correctness bugfix rather than as R8. Ten serving
+> sites now read `source_provider` off the row; `app/core/provenance.py` holds the single
+> provider-to-upstream map; two tests pin that a `demo_seed` row is never described as
+> NBA.com and that an unmapped provider renders as itself. See
+> [validation report §9](validation-report.md). **R8 starts at item 2.**
+
+**This was a correctness bug in the product's core claim, and it went first because it was
 small and because the claim is the product.**
 
 The database is right: synthetic demo rows are stamped `source_provider="demo_seed"`

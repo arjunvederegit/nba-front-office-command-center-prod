@@ -135,13 +135,13 @@ make lineup-availability        # re-measures the R6-4 refusal (network)
 
 ## 6. Known issues remaining
 
+### Fixed after this report was first written — see §9
+
+1. ~~**The API hard-codes provenance to NBA.com** regardless of a row's actual
+   `source_provider`.~~ **Fixed.** Ten serving sites now read the row. See §9.
+
 ### Carried into R8 (documented, not fixed here)
 
-1. **The API hard-codes provenance to NBA.com** regardless of a row's actual
-   `source_provider`. Synthetic demo rows are correctly stamped and quarantined in storage
-   but are *described* as NBA.com data when served. This is the one genuine honesty defect
-   the audit found. It is first in [the R8 plan](r8-readiness.md) because it is small and
-   because the claim is the product.
 2. **The Strategy Lab still re-implements the composite in the browser**
    (`app/strategy-lab/page.tsx:93-108`) and re-ranks every saved deal from it. Real, and left
    alone: the page is 1,805 lines and entangled with slider state, and moving the calculation
@@ -251,3 +251,107 @@ regenerable artifacts. That is the operator's call and nothing here deleted it.
 - That the load-bearing historical identifiers survived: `tradelab-backend`, `tradelab.db`,
   the `tradelab:` cache prefix, `TEI`, `ROSTERLAB_OFFLINE`, `rosterlab.favoriteTeam`, and the
   13 `ROSTERLAB_*.md` reports.
+
+
+---
+
+## 9. Closing pass — the QA that §6 could not run
+
+*Everything §6 listed as blocked was run, on a checkout moved off the iCloud-synced volume.
+The environment, not the code, was the blocker: `git status` went from minutes to 0.019 s,
+`next dev` from a 3-minute stall to "Ready in 365 ms", and `next build` from a
+`TurbopackInternalError` to 15 seconds.*
+
+### The three blocked checks, run
+
+| Check | Result |
+| --- | --- |
+| **Playwright e2e** | **6 passed** — after fixing one genuine regression (below) |
+| **Visual QA** (15 routes x 7 viewports) | **105 screenshots CLEAN** — 0 px horizontal overflow, 0 console errors, 0 empty pages |
+| **Live browser QA** | Every route walked at 1920 / 1440 / 1366 / 1280 / 1024 / 768 / 390 |
+
+Full battery re-run after every fix: `pytest` **1003 passed / 2 skipped**, coverage **89 %**;
+`ruff`, `mypy` (109 files), `eslint`, `tsc` clean; `alembic check` no drift; `vitest`
+**110 passed**; `next build` **13 routes**.
+
+### The provenance defect, fixed
+
+`source_provider` was never read anywhere in the serving layer. `Provenance` defaulted to
+`nba_api` / `NBA.com` and **no caller ever overrode it**, so a demo row — correctly stamped
+`demo_seed`, correctly refused entry to a real database, correctly guarded by a Playwright
+roster-name check — was still *described to the client as NBA.com data*. Four guards stopped
+synthetic data leaking; none stopped it being mislabelled.
+
+`app/core/provenance.py` now holds the one provider-to-upstream map. It lives in `core`, not
+beside the API schemas, because services build source cards and decision memos too and a
+service must not import from `app.api`. An unmapped provider renders as its own key rather
+than falling back to NBA.com: an unfamiliar label is a much smaller lie than a confident
+wrong one.
+
+| Site | Was | Now |
+| --- | --- | --- |
+| `api/schemas.py::Provenance` | class defaults `nba_api` / `NBA.com` | required fields; `Provenance.of(row)` |
+| `api/v1/teams.py::_team_out` | defaulted | reads the row |
+| `api/v1/players.py::_player_out` | defaulted | reads the row |
+| `api/v1/teams.py` roster | `"NBA.com via nba_api (CommonTeamRoster)"` | derived, plus `source_providers` |
+| `api/v1/players.py` stats | `"NBA.com via nba_api (LeagueDashPlayerStats)"` | derived, plus `source_providers` |
+| `services/data_health.py` "Current NBA data" | named nba_api while counting every provider's rows | names the providers actually in those tables |
+| `services/intelligence.py::SKILL_SOURCE` | `"… (NBA.com via nba_api)"` | names the population, not an upstream |
+| `services/reports.py` decision memo | `"Source: NBA.com via nba_api"` | from `data_freshness["source"]` |
+| `ingestion/jobs.py` season calendar | defaulted the *stored* provider to `nba_api` | `"unknown"` — never write an unearned claim |
+| `components/ui.tsx::SourceRail` / `SourceLine` | `source` **defaulted** to `"NBA.com via nba_api"` | required prop; every rail passes what was served |
+
+Four UI sites hard-coded the string independently of the API (`team-outlook` index and
+detail, the player header, and the Trade Evaluator's fallback) and now render the served
+`upstream`. `strategy-lab`'s `ENGINE_SOURCE` no longer appends an upstream it never checked.
+
+On the ingested database the change is visible and correct: `/players/{id}/stats` now reports
+**"NBA.com via nba_api + User-imported CSV"**, because that endpoint has always served both
+and only ever named one.
+
+Two new tests pin it: a demo-seeded database is walked through the API and asserted never to
+be described as NBA.com, and an unmapped provider is asserted to render as itself.
+
+**Deliberately not changed.** `list_season_totals` filters `stat_type="totals"`, which only
+the CSV importer writes — the demo seeder uses `csv_totals` — so its hard-coded label cannot
+be wrong. Static product prose ("Rosters and stats from NBA.com, never invented" on the home
+page, the footer, `/methodology`, the OpenAPI description) is a claim about the deployment
+rather than a per-row label, and was left alone.
+
+### Regressions found and fixed
+
+1. **`comparablesResponseSchema` rejected the backend's own empty-corpus response.**
+   `seasons_ingested: z.array(z.string()).min(1)` was stricter than
+   `ComparableTradeService.coverage()`, which derives the list from the corpus — so it is
+   `[]` exactly when the corpus is empty, and that same block rides on the `available: false`
+   responses. A zod throw instead of the designed unavailable state. **The one confirmed
+   restructure regression that a type-check and a build could not catch.**
+2. **The e2e homepage spec was stale.** The restructure rewrote the headline, both calls to
+   action and the tool launcher; §6 predicted the suite "should pass unmodified" and it did
+   not. Four assertions updated to the strings that ship, same six intents.
+3. **Hydration mismatches on `/` and `/salary-cap-center`** (pre-existing, not from the
+   restructure). The shell hydrates before these pages and warms the shared `["teams"]` query
+   cache, so their first client render already had data while the server HTML had skeletons.
+   `lib/hydrated.ts` holds one `useHydrated()`; query results are read through it, so the
+   hydration render matches the server exactly. The Trade Evaluator's file-local copy of the
+   same hook was folded into it.
+4. **Horizontal overflow on mobile.** Seven headings carried `whitespace-nowrap` on
+   `title-lg`, which floors at 24 px — including the user-supplied trade name. Now
+   `text-balance`. Measured 0 px overflow at 390 px on every route.
+5. **Error states.** The restructure gave its *new* intelligence queries an error branch and
+   left the older queries beside them reading only `data`, so a failed request rendered the
+   same skeleton as a pending one, forever. Added on the Command Center (teams, deals,
+   strategies), Team Outlook (roster, payroll) and the player page (stats, contract).
+6. **`health.providers` dereferenced without a guard** while `dataHealthSchema` deliberately
+   does not validate `providers`.
+7. **Branding.** `app/favicon.ico` was still the create-next-app Vercel triangle; replaced
+   with `app/icon.svg` carrying the Pivot mark. The seven `docs/screenshots/` PNGs embedded
+   in the README still showed the **RosterLab** wordmark; regenerated.
+
+### Known environment limitation
+
+`nbaplayerimages/` is user-supplied and gitignored, and the copy on the synced volume has
+been emptied by iCloud. This working copy therefore has no player photos, and its
+`media_assets` player rows were pruned so the manifest matches the files that exist. Restore
+the tree and run `make index-assets` to bring them back. Team logos (30/30) were recovered
+and are indexed.
