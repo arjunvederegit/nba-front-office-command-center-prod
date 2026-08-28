@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import PlayerOut, Provenance
+from app.api.schemas import PlayerOut, Provenance, describe_providers
 from app.config import get_settings
 from app.core.errors import NotFoundError
 from app.db.base import get_db
@@ -49,7 +49,7 @@ def _player_out(db: Session, player: Player) -> PlayerOut:
         weight_lbs=player.weight_lbs,
         years_experience=player.years_experience,
         current_team=_team_out(team) if team else None,
-        provenance=Provenance(source_retrieved_at=player.source_retrieved_at),
+        provenance=Provenance.of(player),
     )
 
 
@@ -185,7 +185,10 @@ def get_player_stats(player_id: str, db: Session = Depends(get_db)) -> dict:
         .order_by(PlayerSeasonStats.season)
     ).all()
     seasons: dict[str, dict] = {}
+    providers: set[str] = set()
     for row in rows:
+        if row.source_provider:
+            providers.add(row.source_provider)
         entry = seasons.setdefault(
             row.season,
             {
@@ -199,7 +202,10 @@ def get_player_stats(player_id: str, db: Session = Depends(get_db)) -> dict:
     return {
         "player_id": player.id,
         "seasons": list(seasons.values()),
-        "source": "NBA.com via nba_api (LeagueDashPlayerStats)",
+        # `player_season_stats` holds nba_api rows and user-imported CSV rows side by
+        # side, so the label is read off the rows rather than assumed.
+        "source": describe_providers(providers),
+        "source_providers": sorted(providers),
     }
 
 
@@ -304,6 +310,9 @@ def list_season_totals(season: str, db: Session = Depends(get_db)) -> dict:
         "count": len(players),
         "players": players,
         "available": len(players) > 0,
+        # Hardcoded deliberately, and checked: this query filters `stat_type="totals"`,
+        # which only the CSV importer writes (the demo seeder uses "csv_totals"), so the
+        # label cannot be wrong the way the player/team serializers were.
         "source": "user-imported season totals CSV (raw totals; per-game derived using GP)",
         "imported_at": imported_at.isoformat() if imported_at else None,
         "note": None

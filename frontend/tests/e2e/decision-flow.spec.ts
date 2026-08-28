@@ -7,16 +7,22 @@ import { expect, test } from "@playwright/test";
  */
 
 test("overview presents the platform with honest data status", async ({ page }) => {
+  // The Pivot restructure rewrote this page's copy — headline, calls to action, and the
+  // tool launcher, which became the four-step decision workflow. The assertions below
+  // are the same six intents against the strings that actually ship.
   await page.goto("/");
   await expect(page.getByRole("link", { name: "Pivot — home" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Build the next move." })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Know what your roster is. Then change it." }),
+  ).toBeVisible();
   // primary and secondary calls to action
+  await expect(page.getByRole("link", { name: "Start with your roster" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open the Trade Evaluator" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Explore the platform" })).toBeVisible();
-  // the tool launcher reaches every active module in one click
-  await expect(page.getByRole("heading", { name: "Front-office tools" })).toBeVisible();
+  // the launcher reaches every active module in one click
+  await expect(page.getByRole("heading", { name: "The decision workflow" })).toBeVisible();
   // roadmap items are described, never presented as usable
-  await expect(page.getByText("Contract Predictor")).toBeVisible();
+  await expect(page.getByText("Not built yet")).toBeVisible();
+  await expect(page.getByText("Scenario Engine")).toBeVisible();
 });
 
 test("renamed modules keep old links working", async ({ page }) => {

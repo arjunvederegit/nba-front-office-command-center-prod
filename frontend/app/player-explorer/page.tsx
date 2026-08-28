@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import { useHydrated } from "@/lib/hydrated";
 import { ordinal, pct } from "@/lib/format";
 import {
   ALL_COLUMNS,
@@ -117,8 +118,14 @@ function PlayerExplorer() {
   const [compareOpen, setCompareOpen] = useState(false);
 
   // Preselect the team filter from ?team=<team_id> once teams are loaded.
+  // Gated on hydration: the shell above these pages hydrates first and warms the shared
+  // `["teams"]` query cache, so `teams` can already be present on this page's very first
+  // client render. Seeding state from it during that render makes the client tree differ
+  // from the server HTML and React throws a hydration error. `useHydrated()` is false for
+  // the hydration render, so the seed happens in the commit straight after it instead.
+  const hydrated = useHydrated();
   const [seededTeamParam, setSeededTeamParam] = useState<string | null>(null);
-  if (teamParam && teams && seededTeamParam !== teamParam) {
+  if (hydrated && teamParam && teams && seededTeamParam !== teamParam) {
     setSeededTeamParam(teamParam);
     const match = teams.find((t) => t.id === teamParam);
     if (match) setTeamAbbr(match.abbreviation);

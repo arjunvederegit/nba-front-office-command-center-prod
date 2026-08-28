@@ -15,10 +15,12 @@ from app.api.schemas import (
 from app.cba.builder import build_trade_context
 from app.cba.engine import TradeLegalityEngine
 from app.core.errors import DomainError, NotFoundError
+from app.core.provenance import describe_providers
 from app.db.base import get_db
 from app.db.models import (
     DataSyncRun,
     GeneratedReport,
+    RosterEntry,
     Scenario,
     Team,
     TradeAsset,
@@ -368,7 +370,19 @@ def _memo_markdown(
         legality=legality,
         evaluations=evaluations,
         focal_team_id=focal_team_id,
-        data_freshness={"last_sync": last_sync.isoformat() if last_sync else "never"},
+        data_freshness={
+            "last_sync": last_sync.isoformat() if last_sync else "never",
+            # Read off the rows the memo was built from. The memo's provenance line used
+            # to assert NBA.com unconditionally — in the section titled "provenance", in
+            # the one artifact a user exports and hands to someone else.
+            "source": describe_providers(
+                {
+                    p
+                    for (p,) in db.execute(select(RosterEntry.source_provider).distinct())
+                    if p
+                }
+            ),
+        },
         comparables=comparables,
     )
 

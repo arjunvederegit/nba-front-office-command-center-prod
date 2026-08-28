@@ -360,7 +360,9 @@ def sync_season_calendar(db: Session, seasons: list[str] | None = None, provider
                 "first_game_date": dates[0],
                 "last_game_date": dates[-1],
                 "game_count": len(dates),
-                "source_provider": rows[0].get("source_provider", "nba_api"),
+                # Was defaulted to "nba_api", which wrote an unearned claim into the
+                # row itself rather than merely rendering one.
+                "source_provider": rows[0].get("source_provider") or "unknown",
                 "source_record_id": f"leaguegamelog:{season}",
                 "source_retrieved_at": rows[0].get("source_retrieved_at"),
                 "ingestion_run_id": run.id,

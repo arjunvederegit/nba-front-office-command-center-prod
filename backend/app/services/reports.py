@@ -208,7 +208,7 @@ def build_report_markdown(
     )
     freshness = data_freshness or {}
     lines.append(
-        f"- Source: NBA.com via `nba_api` · rosters/stats last synced: "
+        f"- Source: {freshness.get('source', 'unknown')} · rosters/stats last synced: "
         f"{freshness.get('last_sync', 'unknown')} · season {settings.current_season}."
     )
     lines.append(

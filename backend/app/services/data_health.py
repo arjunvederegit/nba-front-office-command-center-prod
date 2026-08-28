@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.cache import get_cache
+from app.core.provenance import upstream_for
 from app.db.models import (
     Base,
     Contract,
@@ -61,6 +62,10 @@ def data_health(db: Session) -> dict:
     }
 
     tables = {}
+    # Which providers actually populated each table. The "Current NBA data" card counted
+    # rows from every provider while naming only nba_api, so a demo-seeded or CSV-heavy
+    # database was described as NBA.com coverage.
+    table_providers: dict[str, list[str]] = {}
     nba_retrieved_at: datetime | None = None
     model: type[Base]
     for model, name in [
@@ -78,6 +83,16 @@ def data_health(db: Session) -> dict:
         (SeasonCalendar, "season_calendar"),
     ]:
         count = db.scalar(select(func.count()).select_from(model)) or 0
+        if hasattr(model, "source_provider"):
+            table_providers[name] = sorted(
+                {
+                    p
+                    for (p,) in db.execute(
+                        select(model.source_provider).distinct()  # type: ignore[attr-defined]
+                    )
+                    if p
+                }
+            )
         last_retrieved = None
         stale = None
         if hasattr(model, "source_retrieved_at"):
@@ -220,6 +235,17 @@ def data_health(db: Session) -> dict:
     trade_rows = int(tables.get("historical_trades", {}).get("rows") or 0)
     calendar_rows = int(tables.get("season_calendar", {}).get("rows") or 0)
 
+    # The card counts rosters + season stats, and those tables can hold rows from more
+    # than one provider (nba_api, the user CSV import, or the demo seed). Name what is
+    # actually in them rather than the provider this card was originally written for.
+    def _nba_card_source(providers: dict[str, list[str]], nba_api_version: str) -> str:
+        present = sorted(
+            set(providers.get("rosters", [])) | set(providers.get("player_season_stats", []))
+        )
+        if present == ["nba_api"] or not present:
+            return f"NBA.com via nba_api {nba_api_version}"
+        return " + ".join(upstream_for(name) for name in present)
+
     # Fan-readable source cards: status ∈ fresh|stale|derived|incomplete|unavailable|failed
     source_cards = [
         {
@@ -229,7 +255,7 @@ def data_health(db: Session) -> dict:
             "last_update": last_success.isoformat() if last_success else None,
             "coverage": f"{tables.get('rosters', {}).get('rows', 0)} roster spots · "
             f"{tables.get('player_season_stats', {}).get('rows', 0)} stat rows",
-            "source": f"NBA.com via nba_api {nba_api_pkg.__version__}",
+            "source": _nba_card_source(table_providers, nba_api_pkg.__version__),
             "stale_tables": nba_tables_stale,
             "action": None if nba_fresh else "Run `make sync-data` to refresh from NBA.com.",
         },

@@ -71,7 +71,9 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-const ENGINE_SOURCE = "Pivot evaluation engine · NBA.com via nba_api";
+// Names the engine, not the upstream. It used to append "· NBA.com via nba_api" to
+// every rail on this page — an unverified claim about rows the page never inspects.
+const ENGINE_SOURCE = "Pivot evaluation engine over ingested rosters and impact estimates";
 
 /* ---------------------------------------------------------------- scoring */
 

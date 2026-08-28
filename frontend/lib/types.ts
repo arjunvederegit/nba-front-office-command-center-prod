@@ -65,7 +65,10 @@ export interface RosterResponse {
   team: Team;
   season: string;
   roster: RosterPlayer[];
+  /** Human-readable upstream(s), derived from the rows — never assumed. */
   source: string;
+  /** The raw `source_provider` keys behind `source`, for anything that needs to branch. */
+  source_providers: string[];
   source_retrieved_at: string | null;
 }
 

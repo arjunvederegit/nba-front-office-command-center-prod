@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.schemas import Provenance, RosterPlayerOut, TeamOut
+from app.api.schemas import Provenance, RosterPlayerOut, TeamOut, describe_providers
 from app.cba import resolver
 from app.config import get_settings
 from app.core.errors import NotFoundError
@@ -35,7 +35,7 @@ def _team_out(team: Team) -> TeamOut:
         city=team.city,
         conference=team.conference,
         division=team.division,
-        provenance=Provenance(source_retrieved_at=team.source_retrieved_at),
+        provenance=Provenance.of(team),
     )
 
 
@@ -135,10 +135,13 @@ def get_roster(team_id: str, db: Session = Depends(get_db)) -> dict:
 
     players = []
     retrieved_at = None
+    providers: set[str] = set()
     for entry in entries:
         impact = impacts.get(entry.player_id)
         salary, contract = contracts[entry.player_id]
         retrieved_at = entry.source_retrieved_at or retrieved_at
+        if entry.source_provider:
+            providers.add(entry.source_provider)
         players.append(
             RosterPlayerOut(
                 salary=salary,
@@ -163,7 +166,9 @@ def get_roster(team_id: str, db: Session = Depends(get_db)) -> dict:
         "team": _team_out(team).model_dump(),
         "season": settings.current_season,
         "roster": players,
-        "source": "NBA.com via nba_api (CommonTeamRoster)",
+        # Read off the rows, not assumed. A demo-seeded roster says so here.
+        "source": describe_providers(providers),
+        "source_providers": sorted(providers),
         "source_retrieved_at": retrieved_at.isoformat() if retrieved_at else None,
     }
 

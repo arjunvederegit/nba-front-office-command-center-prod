@@ -555,7 +555,7 @@ function SectionRail({ title, aside }: { title: string; aside?: string }) {
     <div className="mb-3">
       <div className="h-px w-full bg-gradient-to-r from-signal/60 to-transparent" />
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-2.5">
-        <h2 className="title-lg whitespace-nowrap text-foreground">{title}</h2>
+        <h2 className="title-lg text-balance text-foreground">{title}</h2>
         {aside && <p className="text-[11px] text-faint">{aside}</p>}
       </div>
     </div>

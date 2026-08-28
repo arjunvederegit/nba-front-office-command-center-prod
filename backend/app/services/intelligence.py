@@ -48,7 +48,10 @@ from app.domain.evidence import Confidence, Evidence, Measurement
 from app.services.evaluation import EvaluationService, PlayerCard
 
 #: The population every skill percentile is taken against, stated wherever one is served.
-SKILL_SOURCE = "league percentile of the recency-weighted feature window (NBA.com via nba_api)"
+#: It names the *population*, not the upstream: the same percentile is computed over
+#: whatever rows were ingested, so asserting NBA.com here labelled demo and CSV-derived
+#: skills as NBA.com data. Row-level provenance is served by `Provenance`.
+SKILL_SOURCE = "league percentile of the recency-weighted feature window"
 
 
 class IntelligenceService:

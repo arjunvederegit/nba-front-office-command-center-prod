@@ -24,13 +24,14 @@ import { api } from "@/lib/api";
 import { dataHealthSchema } from "@/lib/schemas";
 import { formatDate } from "@/lib/format";
 import { setFavoriteTeam, useFavoriteTeam } from "@/lib/favoriteTeam";
+import { useHydrated } from "@/lib/hydrated";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type { DataHealth, Scenario, Team, TradeSummary } from "@/lib/types";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "@/components/brand";
 import { BallGlyph, HalfCourt, ShotChartMotif, TransactionLane } from "@/components/court";
 import { TeamCrest, TeamLogo } from "@/components/media";
 import { useToast } from "@/components/toast";
-import { Badge, ButtonLink, Panel, Skeleton, StatBlock } from "@/components/ui";
+import { Badge, ButtonLink, ErrorState, Panel, Skeleton, StatBlock } from "@/components/ui";
 
 /* ----------------------------------------------------------- decision workflow */
 
@@ -134,20 +135,38 @@ const PRINCIPLES = [
 export default function CommandCenterPage() {
   const toast = useToast();
   const favorite = useFavoriteTeam();
+  const hydrated = useHydrated();
 
-  const { data: teams } = useQuery({ queryKey: ["teams"], queryFn: () => api.get<Team[]>("/teams") });
-  const { data: health } = useQuery({
+  // Each of these reads `error` as well as `data`. Without it a failed request renders
+  // the same skeleton as a pending one, forever — the loading state becomes the error
+  // state and the user is never told anything went wrong.
+  const { data: teamsData, error: teamsError } = useQuery({
+    queryKey: ["teams"],
+    queryFn: () => api.get<Team[]>("/teams"),
+  });
+  const { data: healthData } = useQuery({
     queryKey: ["data-health"],
     queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
   });
-  const { data: trades } = useQuery({
+  const { data: tradesData, error: tradesError } = useQuery({
     queryKey: ["trades"],
     queryFn: () => api.get<TradeSummary[]>("/trades"),
   });
-  const { data: scenarios } = useQuery({
+  const { data: scenariosData, error: scenariosError } = useQuery({
     queryKey: ["scenarios"],
     queryFn: () => api.get<Scenario[]>("/scenarios"),
   });
+
+  // Everything below reads through the hydration gate. The app shell hydrates before this
+  // page and warms the shared query cache, so these can already hold data on the page's
+  // very first client render while the server HTML still had skeletons — React then throws
+  // "Hydration failed because the server rendered text didn't match the client". Holding
+  // the values back for that one render makes the two trees identical; the real data
+  // arrives in the commit immediately after.
+  const teams = hydrated ? teamsData : undefined;
+  const health = hydrated ? healthData : undefined;
+  const trades = hydrated ? tradesData : undefined;
+  const scenarios = hydrated ? scenariosData : undefined;
 
   const favoriteTeam = teams?.find((t) => t.id === favorite?.id) ?? null;
   const identity = teamIdentity(favorite?.abbreviation);
@@ -382,8 +401,12 @@ export default function CommandCenterPage() {
           title="Pick your team"
           aside="Sets the default across every module"
         />
-        {!teams ? (
-          <div className="grid grid-cols-5 gap-2 md:grid-cols-10">
+        {teamsError ? (
+          <ErrorState message={`Could not load teams: ${String(teamsError)}`} />
+        ) : !teams ? (
+          // Same column ramp as the loaded grid below, so the tiles do not reflow when
+          // the request resolves.
+          <div className="grid grid-cols-5 gap-2 sm:grid-cols-6 md:grid-cols-10">
             {Array.from({ length: 30 }).map((_, i) => (
               <Skeleton key={i} className="h-[74px]" />
             ))}
@@ -427,7 +450,9 @@ export default function CommandCenterPage() {
         <SectionHead eyebrow="Your work" title="Front-office snapshot" />
         <div className="grid gap-3 lg:grid-cols-2">
           <Panel title="Recent deals" actions={<Link className="eyebrow text-signal" href="/strategy-lab">Compare →</Link>}>
-            {!trades ? (
+            {tradesError ? (
+              <ErrorState message={`Could not load saved deals: ${String(tradesError)}`} />
+            ) : !trades ? (
               <div className="space-y-2">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <Skeleton key={i} className="h-9" />
@@ -468,7 +493,9 @@ export default function CommandCenterPage() {
             title="Saved strategies"
             actions={<Link className="eyebrow text-signal" href="/team-outlook">Teams →</Link>}
           >
-            {!scenarios ? (
+            {scenariosError ? (
+              <ErrorState message={`Could not load saved strategies: ${String(scenariosError)}`} />
+            ) : !scenarios ? (
               <div className="space-y-2">
                 {Array.from({ length: 4 }).map((_, i) => (
                   <Skeleton key={i} className="h-9" />
@@ -515,10 +542,10 @@ export default function CommandCenterPage() {
             <Panel padded={false} className="px-4 py-3">
               <StatBlock
                 label="Contracts"
-                value={health.providers.contracts?.configured ? "Imported" : "Not imported"}
+                value={health.providers?.contracts?.configured ? "Imported" : "Not imported"}
                 note="Salary rules stay unavailable until imported"
                 size="sm"
-                accent={health.providers.contracts?.configured ? "var(--legal)" : "var(--unknown)"}
+                accent={health.providers?.contracts?.configured ? "var(--legal)" : "var(--unknown)"}
               />
             </Panel>
             <Panel padded={false} className="px-4 py-3">
@@ -583,7 +610,7 @@ function SectionHead({
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 pt-2.5">
         <div>
           <div className="eyebrow">{eyebrow}</div>
-          <h2 className="title-lg mt-1 whitespace-nowrap text-foreground">{title}</h2>
+          <h2 className="title-lg mt-1 text-balance text-foreground">{title}</h2>
         </div>
         {aside && <p className="text-[11px] text-faint">{aside}</p>}
       </div>

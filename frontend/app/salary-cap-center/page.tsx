@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { api } from "@/lib/api";
+import { useHydrated } from "@/lib/hydrated";
 import { dataHealthSchema } from "@/lib/schemas";
 import { formatDate, money } from "@/lib/format";
 import { teamIdentity } from "@/lib/teamIdentity";
@@ -101,20 +102,29 @@ function SalaryCapCenter() {
   const searchParams = useSearchParams();
   const teamParam = searchParams.get("team");
 
-  const { data: teams } = useQuery({
+  const { data: teamsData } = useQuery({
     queryKey: ["teams"],
     queryFn: () => api.get<Team[]>("/teams"),
     staleTime: 300_000,
   });
-  const { data: health } = useQuery({
+  const { data: healthData } = useQuery({
     queryKey: ["data-health"],
     queryFn: () => api.get<DataHealth>("/data-health", dataHealthSchema),
     staleTime: 120_000,
   });
 
+  // The app shell hydrates before this page and warms the shared `["teams"]` cache, so
+  // the team picker rendered real buttons on the first client render while the server
+  // HTML held skeletons. Reading through the hydration gate keeps the two trees identical
+  // for that render; the picker fills in on the next commit.
+  const hydrated = useHydrated();
+  const teams = hydrated ? teamsData : undefined;
+  const health = hydrated ? healthData : undefined;
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Seed selection once teams load: honor ?team=<id>, else the first team.
+  // Seed selection once teams load: honor ?team=<id>, else the first team. Safe to do in
+  // render because `teams` above is hydration-gated, so this cannot fire during hydration.
   const [seeded, setSeeded] = useState(false);
   if (!seeded && teams && teams.length > 0) {
     setSeeded(true);

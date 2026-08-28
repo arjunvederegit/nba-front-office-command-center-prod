@@ -121,7 +121,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
     queryKey: ["team", teamId],
     queryFn: () => api.get<TeamDetail>(`/teams/${teamId}`),
   });
-  const { data: roster } = useQuery({
+  const { data: roster, error: rosterError } = useQuery({
     queryKey: ["roster", teamId],
     queryFn: () => api.get<RosterResponse>(`/teams/${teamId}/roster`),
   });
@@ -134,7 +134,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
     queryFn: () =>
       api.get<TeamProfile>(`/intelligence/teams/${teamId}/profile`, teamProfileSchema),
   });
-  const { data: payroll } = useQuery({
+  const { data: payroll, error: payrollError } = useQuery({
     queryKey: ["payroll", teamId],
     queryFn: () => api.get<PayrollResponse>(`/teams/${teamId}/payroll`),
   });
@@ -260,7 +260,7 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
           </ButtonLink>
           <SourceRail
             className="ml-auto mt-0 w-full border-t-0 pt-0 lg:w-auto"
-            source="NBA.com via nba_api"
+            source={detail.team.provenance?.upstream ?? "unknown source"}
             retrievedAt={detail.standing?.source_retrieved_at ?? detail.stats_retrieved_at}
           />
         </div>
@@ -310,7 +310,9 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
             </Link>
           }
         >
-          {!roster ? (
+          {rosterError ? (
+            <ErrorState message={`Could not load the roster: ${String(rosterError)}`} />
+          ) : !roster ? (
             <SkeletonRows rows={10} height="h-12" />
           ) : rosterPlayers.length === 0 ? (
             <EmptyState
@@ -557,7 +559,9 @@ export default function TeamOutlookPage({ params }: { params: Promise<{ teamId: 
       <div className="grid items-start gap-3 lg:grid-cols-2">
         {/* ---------------------------------------------------------- payroll */}
         <Panel title="Payroll & cap status" className="min-w-0">
-            {!payroll ? (
+            {payrollError ? (
+              <ErrorState message={`Could not load payroll: ${String(payrollError)}`} />
+            ) : !payroll ? (
               <SkeletonRows rows={3} height="h-8" />
             ) : payroll.payroll_available ? (
               <div className="space-y-3">

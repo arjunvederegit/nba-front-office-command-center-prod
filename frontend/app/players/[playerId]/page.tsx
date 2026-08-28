@@ -16,6 +16,7 @@ import { count, height, money, ordinal, pct, tei } from "@/lib/format";
 import { playerIntelligenceSchema } from "@/lib/schemas";
 import { teamIdentity, teamVars } from "@/lib/teamIdentity";
 import type {
+  Provenance,
   ArchetypeAssignment,
   ComparablePlayer,
   Measurement,
@@ -50,7 +51,7 @@ interface PlayerDetail {
     weight_lbs: number | null;
     years_experience: number | null;
     current_team: Team | null;
-    provenance: { source_retrieved_at: string | null } | null;
+    provenance: Provenance | null;
   };
   impact: {
     tei?: number;
@@ -98,11 +99,11 @@ export default function PlayerPage({ params }: { params: Promise<{ playerId: str
     queryKey: ["player", playerId],
     queryFn: () => api.get<PlayerDetail>(`/players/${playerId}`),
   });
-  const { data: stats } = useQuery({
+  const { data: stats, error: statsError } = useQuery({
     queryKey: ["player-stats", playerId],
     queryFn: () => api.get<PlayerStats>(`/players/${playerId}/stats`),
   });
-  const { data: contract } = useQuery({
+  const { data: contract, error: contractError } = useQuery({
     queryKey: ["player-contract", playerId],
     queryFn: () => api.get<PlayerContract>(`/players/${playerId}/contract`),
   });
@@ -211,7 +212,7 @@ export default function PlayerPage({ params }: { params: Promise<{ playerId: str
         <div className="relative border-t border-hairline px-5 pb-3 pt-2.5 md:px-6">
           <SourceRail
             className="mt-0 border-t-0 pt-0"
-            source="NBA.com via nba_api"
+            source={player.provenance?.upstream ?? "unknown source"}
             retrievedAt={player.provenance?.source_retrieved_at}
           />
         </div>
@@ -275,7 +276,9 @@ export default function PlayerPage({ params }: { params: Promise<{ playerId: str
             title="Season by season"
             subtitle="Per-game averages from the league dashboard, with advanced rates"
           >
-            {!stats ? (
+            {statsError ? (
+              <ErrorState message={`Could not load season stats: ${String(statsError)}`} />
+            ) : !stats ? (
               <SkeletonRows rows={3} height="h-9" />
             ) : stats.seasons.length === 0 ? (
               <UnavailableNotice reason="No season rows have been ingested for this player." />
@@ -376,7 +379,9 @@ export default function PlayerPage({ params }: { params: Promise<{ playerId: str
           </Panel>
 
           <Panel title="Contract" className="min-w-0">
-            {!contract ? (
+            {contractError ? (
+              <ErrorState message={`Could not load the contract: ${String(contractError)}`} />
+            ) : !contract ? (
               <SkeletonRows rows={3} height="h-8" />
             ) : contract.available ? (
               <div className="space-y-3">

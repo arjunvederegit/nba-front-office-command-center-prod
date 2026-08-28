@@ -22,9 +22,9 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { api } from "@/lib/api";
+import { useHydrated } from "@/lib/hydrated";
 import { sectionOf } from "@/lib/evaluationDetail";
 import { tradeDetailSchema } from "@/lib/schemas";
 import { decodeShareState, encodeShareState } from "@/lib/shareState";
@@ -170,21 +170,6 @@ function BuilderSkeleton() {
   );
 }
 
-/**
- * True only after hydration. The builder is entirely client-data-driven and sits
- * inside a Suspense boundary that hydrates *after* the app shell has already
- * warmed the shared `teams` query — without this gate the first client render
- * would legitimately disagree with the server HTML.
- */
-const noopSubscribe = () => () => {};
-function useHydrated(): boolean {
-  return useSyncExternalStore(
-    noopSubscribe,
-    () => true,
-    () => false,
-  );
-}
-
 function TradeEvaluator() {
   const hydrated = useHydrated();
   const searchParams = useSearchParams();
@@ -215,8 +200,13 @@ function TradeEvaluator() {
   } | null>(null);
 
   // ---- state seeding (render-phase adjustments, no setState-in-effect) ----
+  // Gated on hydration: the shell above these pages hydrates first and warms the shared
+  // `["teams"]` query cache, so `teams` can already be present on this page's very first
+  // client render. Seeding state from it during that render makes the client tree differ
+  // from the server HTML and React throws a hydration error. `useHydrated()` is false for
+  // the hydration render, so the seed happens in the commit straight after it instead.
   const [seeded, setSeeded] = useState(false);
-  if (!seeded && teams) {
+  if (hydrated && !seeded && teams) {
     setSeeded(true);
     const shared = sharedState ? decodeShareState(sharedState) : null;
     if (shared) {
@@ -1250,7 +1240,7 @@ function TeamWorkspace({
 
         <div className="px-4 pb-3">
           <SourceRail
-            source={roster?.source ?? "NBA.com via nba_api"}
+            source={roster?.source ?? "unknown source"}
             retrievedAt={roster?.source_retrieved_at ?? null}
           />
         </div>
@@ -1707,7 +1697,7 @@ function RulesCheck({
               >
                 {visual?.glyph}
               </span>
-              <h3 className={`title-lg whitespace-nowrap ${visual?.text ?? "text-foreground"}`}>
+              <h3 className={`title-lg text-balance ${visual?.text ?? "text-foreground"}`}>
                 {LEGALITY_LABEL[status ?? "not_evaluated"]}
               </h3>
             </div>

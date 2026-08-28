@@ -120,7 +120,12 @@ export const comparablesResponseSchema = z
         sides_rankable: z.number(),
         trades_rankable: z.number(),
         sides_blocked_by_unmodelled_players: z.number(),
-        seasons_ingested: z.array(z.string()).min(1),
+        // No .min(1): `ComparableTradeService.coverage()` derives this from the
+        // corpus, so a database with no transactions imported returns [] — and that
+        // same coverage block rides on the `available: false` responses, which is
+        // exactly when the corpus is empty. Requiring one season made the empty-corpus
+        // path throw instead of rendering its unavailable state.
+        seasons_ingested: z.array(z.string()),
         calendar_backed: z.boolean(),
         note: z.string(),
       })
