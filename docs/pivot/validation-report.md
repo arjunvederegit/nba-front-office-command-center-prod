@@ -154,17 +154,41 @@ make lineup-availability        # re-measures the R6-4 refusal (network)
 5. **Skills are not persisted** and **archetypes are 1:1** — both schema work, both specified
    in the R8 plan.
 
-### Not run in this pass
+### Not run in this pass — and why
 
-- **Playwright e2e.** The suite requires a freshly seeded demo database and two free ports;
-  it was not run end-to-end here. Its specs were updated for the rename (`Pivot — home`,
-  `E2E Pivot deal`) and the h1 assertions it pins (`Trade Evaluator`, `Decision board`,
+Three checks were attempted and could not be completed **because of the local environment,
+not because of the code**. They are listed here rather than glossed, and each is the first
+thing to run on a machine with disk headroom.
+
+- **Live browser QA** (manual route inspection, responsive layouts, console errors).
+  Attempted. Both dev servers were started from `.claude/launch.json` and **both bound their
+  ports** (3000 and 8000 confirmed listening). `next dev` then printed its banner and stalled
+  at 0 % CPU without compiling, and browser navigation to `localhost:3000` was refused. The
+  cause is the eviction described in §7: `next dev` compiles on first request, which means
+  reading thousands of `node_modules` files, and at that moment a `find` over that directory
+  had itself exceeded 600 s. The servers were stopped cleanly afterwards.
+- **Playwright e2e.** Requires a freshly seeded demo database plus a running stack, so it is
+  blocked by the same cause. Its specs *were* updated for the rename (`Pivot — home`,
+  `E2E Pivot deal`), and the h1 strings it pins (`Trade Evaluator`, `Decision board`,
   `Player Explorer`) were deliberately left unchanged, so the suite should pass unmodified.
   **This is the highest-value thing to run before merging.**
-- **Visual QA** (`make visual-qa`, 15 routes × 7 viewports). Not run. The route manifest was
-  not touched because no route moved.
-- **`docs/screenshots/`** still shows the RosterLab wordmark in all seven curated PNGs. They
-  are embedded in the README and are now stale. Regenerating them needs a running stack.
+- **Visual QA** (`make visual-qa`, 15 routes × 7 viewports). Same dependency. The route
+  manifest was not touched, because no route moved.
+
+What partially substitutes for them, and what does not:
+
+- The new API surface *was* exercised against the live 30-team database, in-process via
+  `TestClient` rather than over HTTP (§4). That validates the handlers, the serialization and
+  the honesty gates. It does **not** validate rendering, layout or console cleanliness.
+- `next build` compiled all 13 routes cleanly, which catches type and import errors across
+  every page but not runtime behaviour.
+- 109 frontend unit tests pass, including 27 new navigation tests that assert every nav entry
+  resolves to a real App Router directory and that all ten legacy redirects survive — which is
+  the specific regression a navigation restructure risks.
+
+**`docs/screenshots/`** still shows the RosterLab wordmark in all seven curated PNGs. They are
+embedded in the README and are now stale. Regenerating them needs a running stack, so this is
+blocked by the same cause.
 
 ---
 
@@ -197,6 +221,23 @@ scikit-learn 1.9.0, scipy 1.17.1), which reproduced the baseline exactly.
 leaving a zero-byte `.git/index.lock`. Check `ps` for a live git process, then remove it —
 that touches no commit and no file. Note that `GIT_OPTIONAL_LOCKS=0`, which makes reads fast
 here, makes `git add` a **silent no-op**, because the add needs the lock it suppresses.
+
+The decisive cause of the git failures, though, was not `.git` at all — it was that
+`git add -A -- docs` traverses `docs/qa`, which holds **19 archived visual-QA runs, ~1,900
+PNGs, 475 MB**, essentially all of it evicted. Every staging attempt spent its life stat-ing
+those files and was killed. Temporarily moving `docs/qa`, `nbaplayerimages` (2,476 dirs) and
+`nbalogos` out of the tree — an instant same-volume rename — took `git add` from *repeatedly
+killed after minutes* to **exit 0 in 29 seconds**. They were moved back immediately after the
+push, and all three are gitignored, so nothing about the commit depended on them.
+
+Two things not to do, both tried: `mv .git` out of the synced tree **timed out after 8
+minutes** and left `.git` briefly unreadable (it recovered intact); and symlinking
+`node_modules` to a `.nosync` sibling breaks `tsc`, which excludes `node_modules` **by name**
+and then type-checks the whole dependency tree.
+
+**The root cause is disk pressure.** The volume is at 94-95 % (≈12 GiB free of 228 GiB), which
+is why macOS keeps evicting. Freeing space is the durable fix; `docs/qa` alone is 475 MB of
+regenerable artifacts. That is the operator's call and nothing here deleted it.
 
 ---
 
