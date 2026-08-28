@@ -1,4 +1,13 @@
-"""RosterLab API application."""
+"""Pivot API application.
+
+Pivot is a basketball decision-intelligence platform. The product was called RosterLab
+through the R1-R7 generation; the release reports under that name are kept as the
+provenance record, and a handful of infrastructure identifiers (the `tradelab-backend`
+distribution, the default `tradelab.db` filename, the `tradelab:` cache prefix and the TEI
+acronym) deliberately keep their historical spelling because renaming them would move a
+database, invalidate a cache namespace or change the meaning of a persisted column without
+changing anything a user sees. See docs/pivot/adr.md.
+"""
 
 import time
 import uuid
@@ -11,7 +20,16 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import __version__
-from app.api.v1 import assets, comparisons, health, players, scenarios, teams, trades
+from app.api.v1 import (
+    assets,
+    comparisons,
+    health,
+    intelligence,
+    players,
+    scenarios,
+    teams,
+    trades,
+)
 from app.config import get_settings
 from app.core.errors import (
     DomainError,
@@ -25,12 +43,13 @@ configure_logging()
 settings = get_settings()
 
 app = FastAPI(
-    title="RosterLab: NBA Front Office Simulator",
+    title="Pivot: Basketball Intelligence for Better Decisions",
     version=__version__,
     description=(
-        "Decision-support API for exploratory NBA trade analysis. Basketball data: "
-        "NBA.com via the `nba_api` package, with full provenance. This is an "
-        "analytical portfolio project, not an official NBA cap-management product."
+        "Decision-support API for basketball roster and trade analysis: observe a "
+        "roster, diagnose it, compare players, simulate a move, and read why. Basketball "
+        "data comes from NBA.com via the `nba_api` package, with full provenance. This "
+        "is an analytical portfolio project, not an official NBA cap-management product."
     ),
     docs_url="/docs",
     openapi_url="/openapi.json",
@@ -104,13 +123,14 @@ app.include_router(players.router, prefix=API)
 app.include_router(scenarios.router, prefix=API)
 app.include_router(trades.router, prefix=API)
 app.include_router(comparisons.router, prefix=API)
+app.include_router(intelligence.router, prefix=API)
 app.include_router(assets.router, prefix=API)
 
 
 @app.get("/")
 def root() -> dict:
     return {
-        "name": "RosterLab API",
+        "name": "Pivot API",
         "version": __version__,
         "docs": "/docs",
         "data_health": f"{API}/data-health",

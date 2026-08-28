@@ -67,69 +67,15 @@ from app.db.models import (
     Standing,
     TeamNeed,
 )
+from app.domain.mandate import COMPONENT_KEYS, STRATEGY_WEIGHTS
 
-DEFAULT_WEIGHTS: dict[str, dict[str, float]] = {
-    "contend": {
-        "performance": 0.32,
-        "fit": 0.20,
-        "contract": 0.08,
-        "timeline": 0.12,
-        "assets": 0.08,
-        "risk": 0.20,
-    },
-    "improve": {
-        "performance": 0.25,
-        "fit": 0.20,
-        "contract": 0.12,
-        "timeline": 0.13,
-        "assets": 0.15,
-        "risk": 0.15,
-    },
-    "retool": {
-        "performance": 0.20,
-        "fit": 0.18,
-        "contract": 0.14,
-        "timeline": 0.18,
-        "assets": 0.18,
-        "risk": 0.12,
-    },
-    "rebuild": {
-        "performance": 0.08,
-        "fit": 0.10,
-        "contract": 0.17,
-        "timeline": 0.25,
-        "assets": 0.28,
-        "risk": 0.12,
-    },
-    "youth": {
-        "performance": 0.10,
-        "fit": 0.14,
-        "contract": 0.14,
-        "timeline": 0.28,
-        "assets": 0.22,
-        "risk": 0.12,
-    },
-    "cap_relief": {
-        "performance": 0.10,
-        "fit": 0.10,
-        "contract": 0.30,
-        "timeline": 0.12,
-        "assets": 0.26,
-        "risk": 0.12,
-    },
-    "custom": {
-        "performance": 0.22,
-        "fit": 0.18,
-        "contract": 0.14,
-        "timeline": 0.16,
-        "assets": 0.15,
-        "risk": 0.15,
-    },
-}
+# The strategy weight table is owned by `app.domain.mandate` — where each strategy
+# also carries the sentence that explains what it optimises for — and re-exported
+# here so every existing consumer and every stored evaluation keeps its meaning.
+DEFAULT_WEIGHTS: dict[str, dict[str, float]] = STRATEGY_WEIGHTS
 
 TEI_SIGMA_DEFAULT = 1.5  # index points; refined by per-player bands when available
 
-COMPONENT_KEYS = ("performance", "fit", "contract", "timeline", "assets", "risk")
 
 # The reference asset the assets component is anchored on, unchanged from the flat
 # 8-points-per-pick R4 shipped: a mid-first-rounder is worth 8 composite points. What

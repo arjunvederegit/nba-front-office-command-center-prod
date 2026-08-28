@@ -40,6 +40,16 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
+from app.domain.archetypes import (
+    REAL_ROLES,  # noqa: F401  re-exported: tests/unit/test_roles.py imports it from here
+    ROLE_ID,
+    ROLE_ORDER,
+    UNCLASSIFIED_SIZE,
+    UNCLASSIFIED_STATS,
+)
+from app.domain.needs import UNADDRESSABLE_NEEDS as _DOMAIN_UNADDRESSABLE_NEEDS
+from app.domain.skills import SKILL_KEYS
+
 from .features import MODEL_FEATURES
 
 ROLE_FEATURES = [
@@ -56,31 +66,10 @@ DISCRIMINANTS = ["USG_PCT", "AST_PCT", "fg3a_rate", "stl_per_min", "blk_per_min"
 MAX_MISSING_DISCRIMINANTS = 2
 PERCENTILES = (30, 55, 60, 65, 70, 75, 80, 90)
 
-UNCLASSIFIED_SIZE = "unclassified (no listed height)"
-UNCLASSIFIED_STATS = "unclassified (insufficient stats)"
-
-# Frozen id map. **Never reorder or renumber**: `role_id` is persisted per player-season,
-# so renumbering would silently rewrite the meaning of every historical row. Append only.
-ROLE_ID = {
-    "lead guard": 0,
-    "scoring guard": 1,
-    "point-of-attack guard": 2,
-    "off-ball guard": 3,
-    "primary wing creator": 4,
-    "3&D wing": 5,
-    "movement shooter": 6,
-    "slashing wing": 7,
-    "connector wing": 8,
-    "stretch big": 9,
-    "rim-protecting big": 10,
-    "playmaking big": 11,
-    "glass-cleaning big": 12,
-    "finishing big": 13,
-    UNCLASSIFIED_SIZE: 90,
-    UNCLASSIFIED_STATS: 91,
-}
-ROLE_ORDER = [r for r, _ in sorted(ROLE_ID.items(), key=lambda kv: kv[1])]
-REAL_ROLES = [r for r in ROLE_ORDER if not r.startswith("unclassified")]
+# The role vocabulary is owned by `app.domain.archetypes` and re-exported here, so every
+# existing consumer keeps its import and every persisted `role_id` keeps its meaning. The
+# map is still frozen and append-only for exactly the same reason; it simply lives one
+# layer down now, beside the product-language definition of each label.
 
 
 def league_thresholds(weighted: pd.DataFrame) -> dict[str, dict[int, float]]:
@@ -210,19 +199,13 @@ def fit_archetypes(weighted: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     return out, meta
 
 
-# Skill dimensions used by roster-fit; derived from the same feature space so that
-# team needs and player skills are directly comparable.
-SKILL_KEYS = [
-    "shooting_volume",
-    "shooting_accuracy",
-    "creation",
-    "turnover_avoidance",
-    "team_defense",
-    "rim_protection",
-    "rebounding",
-    "size",
-    "scoring",
-]
+# Skill dimensions used by roster-fit; derived from the same feature space so that team
+# needs and player skills are directly comparable. The list is owned by
+# `app.domain.skills` — where each dimension also carries its definition, its method and
+# its limitations — and re-exported here.
+#
+# `skill_schema_fingerprint()` below hashes the CONTENTS of this list, not its address, so
+# moving it changes no cache identity. Reordering or renaming still would.
 
 # R5.5. **What a replacement player looks like in skill space**, measured on the same
 # population `REPLACEMENT_TEI` is fitted on: rostered players outside their team's top ten
@@ -283,13 +266,9 @@ REPLACEMENT_SKILL_RULE = (
 # That needs the matchup and tracking data deferred to R6. The team-side need is still
 # computed and still shown — a team that cannot contain a ball handler should be told so —
 # it simply no longer has a player-side answer attached to it.
-UNADDRESSABLE_NEEDS = {
-    "point_of_attack_defense": (
-        "no player skill claims to address this: on-ball defence cannot be measured from "
-        "box-score data, and a steals-based proxy rates ball-dominant guards above the "
-        "defenders who actually guard them"
-    ),
-}
+# Re-exported from `app.domain.needs`, which holds the reason text beside the need's own
+# definition. The claim was built and then withdrawn; the reason travels with it.
+UNADDRESSABLE_NEEDS = _DOMAIN_UNADDRESSABLE_NEEDS
 
 
 def player_skill_vector(row: pd.Series, league: pd.DataFrame) -> dict[str, float]:
