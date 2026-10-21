@@ -12,7 +12,7 @@ OBSERVE  →  DIAGNOSE  →  COMPARE  →  SIMULATE  →  RECOMMEND  →  EXPLAI
 
 ![Pivot Command Center](docs/screenshots/overview.png)
 
-> **Status:** fully functional local build. Data below was ingested live from NBA.com (July 2026), enriched from a user CSV, the Kaggle basketball database, and local image datasets. **Not affiliated with the NBA.**
+> **Status:** a fully functional **local** build — not a deployed service. The R8–R9.3A work described below lives on unmerged feature branches (`main` is the pre-R8 baseline); see [Development status](#development-status-as-of-2026-10-21). Data below was ingested live from NBA.com (July 2026), enriched from a user CSV, the Kaggle basketball database, and local image datasets. **Not affiliated with the NBA.**
 >
 > Pivot was called **RosterLab** through its R1–R7 generation; those release reports are kept under their original names as the provenance record. A few infrastructure identifiers (the `tradelab-backend` distribution, the default `tradelab.db` filename, the `tradelab:` cache prefix, and the `TEI` acronym) deliberately keep their historical spelling — renaming them would move a database, invalidate a cache namespace, or change the meaning of a persisted column without changing anything a user sees. See [ADR-24](docs/decision-log.md).
 
@@ -142,9 +142,9 @@ Containerized: `docker compose up --build` (Postgres 16 + Redis 7 + API + worker
 ### Testing
 
 ```bash
-make test                     # backend pytest (897, coverage floor 85 %) + frontend vitest (82)
+make test                     # backend pytest (coverage floor 85 %) + frontend vitest
 make lint                     # ruff + mypy + eslint + tsc
-make e2e                      # Playwright core flows against the local stack (5 specs)
+make e2e                      # Playwright core flows against a dedicated demo database
 make comparable-validation    # comparable-trade battery; exits non-zero on a threshold
 make acquisition-validation   # need-driven discovery battery, over all 30 rosters
 make lineup-availability      # re-measure whether lineup data could support a fit model
@@ -202,22 +202,37 @@ No NBA data, images, or licensed datasets are committed — everything is fetche
 
 ## Documentation
 
-[Pivot audit](docs/pivot/audit.md) · [Target architecture](docs/pivot/target-architecture.md) · [Gap analysis](docs/pivot/gap-analysis.md) · [R8 readiness](docs/pivot/r8-readiness.md) · [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) · [CBA coverage](docs/cba-rule-coverage.md) · [Data sources](docs/data-sources.md) · [Data dictionary](docs/data-dictionary.md) · [Identity resolution](docs/identity-resolution.md) · [Kaggle setup](docs/kaggle-setup.md) · [Decision log](docs/decision-log.md) · [Model cards](docs/model-card-player-impact.md) · [Limitations](docs/limitations.md) · [Demo script](docs/demo-script.md) · [Interview guide](docs/interview-guide.md) · [Enhancement plan (historical)](docs/rosterlab-enhancement-plan.md)
+Start with the **[documentation index](docs/README.md)** (and [CLAUDE.md](CLAUDE.md) for AI-agent sessions). Direct links: [Pivot audit](docs/pivot/audit.md) · [Target architecture](docs/pivot/target-architecture.md) · [Gap analysis](docs/pivot/gap-analysis.md) · [R8 readiness](docs/pivot/r8-readiness.md) · [Architecture](docs/architecture.md) · [Methodology](docs/methodology.md) · [CBA coverage](docs/cba-rule-coverage.md) · [Data sources](docs/data-sources.md) · [Data dictionary](docs/data-dictionary.md) · [Identity resolution](docs/identity-resolution.md) · [Kaggle setup](docs/kaggle-setup.md) · [Decision log](docs/decision-log.md) · [Model cards](docs/model-card-player-impact.md) · [Limitations](docs/limitations.md) · [Demo script](docs/demo-script.md) · [Interview guide](docs/interview-guide.md) · [Enhancement plan (historical)](docs/rosterlab-enhancement-plan.md)
+
+## Development status (as of 2026-10-21)
+
+Evidence for every row is the milestone's own report under `docs/`; nothing here was re-run for this page. "Unmerged" means the work exists on a feature branch, not on `main`; nothing in this table is deployed to production.
+
+| State | What |
+| --- | --- |
+| **Baseline (`main`)** | The pre-R8 Pivot redesign, with Ask Pivot V2 off by default. |
+| **Unmerged lineage (linear)** | `feat/r8-canonical-data-foundation` → `r8-1-operational-validation` → `r8-2-activation-checkpoint` → `r8-3-goat-live-integration` → `r9-1-player-intelligence-foundation` → `r9-2-player-skill-engine` → `r9-3a-goat-operational-tools` → `nba-headshots`. All but the headshots branch have been pushed; none is merged. Verify with `git`, not with this list. |
+| **Implemented and tested** | R8 canonical, provenance-tracked data layer · R8.1 live-validated ingestion and PostgreSQL 16 compatibility · R8.2 separate roster-season and statistics-season clocks · R8.3 BALLDONTLIE (GOAT) provider · R9.1 candidate-only training, rolling-origin backtest and preregistered-holdout infrastructure · R9.2 skill engine producing *experimental candidate* estimates (nothing promoted) · R9.3A Cap Center, contract-aware trade-legality assessment and a Player Explorer research preview. |
+| **Test evidence (dated)** | R9.3A final QA, 2026-10-19: backend 3,327 passed / 0 failed, frontend 345 passed, PostgreSQL subset 193 passed ([R9.3A report](docs/r9-3a/R9-3A-EXECUTIVE-REPORT.md)). Earlier milestones report their own counts; none was re-run by the documentation waves. Tests establish behaviour, not model accuracy (see *The analytics*). |
+| **Preview only** | R9.3A runs in an isolated preview (`make preview-up`, ports 8093/3093) over a *copy* of the data that includes GOAT contracts, injuries and stored R9.2 candidates. |
+| **Activated** | One roster-only refresh (2026-27 rosters) was applied to the owner's development database on 2026-10-18 after a verified backup ([R8.2 activation report](docs/r8-2/activation-checkpoint-report.md)); cutting the running app over is the owner's step. **R9.3A provider-data activation on the owner's database has not been performed** (rehearsed on a copy; [procedure](docs/r9-3a/local-preview-and-activation.md)). No active model has been retrained, promoted or activated by R8.2–R9.3A. |
+| **Development-gated** | Official NBA headshots (`feat/nba-headshots`, development builds only) until image-rights clearance — [details](docs/headshots/NBA-HEADSHOTS.md). |
+| **Ask Pivot** | A separate, loopback-only, off-by-default demonstration over a *fictional* league ([ADR-30](docs/decision-log.md)). It does not read Pivot's NBA data; a real-data assistant is not built. |
+| **Known honesty gaps** | TEI's evidence and limits: *The analytics* above and [the model card](docs/model-card-player-impact.md). |
 
 ## Roadmap
 
-The next phase is the **GM Intelligence** progression, mapped release by release in
-[docs/pivot/gap-analysis.md](docs/pivot/gap-analysis.md):
+Future work is described by the R8–R9 roadmap documents ([R8 next steps](docs/r8/next-steps-roadmap.md), [R9 vision](docs/r9-1/R9-VISION-AND-ROADMAP.md), [R9.3B and R10 recommendations](docs/r9-3a/R9-3B-AND-R10-RECOMMENDATIONS.md)). These are plans, not commitments, and none is built beyond the starting points noted.
 
-| | | Status |
+| | Planned capability | Starting point in the repository |
 | --- | --- | --- |
-| **R8** | Canonical basketball data foundation | [next — concrete plan](docs/pivot/r8-readiness.md) |
-| **R9** | Player intelligence engine | 9 of 22 declared dimensions measured; the rest need tracking or matchup data |
-| **R10** | Archetype engine | 14 functional archetypes ship; multi-membership needs a schema change |
-| **R11** | Roster intelligence / needs | profile and needs ship; scarcity and complementarity do not |
-| **R12** | Team-conditional fit | addressable and measured; must survive a sparse need vector |
-| **R13** | Scenario engine | `RosterState` / `Move` / `apply` exist; no engine consumes them yet |
-| **R14** | GM Copilot | 4 of 10 tools implemented, 6 declared with reasons |
+| **R10** | Archetypes | 14 rule-based functional roles ship; multi-membership does not |
+| **R11** | Roster needs | roster profile and needs ship; scarcity and complementarity do not |
+| **R12** | Player–team fit | a one-way fit baseline ships; counterfactual fit does not |
+| **R13** | Comparable trades | retrieval over 565 completed trades ships; richer contract and pick context does not |
+| **R14** | Transaction optimization | an experimental, hidden candidate generator and the legality engine exist; the legality inputs it needs do not |
+
+Separately, a **GM Copilot / real-data Ask Pivot** is a future capability that needs the above to be trustworthy. Older documents numbered it R14 (and called R13 a "scenario engine"): [gap-analysis](docs/pivot/gap-analysis.md) (2026-08-28), the [target architecture](docs/pivot/target-architecture.md) and ADR-28/30. The R8–R9 roadmap documents (2026-10-18/19) number R14 as the transaction optimizer. No document records the renumbering, so the README keeps the Copilot unnumbered until the owner decides.
 
 Earlier ideas — Salary Predictor (once historical contract data exists), Free Agency Planner,
 Draft Fit, Rotation Builder, Extension Simulator — remain honest "not built" states in the
