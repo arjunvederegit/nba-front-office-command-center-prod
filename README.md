@@ -91,16 +91,26 @@ Full write-up: [docs/methodology.md](docs/methodology.md) · in-product: `/metho
 
 ## Getting started
 
+> **Every command from `make migrate` onward writes to the database that `DATABASE_URL` names** — by default
+> `backend/tradelab.db`, which on a long-lived checkout may be a hand-built, irreplaceable database. Know which
+> database you are pointing at before you run anything past `make setup`, and prefer a **copy** for development.
+> Read [Operating safely](#operating-safely-data-training-and-models) before running `make train` or `make score`.
+
 ```bash
 make setup          # backend venv + frontend npm install + .env from template
-make migrate        # Alembic (SQLite by default; Postgres via DATABASE_URL)
+make migrate        # Alembic (SQLite by default; Postgres via DATABASE_URL): changes that database's schema
 make seed-config    # verified salary-cap parameters (2025-26 + 2026-27)
-make sync-data      # live NBA data from NBA.com via nba_api (network)
-make train && make score
+make sync-data      # live NBA data from NBA.com via nba_api (network): writes the ingested tables
 make dev            # backend :8000 + frontend :3000
 ```
 
+Training and scoring are deliberately not part of this sequence. On a **fresh, disposable database you just
+created**, `make train && make score` is how the app obtains impact estimates and team needs. On any database that
+already holds estimates you care about, they are destructive — see below.
+
 ### Optional data imports
+
+Everything in this block also writes to the database `DATABASE_URL` names.
 
 ```bash
 make index-assets      # player photos (./nbaplayerimages) + team logos (./nbalogos)
@@ -141,6 +151,47 @@ Visual QA is scripted too — `node scripts/visual_qa.mjs docs/qa/run` screensho
 route at 1920/1440/1366/1280/1024/768/390 — 15 routes, 105 shots — and fails loudly on
 horizontal overflow, console errors or an empty body. Its output is gitignored; the curated shots above live in
 `docs/screenshots/`.
+
+## Operating safely: data, training and models
+
+Ingestion, training and scoring are **operations on a database**, not setup steps. Verified against
+`Makefile`, `backend/app/cli.py` and `backend/app/analytics/` — the runbooks linked below hold the full detail.
+
+| Command | What it does to the database `DATABASE_URL` names |
+| --- | --- |
+| `make migrate`, `make seed-config` | Alter the schema / load cap parameters. Rehearse migrations on a copy first. |
+| `make sync-data` (`sync-all`) | Network. Upserts teams, players, rosters, standings, team and player statistics, games, the season calendar and contracts, then writes data-quality issue rows. A full roster refresh can rewrite stored bio fields — see the [R8.2 runbook](docs/r8-2/operational-runbook.md) §1. Seasons come from settings, not from an argument. |
+| `make refresh`, `sync-corpus-stats`, `import-*`, `link-balldontlie`, `refresh-balldontlie` | Write ingested or imported rows; several also reach a third party. |
+| **`make train`** (legacy) | Retires the active version of up to five model families (impact, archetype, TEI→net-rating, team projection, pick curve) and activates the new ones **in the same transaction**, with no evaluation step. Writes impact estimates and archetypes labelled with `Settings.current_season`. **Unless `ARGS=--preserve-history`, it permanently deletes every impact estimate of an inactive version** — re-activating an old version does not bring them back; only a backup does. |
+| **`make score`** | Writes, updates and **deletes** `team_needs` rows for `Settings.current_season`. |
+| `make train-candidate`, `make materialise-skills` | Write *candidate* models and estimates that no serving path reads, and prove that nothing else changed. Still write — run them on a copy. |
+| `make backtest` | Read-only on the database; writes artifacts under `models/experiments/`. Its `holdout` stage spends the holdout (below). |
+| `make activate-provider-data` | Dry run unless `APPLY=1`; an apply writes into `DATABASE_URL` after taking a backup. |
+| `make purge-fixtures` | Lists test leftovers; deletes only with `APPLY=1`. |
+| `make seed-demo`, `make e2e` | **Delete and recreate** `E2E_DB` (default `backend/rosterlab-e2e.db`), then train and score it. Never point `E2E_DB` at a real database. |
+| `make data-status`, `make season-status`, `make candidates`, `make contract-coverage` | Read-only. Use these first. |
+
+**Rules**
+
+- **Never train or score against the owner's real database** without a separately approved operational procedure
+  that includes a verified backup. Rehearse on a copy (`cp backend/tradelab.db <copy>`, then
+  `DATABASE_URL=sqlite:///<copy> make …`).
+- **Candidate training and activation are different operations.** `make train-candidate` never changes an active
+  model. Nothing in the repository promotes a candidate: promotion is designed but not built — see
+  [model versioning and safety](docs/r9-1/model-versioning-and-safety.md) and
+  [model safety and promotion](docs/r9-2/model-safety-and-promotion.md).
+- **Holdout evaluation follows the preregistered protocol.** Run `make backtest BT_STAGE=development` first; the
+  `holdout` stage needs exactly one development run per target, records every read in `holdout_ledger.json`, and a
+  re-read needs an explicit `--acknowledge-reread`. Never tune on the holdout.
+  See [evaluation architecture](docs/r9-1/evaluation-architecture.md) and
+  [`preregistration.json`](docs/r9-1/preregistration.json).
+- **Verify the season settings before training or evaluating.** `make train` and `make score` use
+  `Settings.current_season` — the pinned `CURRENT_SEASON` if set, otherwise the calendar's analysis season — and
+  `make train` derives its three-season window from it. Run `make season-status` and read `pinned_behind_calendar`
+  and the `seasons` block. **2026-11-03 is the documented statistics rollover checkpoint** (see
+  [season-context architecture](docs/r8-2/season-context-architecture.md)); confirm the configuration actually in
+  force rather than assuming it is right, and do not train or score across it without the
+  [R8.2 operational runbook](docs/r8-2/operational-runbook.md) §5.
 
 ## Repository policy
 
