@@ -296,7 +296,7 @@ class IntelligenceService:
             ],
             "needs_available": bool(need_rows),
             "needs_unavailable_reason": (
-                "" if need_rows else "team needs have not been computed; run `make score`"
+                "" if need_rows else "team needs have not been computed"
             ),
             "classification_note": (
                 f"A need is a headline weakness at severity >= "
