@@ -30,7 +30,7 @@ import { api } from "@/lib/api";
 import { useHydrated } from "@/lib/hydrated";
 import { tradeDetailSchema } from "@/lib/schemas";
 import { decodeShareState, encodeShareState } from "@/lib/shareState";
-import { evaluateTrade } from "@/lib/tradeEvaluate";
+import { useTradeAnalysis } from "@/lib/useTradeAnalysis";
 import { LEGALITY_LABEL, LEGALITY_SHORT, formatDate } from "@/lib/format";
 import { getFavoriteTeam } from "@/lib/favoriteTeam";
 import { teamIdentity } from "@/lib/teamIdentity";
@@ -135,10 +135,6 @@ function TradeEvaluator() {
   const [activeDrag, setActiveDrag] = useState<{ id: string; name: string } | null>(null);
   const [drawerPlayer, setDrawerPlayer] = useState<{ id: string; name: string } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [evaluation, setEvaluation] = useState<{
-    legality: LegalityResponse;
-    evaluations: Record<string, TeamEvaluation>;
-  } | null>(null);
 
   // ---- state seeding (render-phase adjustments, no setState-in-effect) ----
   // Gated on hydration: the shell above these pages hydrates first and warms the shared
@@ -240,31 +236,31 @@ function TradeEvaluator() {
     [moves, originOf],
   );
 
-  // ---- live rules check (backend-authoritative; debounced) ----
-  const [validation, setValidation] = useState<LegalityResponse | null>(null);
-  const [validating, setValidating] = useState(false);
-  useEffect(() => {
-    const handle = setTimeout(async () => {
-      if (teamIds.length < 2 || playerMoves.length === 0) {
-        setValidation(null);
-        return;
-      }
-      setValidating(true);
-      try {
-        const result = await api.post<LegalityResponse>("/trades/validate", {
-          team_ids: teamIds,
-          player_moves: playerMoves,
-          pick_moves: picks,
-        });
-        setValidation(result);
-      } catch {
-        setValidation(null);
-      } finally {
-        setValidating(false);
-      }
-    }, 450);
-    return () => clearTimeout(handle);
-  }, [teamIds, playerMoves, picks]);
+  // ---- live rules check (backend-authoritative; debounced) and evaluation ----
+  // One hook owns both asynchronous channels, so a response can only land on the screen state
+  // it was requested for (see lib/useTradeAnalysis.ts).
+  const {
+    evaluation,
+    evaluating,
+    evaluate,
+    clearEvaluation,
+    validation,
+    validating,
+  } = useTradeAnalysis({
+    draftKey: appliedTradeId,
+    evaluationRequest: {
+      team_ids: teamIds,
+      player_moves: playerMoves,
+      pick_moves: picks,
+      scenario_id: scenarioId,
+      strategy: scenario?.strategy ?? "custom",
+    },
+    validationRequest:
+      teamIds.length < 2 || playerMoves.length === 0
+        ? null
+        : { team_ids: teamIds, player_moves: playerMoves, pick_moves: picks },
+    onEvaluationError: (e) => toast("error", `Evaluation failed: ${String(e)}`),
+  });
 
   // R9.3A: keep the deal in the address bar (replaceState, no navigation) so opening a participant's
   // player file and pressing Back restores the scenario instead of an empty builder. Transient link
@@ -280,19 +276,6 @@ function TradeEvaluator() {
       window.history.replaceState(window.history.state, "", next);
     }
   }, [hydrated, seeded, teamIds, moves, picks, tradeName]);
-
-  const evaluate = useMutation({
-    mutationFn: () =>
-      evaluateTrade({
-        team_ids: teamIds,
-        player_moves: playerMoves,
-        pick_moves: picks,
-        scenario_id: scenarioId,
-        strategy: scenario?.strategy ?? "custom",
-      }),
-    onSuccess: setEvaluation,
-    onError: (e) => toast("error", `Evaluation failed: ${String(e)}`),
-  });
 
   /**
    * The memo is the artifact a front office actually circulates, and it used to be
@@ -354,7 +337,7 @@ function TradeEvaluator() {
       // does not have to be found again. Applied only if he is verifiably on the origin roster.
       if (stagedPlayerId && teamIds.length === 1 && id !== teamIds[0] && originOf[stagedPlayerId] === teamIds[0]) {
         setMoves((m) => (m[stagedPlayerId] ? m : { ...m, [stagedPlayerId]: id }));
-        setEvaluation(null);
+        clearEvaluation();
       }
   };
 
@@ -364,18 +347,18 @@ function TradeEvaluator() {
       Object.fromEntries(Object.entries(m).filter(([pid, to]) => to !== id && originOf[pid] !== id)),
     );
     setPicks((p) => p.filter((x) => x.from_team_id !== id && x.to_team_id !== id));
-    setEvaluation(null);
+    clearEvaluation();
   }
 
   // A pick changes the deal, so an evaluation of the deal without it no longer describes
   // what is on the sheet — clear it, exactly as moving a player does.
   function updatePicks(next: React.SetStateAction<PickMove[]>) {
-    setEvaluation(null);
+    clearEvaluation();
     setPicks(next);
   }
 
   function movePlayer(playerId: string, toTeamId: string) {
-    setEvaluation(null);
+    clearEvaluation();
     setMoves((m) => {
       if (originOf[playerId] === toTeamId) {
         const rest = { ...m };
@@ -583,9 +566,9 @@ function TradeEvaluator() {
                     tradeName={tradeName}
                     setTradeName={setTradeName}
                     canAct={hasMoves}
-                    evaluating={evaluate.isPending}
+                    evaluating={evaluating}
                     saving={saveTrade.isPending}
-                    onEvaluate={() => evaluate.mutate(undefined, { onSuccess: revealResults })}
+                    onEvaluate={() => evaluate({ onSuccess: revealResults })}
                     onSave={() => saveTrade.mutate()}
                     onCopy={copyShareLink}
                     onMemo={() => memo.mutate()}
@@ -664,10 +647,10 @@ function TradeEvaluator() {
             <Button
               variant="primary"
               size="sm"
-              disabled={evaluate.isPending}
-              onClick={() => evaluate.mutate(undefined, { onSuccess: revealResults })}
+              disabled={evaluating}
+              onClick={() => evaluate({ onSuccess: revealResults })}
             >
-              {evaluate.isPending ? "Evaluating…" : "Evaluate"}
+              {evaluating ? "Evaluating…" : "Evaluate"}
             </Button>
           </div>
         </div>
