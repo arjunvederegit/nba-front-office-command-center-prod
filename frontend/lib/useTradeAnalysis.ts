@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { evaluateTrade, type TradeEvaluationRequest, type TradeEvaluationResult } from "@/lib/tradeEvaluate";
 import type { LegalityResponse, PickMove, PlayerMove } from "@/lib/types";
 
@@ -49,6 +49,8 @@ interface Channel<T> {
   latest: number;
   pending: boolean;
   data: T | null;
+  /** Why the newest request of this epoch failed, when it did; only the rules check records one. */
+  error: string | null;
 }
 
 interface State {
@@ -62,7 +64,7 @@ type Step<T> =
   | { type: "adopt"; sig: string; data: T }
   | { type: "start"; epoch: number; id: number; clear: boolean }
   | { type: "succeed"; epoch: number; id: number; data: T }
-  | { type: "fail"; epoch: number; id: number; clear: boolean };
+  | { type: "fail"; epoch: number; id: number; clear: boolean; error?: string };
 
 type Action =
   | ({ channel: "evaluation" } & Step<TradeEvaluationResult>)
@@ -75,6 +77,7 @@ const fresh = <T,>(key: string | null, sig: string | null, epoch: number): Chann
   latest: 0,
   pending: false,
   data: null,
+  error: null,
 });
 
 function step<T>(channel: Channel<T>, action: Step<T>): Channel<T> {
@@ -90,15 +93,15 @@ function step<T>(channel: Channel<T>, action: Step<T>): Channel<T> {
     case "start":
       return action.epoch !== channel.epoch
         ? channel
-        : { ...channel, latest: action.id, pending: true, data: action.clear ? null : channel.data };
+        : { ...channel, latest: action.id, pending: true, data: action.clear ? null : channel.data, error: null };
     case "succeed":
       return action.epoch !== channel.epoch || action.id !== channel.latest
         ? channel
-        : { ...channel, pending: false, data: action.data };
+        : { ...channel, pending: false, data: action.data, error: null };
     case "fail":
       return action.epoch !== channel.epoch || action.id !== channel.latest
         ? channel
-        : { ...channel, pending: false, data: action.clear ? null : channel.data };
+        : { ...channel, pending: false, data: action.clear ? null : channel.data, error: action.error ?? null };
   }
 }
 
@@ -129,6 +132,19 @@ function evaluationRequestFrom(sig: string): TradeEvaluationRequest {
 function validationRequestFrom(sig: string): TradeValidationRequest {
   const [team_ids, player_moves, pick_moves] = JSON.parse(sig);
   return { team_ids, player_moves, pick_moves };
+}
+
+/**
+ * The sentence shown for a rules check that failed: the server's own message when the client
+ * produced one (`ApiError`), otherwise a short stable fallback. Never an object, a stack or markup.
+ */
+const VALIDATION_FAILURE_FALLBACK = "The request to the rules engine did not complete.";
+function validationFailureMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const message = typeof error.message === "string" ? error.message.trim() : "";
+    if (message && message !== "[object Object]") return message;
+  }
+  return VALIDATION_FAILURE_FALLBACK;
 }
 
 /* --------------------------------------------------------------------- the hook */
@@ -256,9 +272,16 @@ export function useTradeAnalysis({ draftKey, evaluationRequest, validationReques
           if (committed.current.mounted)
             dispatch({ channel: "validation", type: "succeed", epoch: validationEpoch, id, data: result });
         },
-        () => {
+        (error) => {
           if (committed.current.mounted)
-            dispatch({ channel: "validation", type: "fail", epoch: validationEpoch, id, clear: true });
+            dispatch({
+              channel: "validation",
+              type: "fail",
+              epoch: validationEpoch,
+              id,
+              clear: true,
+              error: validationFailureMessage(error),
+            });
         },
       );
     }, VALIDATION_DEBOUNCE_MS);
@@ -298,5 +321,7 @@ export function useTradeAnalysis({ draftKey, evaluationRequest, validationReques
     /** The rules check of exactly the inputs now on the screen, or `null`. */
     validation: view.validation.data,
     validating: view.validation.pending,
+    /** Why the newest rules check of exactly the inputs now on the screen failed, or `null`. Never set alongside `validation`. */
+    validationError: view.validation.error,
   };
 }

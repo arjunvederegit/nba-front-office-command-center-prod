@@ -238,6 +238,7 @@ function TradeEvaluator() {
     clearEvaluation,
     validation,
     validating,
+    validationError,
   } = useTradeAnalysis({
     draftKey: appliedTradeId,
     evaluationRequest: {
@@ -546,6 +547,7 @@ function TradeEvaluator() {
                 <RulesCheck
                   validation={validation}
                   validating={validating}
+                  validationError={validationError}
                   hasMoves={hasMoves}
                 />
                 {validation?.financial_analysis && (
@@ -633,6 +635,8 @@ function TradeEvaluator() {
                     rules check
                   </span>
                 </span>
+              ) : validationError ? (
+                <span className="text-[13px] text-muted">Rules check not completed</span>
               ) : (
                 <span className="text-[13px] text-muted">No check yet</span>
               )}

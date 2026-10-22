@@ -168,6 +168,7 @@ interface Commit {
   evaluating: boolean;
   validation: LegalityResponse | null;
   validating: boolean;
+  validationError: string | null;
 }
 type Analysis = ReturnType<typeof useTradeAnalysis>;
 
@@ -191,6 +192,7 @@ function Harness({ draft: d, unrelated = 0 }: { draft: Draft; unrelated?: number
       evaluating: analysis.evaluating,
       validation: analysis.validation,
       validating: analysis.validating,
+      validationError: analysis.validationError,
     });
   });
   return <div data-unrelated={unrelated}>{d.label}</div>;
@@ -326,12 +328,30 @@ describe("current requests keep working (controls)", () => {
     expect(current().validating).toBe(false);
   });
 
-  it("treats a failed current validation as no validation, as before", async () => {
+  it("treats a failed current validation as no validation, and now says that it failed", async () => {
     mount(DRAFT_A);
     await pastDebounce();
+    expect(current().validationError).toBeNull();
     await settle(() => valCalls()[0].reject(new TypeError("Failed to fetch")));
     expect(current().validation).toBeNull();
     expect(current().validating).toBe(false);
+    expect(current().validationError).toBe("The request to the rules engine did not complete.");
+  });
+
+  it("carries a current structured rejection's own message, and a current success carries no error", async () => {
+    mount(DRAFT_A);
+    await pastDebounce();
+    await settle(() => valCalls()[0].resolve({ error: { code: "invalid_trade", message: "p1 is not on T1" } }, 422));
+    expect(current().validation).toBeNull();
+    expect(current().validating).toBe(false);
+    expect(current().validationError).toBe("p1 is not on T1");
+    setDraft(draft("B", { moves: [mv("p1"), mv("p2")] }));
+    expect(current().validationError).toBeNull();
+    await pastDebounce();
+    expect(current().validationError).toBeNull(); // a start clears it
+    await settle(() => valCalls()[1].resolve(legality("B")));
+    expect(legalityShown(current().validation)).toBe("B");
+    expect(current().validationError).toBeNull();
   });
 });
 
@@ -611,6 +631,7 @@ describe("stale rejections and completion cleanup", () => {
     await settle(() => valCalls()[0].reject(new TypeError("down")));
     expect(legalityShown(current().validation)).toBe("B");
     expect(current().validating).toBe(false);
+    expect(current().validationError).toBeNull();
   });
 
   it("validation: an older success after a newer success cannot overwrite it", async () => {
@@ -635,6 +656,7 @@ describe("stale rejections and completion cleanup", () => {
       await settle(() => (how === "success" ? valCalls()[0].resolve(legality("A")) : valCalls()[0].reject(new TypeError("down"))));
       expect(current().validating).toBe(true); // the old finally must not unlock the new request's indicator
       expect(current().validation).toBeNull();
+      expect(current().validationError).toBeNull(); // nor may an obsolete rejection report itself
       await settle(() => valCalls()[1].resolve(legality("B")));
       expect(current().validating).toBe(false);
       expect(legalityShown(current().validation)).toBe("B");
@@ -679,6 +701,7 @@ describe("the rules-check debounce", () => {
     expect(current().validation).toBeNull();
     expect(current().validating).toBe(false);
     for (const c of commits.filter((c) => c.label === "B")) expect(c.validation).toBeNull();
+    for (const c of commits.filter((c) => c.label === "B")) expect(c.validationError).toBeNull();
     await advance(250); // the debounce completes and the new request is the only one that counts
     expect(valCalls()).toHaveLength(2);
     expect(current().validating).toBe(true);
