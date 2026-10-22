@@ -30,6 +30,7 @@ import { api } from "@/lib/api";
 import { useHydrated } from "@/lib/hydrated";
 import { tradeDetailSchema } from "@/lib/schemas";
 import { decodeShareState, encodeShareState } from "@/lib/shareState";
+import { evaluateTrade } from "@/lib/tradeEvaluate";
 import { LEGALITY_LABEL, LEGALITY_SHORT, formatDate } from "@/lib/format";
 import { getFavoriteTeam } from "@/lib/favoriteTeam";
 import { teamIdentity } from "@/lib/teamIdentity";
@@ -282,16 +283,13 @@ function TradeEvaluator() {
 
   const evaluate = useMutation({
     mutationFn: () =>
-      api.post<{ legality: LegalityResponse; evaluations: Record<string, TeamEvaluation> }>(
-        "/trades/evaluate",
-        {
-          team_ids: teamIds,
-          player_moves: playerMoves,
-          pick_moves: picks,
-          scenario_id: scenarioId,
-          strategy: scenario?.strategy ?? "custom",
-        },
-      ),
+      evaluateTrade({
+        team_ids: teamIds,
+        player_moves: playerMoves,
+        pick_moves: picks,
+        scenario_id: scenarioId,
+        strategy: scenario?.strategy ?? "custom",
+      }),
     onSuccess: setEvaluation,
     onError: (e) => toast("error", `Evaluation failed: ${String(e)}`),
   });
