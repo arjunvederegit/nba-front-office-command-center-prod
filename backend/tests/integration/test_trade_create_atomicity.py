@@ -29,6 +29,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import get_db
 from app.db.models import (
     Base,
+    Contract,
+    ContractYear,
     LeagueCapParameters,
     PlayerSeasonStats,
     Standing,
@@ -415,3 +417,76 @@ def test_a_well_formed_but_cap_illegal_draft_is_still_saved(make_world):
     for evaluation in body["evaluations"].values():
         assert evaluation["composite_utility"] is None
         assert evaluation["decision_status"] == "suppressed_illegal"
+
+
+def _set_salary(world: World, player_id: str, salary: int) -> None:
+    """Commit a different 2026-27 salary for one fixture player, before the request."""
+    with Session(world.engine) as session:
+        year = session.scalars(
+            select(ContractYear)
+            .join(Contract, ContractYear.contract_id == Contract.id)
+            .where(Contract.player_id == player_id, ContractYear.season == "2026-27")
+        ).one()
+        year.salary = salary
+        session.commit()
+
+
+def test_a_salary_matching_failure_is_saved_as_an_illegal_draft(make_world):
+    """A one-for-one swap with valid rosters that fails SALARY_MATCHING is still created.
+
+    Team AAA (payroll $61M) sends Alpha One ($20M) and takes back Beta One at $130M, so its
+    post-trade payroll of $171M is over the $164.961M cap and it needs a matching band. Below
+    the first apron the expanded band allows $20M + ~$9.70M, far under the $130M incoming, so
+    the rule fails. Rosters stay 14 and 13 (no ROSTER_SIZE failure). Team BBB ends at $38M,
+    under the cap, so it needs no matching.
+    """
+    world = make_world()
+    ids = world.ids
+    _set_salary(world, ids["b1"], 130_000_000)
+    before = world.snapshot()
+
+    response = world.client.post("/api/v1/trades", json=_valid(ids))
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["legality"]["overall_status"] == "verified_illegal"
+    results = body["legality"]["rule_results"]
+    matching = {r["team_id"]: r for r in results if r["rule_code"] == "SALARY_MATCHING"}
+    assert matching[ids["team_a"]]["status"] == "fail"
+    calc = matching[ids["team_a"]]["calculation"]
+    assert (calc["outgoing_salary"], calc["incoming_salary"]) == (20_000_000, 130_000_000)
+    assert calc["post_trade_payroll"] > 164_961_000  # over the cap, so matching applies
+    assert calc["maximum_incoming"] < calc["incoming_salary"]
+    assert not [r for r in results if r["rule_code"] == "ROSTER_SIZE" and r["status"] == "fail"]
+    teams = body["legality"]["teams"]
+    assert (teams[ids["team_a"]]["roster_before"], teams[ids["team_a"]]["roster_after"]) == (14, 14)
+    assert (teams[ids["team_b"]]["roster_before"], teams[ids["team_b"]]["roster_after"]) == (13, 13)
+
+    # Scoring is suppressed for every team, naming the failing rule.
+    for evaluation in body["evaluations"].values():
+        assert evaluation["composite_utility"] is None
+        assert evaluation["decision_status"] == "suppressed_illegal"
+        failing = evaluation["suppression"]["failing_rules"]
+        assert any(r["rule_code"] == "SALARY_MATCHING" for r in failing)
+
+    # What a separate connection sees once the request session has closed.
+    after = world.snapshot()
+    assert all(before[t] <= after[t] for t in after)  # the sentinel records survive
+    new = {t: after[t] - before[t] for t in after}
+    assert new["trade_proposals"] == {body["id"]}
+    assert len(new["trade_teams"]) == 2
+    assert len(new["trade_assets"]) == 2
+    assert len(new["trade_rule_results"]) == len(results) > 0
+    assert len(new["trade_evaluations"]) == 2
+    stored_rules = world.rows(TradeRuleResult, trade_id=body["id"])
+    failed = {(r.rule_code, r.team_id) for r in stored_rules if r.status == "fail"}
+    assert ("SALARY_MATCHING", ids["team_a"]) in failed
+    assert not [r for r in stored_rules if r.rule_code == "ROSTER_SIZE" and r.status == "fail"]
+    stored = {e.team_id: e for e in world.rows(TradeEvaluation, trade_id=body["id"])}
+    assert stored[ids["team_a"]].legality_status == "verified_illegal"
+    for team_id, evaluation in stored.items():
+        assert evaluation.legality_status == body["evaluations"][team_id]["legality"]["status"]
+        assert evaluation.composite_utility is None
+    sentinel = world.rows(TradeProposal, id=ids["sentinel"])
+    assert [(p.name, p.notes) for p in sentinel] == [("sentinel", "pre-existing")]
+    assert [e.composite_utility for e in world.rows(TradeEvaluation, trade_id=ids["sentinel"])] == [1.0]
