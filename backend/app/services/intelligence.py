@@ -233,7 +233,7 @@ class IntelligenceService:
                 "100 possessions."
             ),
             source="player_impact_estimates, from the registered player_impact model",
-            confidence=Confidence.VALIDATED,
+            confidence=Confidence.HEURISTIC,
             limitations=(
                 "Box-score derived. It cannot see on-ball defence, screen navigation or "
                 "off-ball gravity.",
