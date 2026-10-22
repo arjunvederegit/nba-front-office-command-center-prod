@@ -16,8 +16,11 @@
  *
  * React Query tells its observers about a mutation's state from a 0 ms timer; under fake timers any
  * advance of time would fire it, re-render, and so commit a start the test wants left uncommitted.
- * The hook never reads that mutation state, so `notifyManager`'s scheduler is held for the duration of
- * each test (restored afterwards) and time can pass inside one `act` scope with the start uncommitted.
+ * The hook never reads that mutation state, so `notifyManager.setScheduler(() => {})` suppresses those
+ * scheduled notifications for the duration of each test (they are dropped, not queued or replayed;
+ * the default scheduler is restored afterwards). That is a test device to force an ordering, not a
+ * model of ordinary browser scheduling; it lets time pass inside one `act` scope with the start
+ * uncommitted.
  *
  * Timing checkpoint for "the request completed but its result has not committed": the test-owned
  * `MutationCache.onSettled`, which TanStack Query 5.101.3 runs after the hook's own `onSuccess`
@@ -206,7 +209,7 @@ const mount = (draft: Draft, validate = false) => {
 const setDraft = (draft: Draft) => act(() => view.rerender(tree(draft, validateOn)));
 
 beforeEach(() => {
-  notifyManager.setScheduler(() => {}); // held: see the header
+  notifyManager.setScheduler(() => {}); // suppress observer notifications: see the header
   vi.useFakeTimers();
   installBrowserStubs();
   installFetch();
@@ -338,6 +341,50 @@ describe("a new evaluation with identical inputs", () => {
     expect(scrolls).toHaveLength(0);
     await tick(REVEAL_DELAY_MS);
     expect(scrolls.map((s) => s.result)).toEqual(["partial"]);
+  });
+});
+
+describe.each([
+  { mode: "normally", strictMode: false },
+  { mode: "under StrictMode", strictMode: true },
+])("a newer reveal armed before an obsolete timer finishes, $mode", ({ strictMode }) => {
+  it("is not erased by the obsolete timer: it still reveals its own result once, 80 ms after it commits", async () => {
+    strict = strictMode;
+    mount(A);
+    await evaluateAndAccept("scored"); // A accepted and committed at t = 0; its timer is pending for t = 80
+    await tick(10); // t = 10
+    expect(scrolls).toHaveLength(0);
+
+    await act(async () => {
+      evaluateAndReveal(); // B, identical inputs; its start is not committed in this scope
+      const call = await nthCall("/trades/evaluate", 2);
+      const settled = nextSettled();
+      expectedAtCheckpoint = "partial";
+      call.settle(200, BODIES.partial); // B succeeds BEFORE A's deadline ...
+      await settled; // ... and the production success handler has run, so it has called arm(B)
+
+      // Preconditions, asserted rather than assumed: B has not committed, A's section is still shown.
+      expect(checkpointSawNewResult.at(-1)).toBe(false);
+      expect(commits.some((c) => nameOf(c.evaluation) === "partial")).toBe(false);
+      expect(resultsInDom()).toEqual(["scored"]);
+
+      await vi.advanceTimersByTimeAsync(REVEAL_DELAY_MS - 10 + 5); // through A's old deadline (t = 80), to t = 85
+      expect(scrolls).toHaveLength(0); // A's timer fired, failed its isCurrent() check, and did not scroll
+      expect(resultsInDom()).toEqual(["scored"]); // B still has not committed
+    });
+
+    // B's result commits now (t = 85); its reveal was armed before A's timer finished.
+    expect(resultsInDom()).toEqual(["partial"]);
+    expect(scrolls).toHaveLength(0);
+    await tick(REVEAL_DELAY_MS - 1);
+    expect(scrolls).toHaveLength(0); // not before 80 ms after B's section committed
+    await tick(1);
+    expect(scrolls).toHaveLength(1); // B's legitimate reveal (the failing assertion before the fix)
+    expect(scrolls[0].result).toBe("partial");
+    expect(scrolls[0].element).toBe(document.getElementById("deal-evaluation"));
+    expect(scrolls[0].options).toEqual({ behavior: "smooth", block: "start" });
+    await tick(5000);
+    expect(scrolls).toHaveLength(1); // and no duplicate
   });
 });
 

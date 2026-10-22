@@ -36,7 +36,9 @@ export function useRevealResults<T>(displayed: T | null) {
         const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         section.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
       }
-      setPending(null); // delivered, or no longer wanted: never armed twice
+      // Retire only the request this timer was armed for, never armed twice. An obsolete timer must
+      // not erase a newer reveal that has already been queued by a later accepted evaluation.
+      setPending((current) => (current === pending ? null : current));
     }, REVEAL_DELAY_MS);
     return () => clearTimeout(handle);
   }, [pending, section, displayed]);
