@@ -31,6 +31,7 @@ import { useHydrated } from "@/lib/hydrated";
 import { tradeDetailSchema } from "@/lib/schemas";
 import { decodeShareState, encodeShareState } from "@/lib/shareState";
 import { resolveActiveTeam, useSelectedTeam } from "@/lib/useSelectedTeam";
+import { useRevealResults } from "@/lib/useRevealResults";
 import { useTradeAnalysis } from "@/lib/useTradeAnalysis";
 import { LEGALITY_LABEL, LEGALITY_SHORT, formatDate } from "@/lib/format";
 import { getFavoriteTeam } from "@/lib/favoriteTeam";
@@ -74,16 +75,6 @@ import { Badge, Button, PageHeader, Skeleton, SourceRail, Tabs } from "@/compone
 
 const LEDE =
   "Build a two- or three-team deal, check it against the rules, and see what it does to every side — before, the move, and after.";
-
-/** After an evaluation lands, bring its first line into view (instantly under reduced motion). */
-function revealResults() {
-  window.setTimeout(() => {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    document
-      .getElementById("deal-evaluation")
-      ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-  }, 80);
-}
 
 /* --------------------------------------------------------------------- page */
 
@@ -262,6 +253,10 @@ function TradeEvaluator() {
         : { team_ids: teamIds, player_moves: playerMoves, pick_moves: picks },
     onEvaluationError: (e) => toast("error", `Evaluation failed: ${String(e)}`),
   });
+  // After an accepted evaluation's results section has appeared, bring it into view (instantly under
+  // reduced motion) -- once, for that request only (see lib/useRevealResults.ts).
+  const reveal = useRevealResults(evaluation);
+  const evaluateAndReveal = () => evaluate({ onSuccess: (_result, accepted) => reveal.arm(accepted) });
   // Held here, above the conditional EvaluationSection, so it survives the result being cleared.
   const [selectedTeam, selectTeam] = useSelectedTeam(teamIds, appliedTradeId);
 
@@ -571,7 +566,7 @@ function TradeEvaluator() {
                     canAct={hasMoves}
                     evaluating={evaluating}
                     saving={saveTrade.isPending}
-                    onEvaluate={() => evaluate({ onSuccess: revealResults })}
+                    onEvaluate={evaluateAndReveal}
                     onSave={() => saveTrade.mutate()}
                     onCopy={copyShareLink}
                     onMemo={() => memo.mutate()}
@@ -602,6 +597,7 @@ function TradeEvaluator() {
             originOf={originOf}
             selectedTeam={selectedTeam}
             onSelectTeam={selectTeam}
+            sectionRef={reveal.sectionRef}
             inputs={{
               season: Object.values(rosters.data ?? {})[0]?.season,
               rosterSeason: Object.values(rosters.data ?? {})[0]?.roster_season,
@@ -653,7 +649,7 @@ function TradeEvaluator() {
               variant="primary"
               size="sm"
               disabled={evaluating}
-              onClick={() => evaluate({ onSuccess: revealResults })}
+              onClick={evaluateAndReveal}
             >
               {evaluating ? "Evaluating…" : "Evaluate"}
             </Button>
@@ -892,6 +888,7 @@ function EvaluationSection({
   originOf,
   selectedTeam,
   onSelectTeam,
+  sectionRef,
   inputs,
 }: {
   evaluation: { legality: LegalityResponse; evaluations: Record<string, TeamEvaluation> };
@@ -904,6 +901,8 @@ function EvaluationSection({
   /** The remembered team selection (see useSelectedTeam); `null` means the first team. */
   selectedTeam: string | null;
   onSelectTeam: (teamId: string) => void;
+  /** Receives this section's element, so the reveal scrolls it rather than looking an id up. */
+  sectionRef: (element: HTMLElement | null) => void;
   /** Where the evaluation's INPUT data came from — distinct from when the evaluation ran. */
   inputs: { season?: string; rosterSeason?: string; rosterAsOf?: string };
 }) {
@@ -975,7 +974,7 @@ function EvaluationSection({
   }
 
   return (
-    <section id="deal-evaluation" aria-labelledby="deal-evaluation-title" className="fade-in">
+    <section ref={sectionRef} id="deal-evaluation" aria-labelledby="deal-evaluation-title" className="fade-in">
       <SectionHead
         id="deal-evaluation-title"
         eyebrow={`Deal evaluation · ${formatDate(teamEval.evaluated_at)}`}

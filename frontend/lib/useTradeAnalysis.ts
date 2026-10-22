@@ -143,11 +143,22 @@ interface Options {
   onEvaluationError: (error: unknown) => void;
 }
 
+/**
+ * What a success callback is told about the request that produced its result: the accepted `result`
+ * (the very object the screen state will hold) and a predicate, bound to that request, that is true
+ * only while it still owns the evaluation for the committed screen. It is meant to be asked later,
+ * when delayed work runs, and it decides by the same rule as the callback itself.
+ */
+export interface AcceptedEvaluation {
+  result: TradeEvaluationResult;
+  isCurrent: () => boolean;
+}
+
 interface EvaluationJob {
   epoch: number;
   id: number;
   request: TradeEvaluationRequest;
-  onSuccess?: (result: TradeEvaluationResult) => void;
+  onSuccess?: (result: TradeEvaluationResult, accepted: AcceptedEvaluation) => void;
 }
 
 /** What the committed screen state says is current, for callbacks that must decide synchronously. */
@@ -215,7 +226,12 @@ export function useTradeAnalysis({ draftKey, evaluationRequest, validationReques
     onSuccess: (result, job) => {
       if (!committed.current.mounted) return;
       dispatch({ channel: "evaluation", type: "succeed", epoch: job.epoch, id: job.id, data: result });
-      if (ownsEvaluation(committed.current, newestEvaluation.current, job)) job.onSuccess?.(result);
+      if (ownsEvaluation(committed.current, newestEvaluation.current, job)) {
+        job.onSuccess?.(result, {
+          result,
+          isCurrent: () => ownsEvaluation(committed.current, newestEvaluation.current, job),
+        });
+      }
     },
     onError: (error, job) => {
       if (!committed.current.mounted) return;
@@ -258,7 +274,7 @@ export function useTradeAnalysis({ draftKey, evaluationRequest, validationReques
      * Evaluate the inputs now on the screen. Clears the previous output at once, including for
      * identical inputs. `onSuccess` runs only if this request is still the one that owns the screen.
      */
-    evaluate: (options?: { onSuccess?: (result: TradeEvaluationResult) => void }) => {
+    evaluate: (options?: { onSuccess?: (result: TradeEvaluationResult, accepted: AcceptedEvaluation) => void }) => {
       const epoch = view.evaluation.epoch;
       // A caller retained from a context that is no longer the committed screen's (or from before
       // unmount) is refused before any work starts: it must not send a request, nor take over
