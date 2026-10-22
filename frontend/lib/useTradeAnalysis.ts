@@ -64,7 +64,6 @@ type Step<T> =
   | { type: "succeed"; epoch: number; id: number; data: T }
   | { type: "fail"; epoch: number; id: number; clear: boolean };
 
-type Name = "evaluation" | "validation";
 type Action =
   | ({ channel: "evaluation" } & Step<TradeEvaluationResult>)
   | ({ channel: "validation" } & Step<LegalityResponse>);
@@ -157,8 +156,14 @@ interface Committed {
   state: State;
 }
 
-const owns = (committed: Committed, channel: Name, epoch: number, id: number) =>
-  committed.mounted && committed.state[channel].epoch === epoch && committed.state[channel].latest === id;
+/**
+ * Whether an evaluation's success callback or error notification still belongs to the screen: the
+ * context it was started in is the committed one, and no newer evaluation has started since.
+ * `newest` is recorded synchronously when a request starts, so this does not wait for that start to
+ * be committed and mirrored; the committed epoch is what makes an edit or clear obsolete it.
+ */
+const ownsEvaluation = (committed: Committed, newest: number, job: EvaluationJob) =>
+  committed.mounted && committed.state.evaluation.epoch === job.epoch && newest === job.id;
 
 export function useTradeAnalysis({ draftKey, evaluationRequest, validationRequest, onEvaluationError }: Options) {
   const evaluationSig = evaluationSignature(evaluationRequest);
@@ -184,6 +189,9 @@ export function useTradeAnalysis({ draftKey, evaluationRequest, validationReques
   }
 
   const nextId = useRef(0);
+  // Id of the newest evaluation request that was eligible to start. Evaluation only: validation
+  // requests draw from `nextId` too, and must not become the evaluation's owner.
+  const newestEvaluation = useRef(0);
   const committed = useRef<Committed>({ mounted: false, state });
   useLayoutEffect(() => {
     committed.current.state = state;
@@ -203,16 +211,16 @@ export function useTradeAnalysis({ draftKey, evaluationRequest, validationReques
   const mutation = useMutation({
     mutationFn: (job: EvaluationJob) => evaluateTrade(job.request),
     // A completion always reaches the reducer, which alone decides (in order, after the matching
-    // `start`) whether it still owns the screen. The committed-state check only gates side effects.
+    // `start`) what is displayed. Ownership of the side effects is decided separately, above.
     onSuccess: (result, job) => {
       if (!committed.current.mounted) return;
       dispatch({ channel: "evaluation", type: "succeed", epoch: job.epoch, id: job.id, data: result });
-      if (owns(committed.current, "evaluation", job.epoch, job.id)) job.onSuccess?.(result);
+      if (ownsEvaluation(committed.current, newestEvaluation.current, job)) job.onSuccess?.(result);
     },
     onError: (error, job) => {
       if (!committed.current.mounted) return;
       dispatch({ channel: "evaluation", type: "fail", epoch: job.epoch, id: job.id, clear: false });
-      if (owns(committed.current, "evaluation", job.epoch, job.id)) reportError.current(error);
+      if (ownsEvaluation(committed.current, newestEvaluation.current, job)) reportError.current(error);
     },
   });
 
@@ -251,8 +259,14 @@ export function useTradeAnalysis({ draftKey, evaluationRequest, validationReques
      * identical inputs. `onSuccess` runs only if this request is still the one that owns the screen.
      */
     evaluate: (options?: { onSuccess?: (result: TradeEvaluationResult) => void }) => {
-      const id = ++nextId.current;
       const epoch = view.evaluation.epoch;
+      // A caller retained from a context that is no longer the committed screen's (or from before
+      // unmount) is refused before any work starts: it must not send a request, nor take over
+      // notification ownership from the request that is current.
+      const live = committed.current;
+      if (!live.mounted || live.state.evaluation.epoch !== epoch) return;
+      const id = ++nextId.current;
+      newestEvaluation.current = id;
       dispatch({ channel: "evaluation", type: "start", epoch, id, clear: true });
       mutation.mutate({ epoch, id, request: evaluationRequestFrom(evaluationSig), onSuccess: options?.onSuccess });
     },
