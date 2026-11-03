@@ -407,7 +407,11 @@ class TestRosterService:
         rows = db.query(RosterEntry).filter(current_roster_clause("2025-26")).all()
         assert {r.player.full_name for r in rows} == {"Current Guy"}
 
-    def test_a_snapshot_reports_age_completeness_and_what_membership_means(self, db: Session):
+    def test_a_snapshot_reports_age_completeness_and_what_membership_means(
+        self, db: Session, league_today
+    ):
+        # 2025-26 fixture roster: live until the statistics roll over on 3 Nov 2026, so pin a date before it.
+        league_today(date(2026, 10, 18))
         a, b = make_team(db, 1, "AAA"), make_team(db, 2, "BBB")
         make_player(db, 1, "One", a)
         make_player(db, 2, "Two", b)
@@ -442,7 +446,11 @@ class TestRosterService:
         assert current_team_of(db, player.id).status == "conflict"
         assert current_team_of(db, player.id).team is None
 
-    def test_unlisted_does_not_claim_free_agency_and_reports_the_snapshot_age(self, db: Session):
+    def test_unlisted_does_not_claim_free_agency_and_reports_the_snapshot_age(
+        self, db: Session, league_today
+    ):
+        # 2025-26 fixture roster: live until the statistics roll over on 3 Nov 2026, so pin a date before it.
+        league_today(date(2026, 10, 18))
         a = make_team(db, 1, "AAA")
         make_player(db, 1, "Rostered", a)
         for entry in db.query(RosterEntry).all():

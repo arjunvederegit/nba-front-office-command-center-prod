@@ -185,7 +185,11 @@ class TestSeasonTotalsAttributeProductionToTheRightTeam:
 
 
 class TestProvenanceAgrees:
-    def test_the_roster_payload_and_its_data_status_describe_the_same_data(self, client, league):
+    def test_the_roster_payload_and_its_data_status_describe_the_same_data(
+        self, client, league, league_today
+    ):
+        # 2025-26 fixture roster: live until the statistics roll over on 3 Nov 2026, so pin a date before it.
+        league_today(date(2026, 10, 18))
         roster = client.get(f"/api/v1/teams/{league['team_a'].id}/roster").json()
         status = roster["data_status"]["roster"]
         assert status["providers"] == roster["source_providers"] == ["nba_api"]
@@ -194,7 +198,11 @@ class TestProvenanceAgrees:
         assert status["freshness"] == "fresh"
         assert any("observed snapshot" in n for n in status["notes"])
 
-    def test_a_stale_snapshot_says_so_on_every_tool_that_reads_it(self, client, db, league):
+    def test_a_stale_snapshot_says_so_on_every_tool_that_reads_it(
+        self, client, db, league, league_today
+    ):
+        # 2025-26 fixture roster: live until the statistics roll over on 3 Nov 2026, so pin a date before it.
+        league_today(date(2026, 10, 18))
         old = datetime.now(UTC) - timedelta(days=89)
         for entry in db.query(RosterEntry).all():
             entry.source_retrieved_at = old
