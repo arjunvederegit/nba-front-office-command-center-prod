@@ -47,15 +47,9 @@ def client(db, cap_params):
 
 
 @pytest.fixture()
-def on(monkeypatch, request):
+def on(league_today):
     """Pin the clock: ``on(date(2026, 10, 18))``. Settings are re-read when the clock moves."""
-
-    def _set(day: date) -> None:
-        monkeypatch.setattr("app.canonical.calendar.today_in_league", lambda now=None: day)
-        get_settings.cache_clear()
-
-    request.addfinalizer(get_settings.cache_clear)
-    return _set
+    return league_today
 
 
 @pytest.fixture()

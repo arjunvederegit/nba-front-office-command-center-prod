@@ -5,7 +5,9 @@ tests only — they are never loaded by production configuration (see §2.11 of 
 product spec and data/README.md)."""
 
 import os
+import sys
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 
 import pytest
@@ -173,6 +175,40 @@ def tmp_sqlite_url() -> str:
     os.close(fd)
     yield f"sqlite:///{path}"
     os.unlink(path)
+
+
+@pytest.fixture()
+def league_today(monkeypatch: pytest.MonkeyPatch) -> Callable[[date], None]:
+    """Pin today's date on the league calendar: ``league_today(date(2026, 10, 18))``.
+
+    ``today_in_league`` is the one place the calendar reads the clock, but several modules import
+    it by name (the freshness endpoints, the provenance service, the ingestion jobs). Patching
+    ``app.canonical.calendar.today_in_league`` alone leaves those readers on the real Eastern date,
+    so a test that only *looks* pinned starts failing the day the real date crosses a season
+    boundary (it did, on 2026-11-03). This rebinds the function in every loaded app module, so the
+    date holds however a reader obtained it. Call it again to move the date; Settings are re-read.
+    """
+    from app.canonical import calendar
+    from app.config import get_settings
+
+    real = calendar.today_in_league
+    pinned_days: list[date] = []
+
+    def pinned(now: datetime | None = None) -> date:
+        return pinned_days[-1]
+
+    def pin(day: date) -> None:
+        if not pinned_days:
+            for name, module in list(sys.modules.items()):
+                if module is not None and (name == "app" or name.startswith("app.")):
+                    for attr, value in list(vars(module).items()):
+                        if value is real:
+                            monkeypatch.setattr(module, attr, pinned)
+        pinned_days.append(day)
+        get_settings.cache_clear()
+
+    yield pin
+    get_settings.cache_clear()
 
 
 # --------------------------------------------------------------------- seeded_league
