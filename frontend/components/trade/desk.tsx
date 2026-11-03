@@ -24,6 +24,8 @@ import {
   SourceRail,
   UnavailableNotice,
 } from "@/components/ui";
+import { displayStatus } from "@/lib/financials";
+import { LegalityAssessment } from "@/components/trade/financials";
 import { LEGALITY_VISUAL, RULE_STATUS_WORD, RuleItem } from "@/components/trade/verdict";
 
 /* -------------------------------------------------------------- rules check */
@@ -39,7 +41,9 @@ export function RulesCheck({
   hasMoves: boolean;
   className?: string;
 }) {
-  const status = validation?.overall_status;
+  const status = displayStatus(validation?.overall_status, validation?.financial_analysis?.legality_assessment) as
+    | keyof typeof LEGALITY_LABEL
+    | undefined;
   const visual = status ? LEGALITY_VISUAL[status] : null;
   const blocked = validation?.rule_results.filter((r) => r.status === "unavailable") ?? [];
   const tally = validation
@@ -123,6 +127,9 @@ export function RulesCheck({
               </p>
             )}
           </KeyFrame>
+
+          {/* ------------------------------ R9.3A: what was checked, failed, unverified */}
+          {validation.financial_analysis && <LegalityAssessment analysis={validation.financial_analysis} />}
 
           {/* ------------------------------------- what could not be checked */}
           {!validation.contract_provider_configured && (

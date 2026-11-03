@@ -50,6 +50,9 @@ def _cache(db: Session) -> dict[str, Any]:
             "team_roster": {},
             "player": {},
             "draft_picks": {},
+            "financials": {},
+            "league_financial_inputs": {},
+            "roster_provisional": {},
         }
         db.info[_CACHE_KEY] = cache
     return cache
@@ -133,6 +136,54 @@ def salaries(
             )
 
     return {pid: cache[(pid, league_year)] for pid in dict.fromkeys(player_ids)}
+
+
+def financials(db: Session, players: dict[str, str], league_year: str) -> dict[str, Any]:
+    """``{player_id: PlayerFinancials}``, batched and memoized per session like ``salaries``.
+
+    The league-wide inputs (the loaded contract horizon, the two-way salary, the recorded unpriced
+    rows) are read once per session, not once per call: ``/trades/generate`` builds hundreds of
+    trade contexts in one request and must not pay five extra queries for each.
+    """
+    from app.services import financials as fin  # local: financials does not import the resolver
+
+    cache = _cache(db)["financials"]
+    shared = _cache(db)["league_financial_inputs"]
+    if league_year not in shared:
+        runs = fin.contract_runs(db)  # one read feeds both the horizon and the recorded-unpriced lookup
+        shared[league_year] = (
+            fin.horizon(db, league_year, runs),
+            fin.two_way_salary(db, league_year, cap_params_row(db, league_year)),
+            fin.unpriced_observations(db, league_year, runs),
+            fin.later_unpriced_seasons(db, league_year, runs),
+        )
+    info, two_way, observed, later = shared[league_year]
+    missing = {pid: name for pid, name in players.items() if (pid, league_year) not in cache}
+    if missing:
+        computed = fin.player_financials(
+            db, missing, league_year, horizon_info=info, two_way=two_way, observed=observed, later_unpriced=later
+        )
+        for pid, record in computed.items():
+            cache[(pid, league_year)] = record
+    return {pid: cache[(pid, league_year)] for pid in dict.fromkeys(players)}
+
+
+def roster_is_provisional(db: Session, season: str) -> bool:
+    """Whether the roster snapshot for ``season`` is provisional (camp / offseason), memoized per session."""
+    cache = _cache(db)["roster_provisional"]
+    if season not in cache:
+        # No database read: the calendar names what a roster taken now can honestly be called (the preseason
+        # and the offseason are provisional), and a roster that is not the league season's own is a fallback or
+        # historical snapshot — also not the final roster of the season being evaluated.
+        from app.canonical.seasons import Season
+        from app.canonical.tool_seasons import season_context_now
+
+        ctx = season_context_now()
+        cache[season] = Season.coerce(season) != ctx.league_season or ctx.roster_basis in (
+            "provisional_preseason",
+            "offseason_snapshot",
+        )
+    return cache[season]
 
 
 def player_salary(

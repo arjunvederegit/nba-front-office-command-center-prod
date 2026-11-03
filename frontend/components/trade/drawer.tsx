@@ -7,6 +7,7 @@
  * stays inside it, Escape closes it, and focus returns to whatever opened it.
  */
 
+import { playerFileLink } from "@/lib/investigation";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
@@ -25,7 +26,10 @@ export function PlayerDrawer({
   rosterRow,
   fitTeams,
   onClose,
+  deal = null,
 }: {
+  /** The encoded deal, so the full player file can offer a "Back to your trade" that works in any tab. */
+  deal?: string | null;
   player: { id: string; name: string };
   /** The builder's roster row, when the player is on a roster in the deal. */
   rosterRow?: RosterPlayer;
@@ -207,8 +211,8 @@ export function PlayerDrawer({
                   note={
                     rosterRow?.salary != null
                       ? rosterRow.contract_years_remaining != null
-                        ? `${rosterRow.contract_years_remaining} season(s) on file`
-                        : "cap league year"
+                        ? `${rosterRow.contract_years_remaining}${rosterRow.contract_years_is_lower_bound ? "+" : ""} season(s) on file${rosterRow.contract_final_season ? ` · through ${rosterRow.contract_years_is_lower_bound ? "at least " : ""}${rosterRow.contract_final_season}` : ""}`
+                        : `${rosterRow.salary_season ?? "cap league year"} cap hit · length unknown`
                       : "not on file — never estimated"
                   }
                   title={rosterRow?.salary != null ? undefined : CONTRACT_TOOLTIP}
@@ -230,7 +234,7 @@ export function PlayerDrawer({
                 </div>
               </div>
             )}
-            <ButtonLink href={`/players/${player.id}`} size="sm" className="w-full">
+            <ButtonLink href={playerFileLink(player.id, "trade-evaluator", deal)} size="sm" className="w-full">
               Full player page <span aria-hidden>→</span>
             </ButtonLink>
             <p className="text-[11.5px] leading-snug text-faint">{data.impact.note}</p>

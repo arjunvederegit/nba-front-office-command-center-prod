@@ -48,6 +48,19 @@ export function asUtc(iso: string): string {
   return /(Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
 }
 
+/**
+ * A calendar date with no time of day (an expected return date, a deadline). A bare `YYYY-MM-DD` is a *day*, not an
+ * instant: parsing it as UTC midnight and printing it in local time showed the previous evening ("Oct 19, 5:00 PM"
+ * for Oct 20) and invented a time of day nobody reported.
+ */
+export function formatDay(iso: string | null | undefined): string {
+  if (!iso) return "unknown";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return formatDate(iso);
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "unknown";
   const d = new Date(asUtc(iso));
@@ -93,17 +106,19 @@ export const LEGALITY_LABEL: Record<string, string> = {
 };
 
 export const LEGALITY_EXPLAIN: Record<string, string> = {
-  verified_legal: "Every trade rule we can verify with current data passed.",
+  verified_legal:
+    "Every rule Pivot checks passed with the data on file. Pivot does not check every CBA restriction, so this is not a statement that the deal is legal.",
   verified_illegal: "At least one verified NBA trade rule fails for this deal.",
   conditionally_valid:
-    "All verifiable rules passed, but some checks (usually salary matching) need contract data that isn't configured.",
+    "No checked rule failed, but some checks could not be verified from the data on file — see what was and was not checked below.",
   not_evaluated: "Not enough data was available to run meaningful rule checks.",
 };
 
 /** Chip-sized legality wording; the long form stays in the verdict frame. */
 export const LEGALITY_SHORT: Record<string, string> = {
-  verified_legal: "Legal",
-  verified_illegal: "Illegal",
+  // R9.3A: "Legal" overstated a pass — Pivot checks a subset of the CBA, so a chip says what happened.
+  verified_legal: "Passes checks",
+  verified_illegal: "Fails a check",
   conditionally_valid: "Incomplete",
   not_evaluated: "Unchecked",
 };

@@ -10,7 +10,10 @@ A trade is NEVER labeled legal when only partial validation was possible."""
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
+
+if TYPE_CHECKING:  # annotation only: the financial service does not import the CBA package
+    from app.services.financials import PlayerFinancials
 
 RuleStatus = Literal["pass", "fail", "warning", "unavailable"]
 LegalityStatus = Literal[
@@ -28,6 +31,30 @@ class PlayerAsset:
     contract_type: str | None = None
     signed_date: date | None = None
     no_trade_clause: bool | None = None
+    #: R9.3A. ``True`` when the contract is *deducibly* not a two-way contract: its cap hit exceeds the
+    #: league year's two-way salary, which is a fixed league parameter. It stays ``None`` (unknown), never
+    #: ``False``, when that cannot be shown. ``contract_type`` is still only ever what a source stated.
+    not_two_way: bool | None = None
+    not_two_way_basis: str | None = None
+    #: Whether the player is on his from-team's roster snapshot. A player on no roster (a free agent named in a deal)
+    #: is not in that team's payroll or roster count, so the trade must not subtract him from them.
+    on_roster_before: bool = True
+    #: Financial facts for display and for the trade's financial analysis.
+    financials: "PlayerFinancials | None" = None
+
+    @property
+    def matching_class(self) -> str | None:
+        """How the contract is treated by salary matching: ``standard``, ``two-way`` or unknown.
+
+        A stated type wins. Otherwise only the sourced deduction above may stand in for a type, and
+        only in the direction it proves (not two-way => counts); an unknown stays unknown, because
+        counting a two-way salary as standard is the permissive error C9 documents.
+        """
+        if self.contract_type is not None:
+            return "two-way" if self.contract_type == "two-way" else "standard"
+        if self.not_two_way:
+            return "standard"
+        return None
 
 
 @dataclass
@@ -208,17 +235,20 @@ class TeamContext:
         this is `None` the moment any of them is missing — a lower bound built from an
         unknown subtraction is not a lower bound.
         """
-        if self.coverage_before is None:
-            return None
+        if self.coverage_before is None or self.coverage_before.players_total <= 0:
+            return None  # no roster on file: nothing to add a trade's players to or subtract them from
         out_total, in_total = self.outgoing_salary_total, self.incoming_salary_total
         if out_total is None or in_total is None:
             return None
         # Deliberately the *totals*, not the matching-eligible sums: coverage describes
         # what is on file, so it must not change because a contract type is unknown.
+        # Only players who are on this team's roster come off its books: a free agent "sent" by a team was never in its
+        # payroll or its roster count, so subtracting him would manufacture a verified payroll (round-1 finding).
+        out_on_roster = sum(p.salary or 0 for p in self.outgoing if p.on_roster_before)
         return PayrollCoverage(
-            known=self.coverage_before.known - out_total + in_total,
+            known=self.coverage_before.known - out_on_roster + in_total,
             players_known=self.coverage_before.players_known
-            - len(self.outgoing)
+            - len([p for p in self.outgoing if p.on_roster_before])
             + len(self.incoming),
             players_total=self.roster_count_after,
         )
@@ -230,7 +260,7 @@ class TeamContext:
 
     @property
     def roster_count_after(self) -> int:
-        return self.roster_count_before - len(self.outgoing) + len(self.incoming)
+        return self.roster_count_before - len([p for p in self.outgoing if p.on_roster_before]) + len(self.incoming)
 
     @property
     def salaries_known(self) -> bool:
@@ -247,7 +277,7 @@ class TeamContext:
         inflates `outgoing_salary`, inflates `maximum_incoming`, and approves trades the
         engine should reject. `contract_type or "standard"` was exactly that substitution.
         """
-        return all(p.contract_type is not None for p in self.outgoing + self.incoming)
+        return all(p.matching_class is not None for p in self.outgoing + self.incoming)
 
     @property
     def outgoing_salary_total(self) -> int | None:
@@ -275,13 +305,13 @@ class TeamContext:
         """
         if any(p.salary is None for p in self.outgoing) or not self.contract_types_known:
             return None
-        return sum(p.salary or 0 for p in self.outgoing if p.contract_type != "two-way")
+        return sum(p.salary or 0 for p in self.outgoing if p.matching_class == "standard")
 
     @property
     def incoming_salary(self) -> int | None:
         if any(p.salary is None for p in self.incoming) or not self.contract_types_known:
             return None
-        return sum(p.salary or 0 for p in self.incoming if p.contract_type != "two-way")
+        return sum(p.salary or 0 for p in self.incoming if p.matching_class == "standard")
 
     @property
     def payroll_after(self) -> int | None:
@@ -298,7 +328,7 @@ class TeamContext:
         """
         if not self.contract_types_known:
             return None if len(self.outgoing) >= 2 else False
-        return len([p for p in self.outgoing if p.contract_type != "two-way"]) >= 2
+        return len([p for p in self.outgoing if p.matching_class == "standard"]) >= 2
 
     def apron_status(self, payroll: int | None, params: CapParams) -> str | None:
         if payroll is None:
@@ -341,6 +371,9 @@ class TradeContext:
     params: CapParams
     teams: list[TeamContext]
     contract_provider_configured: bool = False
+    #: R9.3A. The roster snapshot is a provisional preseason / offseason one (camp invitees, Exhibit 10 and two-way
+    #: players are not distinguishable from the final 15), so a roster-*count* conclusion drawn from it is not final.
+    roster_provisional: bool = False
 
     def team(self, team_id: str) -> TeamContext:
         for t in self.teams:

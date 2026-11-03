@@ -225,11 +225,25 @@ export function TeamWorkspace({
   // R2c: with partial contract coverage the verified payroll is withheld but a lower
   // bound is publishable. `≥` and the coverage count travel with the number so the
   // reader can never mistake a floor for the payroll.
-  const payrollShown = payrollDisclosure(
-    legality?.payroll_after,
-    legality?.payroll_known_after,
-    legality?.payroll_coverage_after,
-  );
+  // R9.3A: before any player moves there is no rules check yet, but the roster itself already carries each
+  // player's cap hit, so the floor (and its coverage) can be shown from it instead of "not imported".
+  const pricedRoster = all.filter((p) => p.salary !== null);
+  const rosterFloor = pricedRoster.reduce((sum, p) => sum + (p.salary ?? 0), 0);
+  const rosterCoverage = { players_known: pricedRoster.length, players_total: all.length };
+  // R9.3A (round 3): once a rules check exists but cannot state an after-trade figure (an unpriced player is moving),
+  // fall back to the roster floor instead of "not imported" — the contracts ARE imported.
+  const hasAfterFigure = Boolean(legality && (legality.payroll_after != null || legality.payroll_known_after != null));
+  const payrollShown = legality && hasAfterFigure
+    ? payrollDisclosure(
+        legality.payroll_after,
+        legality.payroll_known_after,
+        legality.payroll_coverage_after,
+      )
+    : payrollDisclosure(
+        all.length > 0 && pricedRoster.length === all.length ? rosterFloor : null,
+        pricedRoster.length > 0 ? rosterFloor : null,
+        rosterCoverage,
+      );
   const ownPicks = picks.filter((p) => p.from_team_id === teamId);
 
   const incomingSalary = legality?.incoming_salary;
@@ -335,17 +349,17 @@ export function TeamWorkspace({
           <LedgerCell
             label="Salary out"
             value={legality?.outgoing_salary != null ? money(legality.outgoing_salary) : "—"}
-            note={legality?.outgoing_salary != null ? "leaving" : "no salaries"}
+            note={legality?.outgoing_salary != null ? "leaving" : outgoing.length > 0 ? "a salary is unknown" : "none leaving"}
             title={legality?.outgoing_salary != null ? undefined : CONTRACT_TOOLTIP}
           />
           <LedgerCell
             label="Salary in"
             value={legality?.incoming_salary != null ? money(legality.incoming_salary) : "—"}
-            note={legality?.incoming_salary != null ? "arriving" : "no salaries"}
+            note={legality?.incoming_salary != null ? "arriving" : incoming.length > 0 ? "a salary is unknown" : "none arriving"}
             title={legality?.incoming_salary != null ? undefined : CONTRACT_TOOLTIP}
           />
           <LedgerCell
-            label="Payroll"
+            label={payrollShown.kind === "verified" ? "Payroll" : "Known salary"}
             value={payrollShown.value}
             note={
               payrollShown.kind === "verified"
@@ -693,7 +707,11 @@ function PlayerCells({
         {player.salary === null ? (showContract ? "—" : "") : money(player.salary)}
       </span>
       <span role="cell" className="numeral hidden text-right text-[13px] font-normal text-foreground @xl:block">
-        {player.contract_years_remaining ?? (showContract ? "—" : "")}
+        {player.contract_years_remaining !== null
+          ? `${player.contract_years_remaining}${player.contract_years_is_lower_bound ? "+" : ""}`
+          : showContract
+            ? "—"
+            : ""}
       </span>
       <span role="cell" className="text-right">
         <ImpactInline tei={player.tei} />

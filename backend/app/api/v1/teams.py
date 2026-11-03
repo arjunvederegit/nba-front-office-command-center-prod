@@ -10,7 +10,6 @@ from app.canonical.rosters import current_roster, current_roster_clause, resolve
 from app.canonical.seasons import SeasonType
 from app.canonical.stat_access import player_stat_rows
 from app.canonical.tool_seasons import tool_seasons
-from app.cba import resolver
 from app.config import get_settings
 from app.core.errors import NotFoundError
 from app.db.base import get_db
@@ -28,6 +27,7 @@ from app.db.models import (
     TeamSeasonStats,
 )
 from app.services.acquisition import DEFAULT_LIMIT, acquisition_targets
+from app.services.financials import player_financials, team_financial_summary, team_financials
 from app.services.payroll import team_payroll_summary
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -143,10 +143,10 @@ def get_roster(team_id: str, db: Session = Depends(get_db)) -> dict:
     }
 
     # Contract facts for the cap league year, batched. Absent contracts stay absent:
-    # every field below is None when nothing is on file, and none is defaulted.
-    contracts = resolver.salaries(db, [e.player_id for e in entries], settings.cap_league_year)
-    contract_years = _remaining_contract_years(
-        db, [c.id for _, c in contracts.values() if c is not None], settings.cap_league_year
+    # every field below is None when nothing is on file, and none is defaulted. R9.3A: read
+    # through the shared financial service so every tool sees the same salary, season and length.
+    financials = player_financials(
+        db, {e.player_id: e.player.full_name for e in entries}, settings.cap_league_year
     )
 
     players = []
@@ -154,15 +154,20 @@ def get_roster(team_id: str, db: Session = Depends(get_db)) -> dict:
     providers: set[str] = set()
     for entry in entries:
         impact = impacts.get(entry.player_id)
-        salary, contract = contracts[entry.player_id]
+        fin = financials[entry.player_id]
+        salary = fin.cap_hit
+        length_shown = fin.status == "priced" and fin.end_status in ("ends", "through_horizon")
         retrieved_at = entry.source_retrieved_at or retrieved_at
         if entry.source_provider:
             providers.add(entry.source_provider)
         players.append(
             RosterPlayerOut(
                 salary=salary,
-                contract_years_remaining=contract_years.get(contract.id) if contract else None,
-                contract_type=contract.contract_type if contract else None,
+                contract_years_remaining=fin.years_remaining if length_shown else None,
+                contract_type=fin.contract_type,
+                salary_season=settings.cap_league_year if fin.status == "priced" else None,
+                contract_years_is_lower_bound=fin.years_remaining_is_lower_bound if length_shown else None,
+                contract_final_season=fin.final_season if length_shown else None,
                 player_id=entry.player_id,
                 nba_player_id=entry.player.nba_player_id,
                 name=entry.player.full_name,
@@ -395,6 +400,18 @@ def get_player_season_stats(team_id: str, db: Session = Depends(get_db)) -> dict
     }
 
 
+def _roster_basis(db: Session, roster_season: str) -> dict | None:
+    """The roster's season basis, or ``None`` when the database cannot supply it (an older schema lacks columns the
+    season context reads: that must not turn the Cap Center into a 500)."""
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    try:
+        return tool_seasons(db, roster_season=roster_season).get("roster")
+    except (OperationalError, ProgrammingError):
+        db.rollback()
+        return None
+
+
 @router.get("/{team_id}/cap-outlook")
 def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
     """Multi-season payroll picture for Cap Lab. Fully honest: with no contract data
@@ -412,9 +429,16 @@ def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
     ).all()
     roster_ids = {e.player_id: e.player.full_name for e in entries}
 
-    contracts = db.scalars(
-        select(Contract).where(Contract.player_id.in_(list(roster_ids))).limit(500)
-    ).all()
+    # One contract per player, the lowest id — the pick every reader makes (a second row for the same player would
+    # otherwise be summed into the chart while the subtotal counts one).
+    contracts = []
+    seen_players: set[str] = set()
+    for row in db.scalars(
+        select(Contract).where(Contract.player_id.in_(list(roster_ids))).order_by(Contract.id).limit(500)
+    ).all():
+        if row.player_id not in seen_players:
+            seen_players.add(row.player_id)
+            contracts.append(row)
     if not contracts:
         configured = get_contract_provider() is not None
         return {
@@ -433,13 +457,20 @@ def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
             "contract_provider_configured": configured,
         }
 
+    fin = team_financials(db, team.id, settings.cap_league_year, roster_season)
     by_season: dict[str, dict] = {}
     player_rows = []
-    single_season_rows = 0
+    unknown_length = 0
+    # One batched read of every year of every contract (this was one query per contract).
+    years_by_contract: dict[str, list[ContractYear]] = {}
+    if contracts:
+        for year_row in db.scalars(
+            select(ContractYear).where(ContractYear.contract_id.in_([c.id for c in contracts]))
+        ).all():
+            years_by_contract.setdefault(year_row.contract_id, []).append(year_row)
+    records = {r.player_id: r for r in (*fin.priced, *fin.unpriced)}
     for contract in contracts:
-        years = db.scalars(
-            select(ContractYear).where(ContractYear.contract_id == contract.id)
-        ).all()
+        years = years_by_contract.get(contract.id, [])
         seasons_payload = []
         for year in sorted(years, key=lambda y: y.season):
             bucket = by_season.setdefault(year.season, {"total": 0, "players": 0})
@@ -449,17 +480,22 @@ def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
                 {
                     "season": year.season,
                     "salary": year.salary,
+                    "base_salary": year.base_salary,
+                    "total_cash": year.total_cash,
+                    "salary_basis": year.salary_basis,
                     "player_option": year.player_option,
                     "team_option": year.team_option,
                 }
             )
         if seasons_payload:
+            record = records.get(contract.player_id)
+            end_status = record.end_status if record else "unknown"
             final_season = seasons_payload[-1]["season"]
-            # R8.3: a per-season source loads one season whatever the contract's real length, so
-            # "the last season on file is this one" does not mean "expiring". Unknown is None.
-            length_known = contract.source_name != SINGLE_SEASON_CONTRACT_SOURCE
-            if not length_known:
-                single_season_rows += 1
+            # R9.3A: the final season is a claim only when the league-wide horizon backs it
+            # (see app.services.financials). `expiring` is None when the length is unknown.
+            length_known = end_status == "ends"
+            if end_status not in ("ends", "through_horizon"):
+                unknown_length += 1
             player_rows.append(
                 {
                     "player_id": contract.player_id,
@@ -467,11 +503,14 @@ def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
                     "seasons": seasons_payload,
                     "expiring": (final_season == settings.cap_league_year) if length_known else None,
                     "contract_length_known": length_known,
+                    "contract_end": record.as_dict()["contract_end"] if record else None,
+                    "financials": record.as_dict() if record else None,
                     "no_trade_clause": contract.no_trade_clause,
                     "source_name": contract.source_name,
                     "source_date": contract.source_date.isoformat()
                     if contract.source_date
                     else None,
+                    "retrieved_at": record.retrieved_at.isoformat() if record and record.retrieved_at else None,
                 }
             )
 
@@ -488,7 +527,22 @@ def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
             LeagueCapParameters.league_year == settings.cap_league_year
         )
     )
-    covered = sum(1 for pid in roster_ids if any(c.player_id == pid for c in contracts))
+    # R9.3A: "covered" is the number of rostered players with a PRICED financial-season cap hit — the same count the
+    # financials block reports — not the number with any contract row (round 1: LAC 17 vs 15 priced).
+    covered = len(fin.priced)
+    params = (
+        {
+            "salary_cap": cap_row.salary_cap,
+            "luxury_tax": cap_row.luxury_tax,
+            "first_apron": cap_row.first_apron,
+            "second_apron": cap_row.second_apron,
+            "source_name": cap_row.source_name,
+            "source_url": cap_row.source_url,
+            "verified_at": cap_row.verified_at.isoformat() if cap_row.verified_at else None,
+        }
+        if cap_row
+        else None
+    )
     return {
         "team_id": team.id,
         "available": True,
@@ -496,7 +550,7 @@ def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
         "roster_season": roster_season,
         "roster_size": len(roster_ids),
         "players_with_contracts": covered,
-        "complete": covered == len(roster_ids),
+        "complete": fin.complete,
         "seasons": [{"season": season, **bucket} for season, bucket in sorted(by_season.items())],
         "players": player_rows,
         "cap_parameters": {
@@ -510,11 +564,15 @@ def get_cap_outlook(team_id: str, db: Session = Depends(get_db)) -> dict:
         "note": "Cap/apron position is only computed when every rostered player has a "
         "known salary — partial payrolls are never presented as complete."
         + (
-            f" {single_season_rows} contract(s) come from a per-season source: only "
-            f"{settings.cap_league_year} is loaded, so contract length, options and expiry are "
-            "not known."
-            if single_season_rows
+            f" {unknown_length} contract(s) come from a per-season source and later seasons were not "
+            "loaded for the whole league, so contract length, options and expiry are not known for them."
+            if unknown_length
             else ""
         ),
-        "single_season_contracts": single_season_rows,
+        "single_season_contracts": unknown_length,
+        # R9.3A — the financial picture, assembled by the shared service the Trade Evaluator
+        # and Player Explorer also read. Additive: every field above is unchanged.
+        "financials": team_financial_summary(
+            fin, params, _roster_basis(db, roster_season)
+        ),
     }

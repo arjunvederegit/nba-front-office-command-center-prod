@@ -200,12 +200,15 @@ def build_trade_context(
 
     moved = resolver.players(db, [m["player_id"] for m in player_moves])
     resolved = resolver.salaries(db, list(moved), league_year)
+    facts = resolver.financials(db, {pid: pl.full_name for pid, pl in moved.items()}, league_year)
     for move in player_moves:
         player = moved.get(move["player_id"])
         if player is None:
             raise NotFoundError(f"Unknown player id {move['player_id']}")
         salary, contract = resolved[player.id]
+        from_roster = set(resolver.team_roster_ids(db, move["from_team_id"], season)) if move["from_team_id"] in contexts else set()
         asset = PlayerAsset(
+            on_roster_before=player.id in from_roster,
             player_id=player.id,
             name=player.full_name,
             from_team_id=move["from_team_id"],
@@ -214,6 +217,9 @@ def build_trade_context(
             contract_type=contract.contract_type if contract else None,
             signed_date=contract.signed_date if contract else None,
             no_trade_clause=contract.no_trade_clause if contract else None,
+            not_two_way=facts[player.id].not_two_way,
+            not_two_way_basis=facts[player.id].not_two_way_basis,
+            financials=facts[player.id],
         )
         if move["from_team_id"] in contexts:
             contexts[move["from_team_id"]].outgoing.append(asset)
@@ -241,4 +247,5 @@ def build_trade_context(
         params=params,
         teams=[contexts[tid] for tid in team_ids],
         contract_provider_configured=get_contract_provider() is not None,
+        roster_provisional=resolver.roster_is_provisional(db, season),
     )
