@@ -1,7 +1,8 @@
 """R8: the new data-quality checks, media-rights metadata, and the additive migration."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
+import pytest
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
@@ -27,7 +28,10 @@ def _checks(db) -> dict[str, list[dict]]:
 
 
 class TestR8DataQualityChecks:
-    def test_a_stale_dataset_is_flagged_with_its_age(self, db, cap_params):
+    def test_a_stale_dataset_is_flagged_with_its_age(self, db, cap_params, league_today):
+        # The fixture roster is a 2025-26 one: live, so it can go stale, until the statistics
+        # roll over to 2026-27 on 3 Nov 2026. Pin a date before that rather than read the clock.
+        league_today(date(2026, 10, 18))
         team = make_team(db, 1, "AAA")
         make_player(db, 1, "One", team)
         for entry in db.query(RosterEntry):
@@ -35,6 +39,20 @@ class TestR8DataQualityChecks:
         db.commit()
         issue = _checks(db)["stale_dataset"][0]
         assert "rosters" in issue["message"] and "89 days" in issue["message"]
+
+    @pytest.mark.parametrize("day", [date(2026, 11, 2), date(2026, 11, 3)])
+    def test_the_statistics_rollover_does_not_silence_a_stale_league_season_roster(
+        self, db, cap_params, league_today, day
+    ):
+        """Rosters follow the league year (2026-27 from 1 July), not the statistics clock."""
+        league_today(day)
+        team = make_team(db, 1, "AAA")
+        make_player(db, 1, "One", team, season="2026-27")
+        for entry in db.query(RosterEntry):
+            entry.source_retrieved_at = datetime.now(UTC) - timedelta(days=89)
+        db.commit()
+        issues = _checks(db).get("stale_dataset", [])
+        assert any("rosters" in i["message"] and "89 days" in i["message"] for i in issues)
 
     def test_a_fresh_dataset_raises_nothing(self, db, cap_params):
         team = make_team(db, 1, "AAA")

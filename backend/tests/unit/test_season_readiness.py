@@ -26,6 +26,7 @@ from app.canonical.calendar import (
     schedule_for,
     season_context,
     state_of_scope,
+    today_in_league,
 )
 from app.canonical.provenance import Freshness, source_meta_from_aggregate
 from app.canonical.rosters import roster_as_of
@@ -603,10 +604,11 @@ class TestDatasetStatusOverTime:
         assert not ds.needs_attention
 
     def test_while_the_tools_read_the_prior_season_the_league_season_is_reported_beside_it(
-        self, db: Session
+        self, db: Session, league_today
     ):
         from app.api.v1.provenance import get_freshness
 
+        league_today(date(2026, 10, 18))
         _seed_league(db, at(2026, 7, 21))
         body = get_freshness(db)
         assert body["season"]["analysis_season"] == "2025-26"
@@ -637,6 +639,67 @@ class TestDatasetStatusOverTime:
         assert check["present"] is False and check["league_year"] == "2027-28"
         assert check["configured_cap_league_year"] == get_settings().cap_league_year
         assert "cap_parameters_for_league_year" in report["missing_before_rollover"] or report["ready"] is False
+
+
+# ------------------------------------------------ the 3 November 2026 statistics rollover boundary
+
+
+class TestTheRolloverBoundary:
+    """The tools move to 2026-27 statistics on Eastern 3 Nov 2026, whatever date the suite runs on."""
+
+    @pytest.mark.parametrize(
+        ("instant", "league_day", "analysis"),
+        [
+            (datetime(2026, 11, 3, 4, 59, 59, tzinfo=UTC), date(2026, 11, 2), "2025-26"),  # 23:59:59 EST
+            (datetime(2026, 11, 3, 5, 0, 0, tzinfo=UTC), date(2026, 11, 3), "2026-27"),  # 00:00:00 EST
+        ],
+    )
+    def test_the_rollover_falls_at_eastern_midnight_not_at_utc_midnight(
+        self, instant, league_day, analysis
+    ):
+        assert today_in_league(instant) == league_day
+        assert season_context(today_in_league(instant)).analysis_season.label == analysis
+
+    @pytest.mark.parametrize(
+        ("day", "analysis", "baseline"),
+        [(date(2026, 11, 2), "2025-26", True), (date(2026, 11, 3), "2026-27", False)],
+    )
+    def test_the_freshness_report_follows_the_pinned_date_either_side_of_the_rollover(
+        self, db: Session, league_today, monkeypatch, day, analysis, baseline
+    ):
+        from app.api.v1.provenance import get_freshness
+
+        monkeypatch.delenv("CURRENT_SEASON", raising=False)  # derive the season from the calendar
+        league_today(day)
+        _seed_league(db, at(2026, 7, 21))
+        body = get_freshness(db)
+        assert body["season"]["as_of"] == day.isoformat()
+        assert body["season"]["analysis_season"] == analysis
+        assert body["season"]["analysis_is_baseline"] is baseline
+        assert body["datasets"]["player_stats"]["season"] == analysis
+        assert ("league_season_datasets" in body) is baseline
+
+    def test_a_pinned_date_leaves_no_app_module_on_the_real_clock(self, league_today):
+        import sys
+
+        import app.api.v1.provenance  # noqa: F401
+        import app.services.data_provenance  # noqa: F401
+        from app.canonical import calendar
+
+        def holders() -> set[str]:
+            return {
+                name
+                for name, module in list(sys.modules.items())
+                if module is not None
+                and (name == "app" or name.startswith("app."))
+                and any(value is real for value in list(vars(module).values()))
+            }
+
+        real = calendar.today_in_league
+        assert {"app.canonical.calendar", "app.api.v1.provenance", "app.services.data_provenance"} <= holders()
+        league_today(date(2026, 10, 18))
+        assert holders() == set()
+        assert calendar.today_in_league() == date(2026, 10, 18)
 
 
 # ----------------------------------------------------------------- rosters across the rollover

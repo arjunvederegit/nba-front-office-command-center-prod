@@ -5,7 +5,7 @@ invariant that outlives it: NBA freshness is a property of when NBA.com data was
 *retrieved*, never of when some job *finished*.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy.orm import Session
@@ -23,8 +23,10 @@ def _nba_tables(health: dict) -> dict[str, dict]:
 
 
 @pytest.fixture()
-def stale_nba_data(db: Session) -> Team:
+def stale_nba_data(db: Session, league_today) -> Team:
     """NBA data retrieved six days ago, plus a local-file job that succeeded seconds ago."""
+    # 2025-26 fixture roster: live until the statistics roll over on 3 Nov 2026, so pin a date before it.
+    league_today(date(2026, 10, 18))
     now = datetime.now(UTC)
     long_ago = now - timedelta(days=6)
     team = Team(
