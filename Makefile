@@ -25,6 +25,30 @@ E2E_DB ?= $(CURDIR)/backend/rosterlab-e2e.db
 help:
 	@grep -E '^[a-z0-9][a-z0-9-]*:' Makefile | sed 's/:.*//' | sort -u
 
+# --- APPLY gate -------------------------------------------------------------------------
+# Every target that can write to or delete from a database (activate-provider-data,
+# purge-fixtures) is a dry run unless APPLY is EXACTLY the string 1. GNU Make's `if` function
+# is true for any non-empty value, so testing APPLY with it (the previous flag expression)
+# also applied for APPLY=0, false or no.
+#
+#   unset, empty, 0  -> dry run            1 -> --apply
+#   anything else    -> refused with exit status 2 before any command of the target runs
+#
+# APPLY is read with $(value APPLY): it is never expanded, never put into a shell command and
+# never trimmed or split into words, so "1 ", "0 1" and "$(shell ...)" are plain wrong values.
+# The comparison is an exact one: "x<value>x" occurs inside "x<expected>x" only when the two
+# strings are identical. Make itself drops leading whitespace from a command-line value before
+# the Makefile sees it (`APPLY=" 1"` reads as `1`); every other whitespace form is refused.
+# Keep this block below `help`: the first rule in the file is Make's default goal.
+apply-is = $(findstring x$(value APPLY)x,x$(1)x)
+apply-valid = $(or $(call apply-is,),$(call apply-is,0),$(call apply-is,1))
+apply-flag = $(if $(call apply-is,1),--apply)
+
+.PHONY: _apply-guard
+_apply-guard:
+	$(if $(apply-valid),,$(error APPLY must be unset, empty, 0 or 1 (got '$(value APPLY)'). Only APPLY=1 applies; unset, empty and 0 are dry runs. Nothing was run))
+	@:
+
 setup: ## Create backend venv, install backend + frontend dependencies
 	python3.12 -m venv $(BACKEND)/.venv 2>/dev/null || python3.11 -m venv $(BACKEND)/.venv
 	$(PIP) install --upgrade pip
@@ -90,9 +114,9 @@ preview-verify: ## Check the preview snapshot against its recorded checksum (rea
 r93a-readiness: ## R9.3A read-only inventory of what the tools can serve, by evidence class (uses DATABASE_URL)
 	cd $(BACKEND) && .venv/bin/python -m app.cli r93a-readiness
 
-activate-provider-data: ## R9.3A copy additive provider data from a verified DB into DATABASE_URL's DB: make activate-provider-data SOURCE=/path/preview.db [APPLY=1] [BACKUP_DIR=dir] (dry run unless APPLY=1)
+activate-provider-data: _apply-guard ## R9.3A copy additive provider data from a verified DB into DATABASE_URL's DB: make activate-provider-data SOURCE=/path/preview.db [APPLY=1] [BACKUP_DIR=dir] (dry run unless APPLY=1; unset, empty or 0 is a dry run, any other value is refused)
 	@test -n "$(SOURCE)" || (echo "usage: make activate-provider-data SOURCE=<preview db> [APPLY=1] [BACKUP_DIR=dir]  (DATABASE_URL names the target)"; exit 2)
-	cd $(BACKEND) && .venv/bin/python -m app.cli provider-data-activate --source $(SOURCE) $(if $(APPLY),--apply,) $(if $(BACKUP_DIR),--backup-dir $(BACKUP_DIR),)
+	cd $(BACKEND) && .venv/bin/python -m app.cli provider-data-activate --source $(SOURCE) $(apply-flag) $(if $(BACKUP_DIR),--backup-dir $(BACKUP_DIR),)
 
 candidates: ## List candidate and rejected model versions
 	cd $(BACKEND) && .venv/bin/python -m app.cli candidates
@@ -134,8 +158,8 @@ refresh-balldontlie: ## Ingest BALLDONTLIE data (WHAT=identities|contracts|injur
 balldontlie-evaluate: ## Run the trial evaluation (needs a key; REPLAY=<dir> re-analyses recorded responses)
 	cd $(BACKEND) && .venv/bin/python -m app.cli balldontlie-evaluate $(if $(REPLAY),--replay $(REPLAY),) $(if $(RESUME),--resume $(RESUME),) $(if $(BUDGET),--budget $(BUDGET),) $(if $(ONLY),--only $(ONLY),) $(if $(SEASON),--season $(SEASON),) $(if $(FORCE),--force,)
 
-purge-fixtures: ## List test-run leftovers in the dev DB (add APPLY=1 to delete)
-	cd $(BACKEND) && .venv/bin/python -m app.cli purge-fixtures $(if $(APPLY),--apply,)
+purge-fixtures: _apply-guard ## List test-run leftovers in the dev DB (add APPLY=1 to delete; unset, empty or 0 is a dry run, any other value is refused)
+	cd $(BACKEND) && .venv/bin/python -m app.cli purge-fixtures $(apply-flag)
 
 seed-demo: ## Build a DEDICATED e2e database from the synthetic demo league
 	rm -f "$(E2E_DB)"
