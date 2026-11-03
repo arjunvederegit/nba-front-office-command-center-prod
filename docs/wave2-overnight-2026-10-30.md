@@ -53,10 +53,11 @@ All backend runs went through a guarded launcher (`env -i`, in-memory `DATABASE_
 | Comparison + scenario + trade-atomicity + `test_api.py` after fixes (`green3`) | **38 passed** |
 | `test_api.py` + `test_fixture_isolation.py` | 27 passed |
 | `ruff check`, `ruff format --check` on the four touched files; `mypy app/api/v1/comparisons.py` | clean |
-| Full `tests/integration`, new branch (`integ2`) | 148 passed, 14 skipped, **4 failed** |
-| Full `tests/integration`, unmodified tip `664c4b2` (`integ_tip`, read-only run) | 142 passed, 14 skipped, **the same 4 failed** |
+| Full `tests/integration`, new branch, mis-pinned launcher (`integ2`) | 148 passed, 14 skipped, 4 failed (launcher artefact, below) |
+| Full `tests/integration`, unmodified tip `664c4b2`, mis-pinned launcher (`integ_tip`, read-only run) | 142 passed, 14 skipped, the same 4 failed |
+| Full `tests/integration`, new branch, corrected launcher (`integ3`) | **152 passed, 14 skipped, 0 failed** |
 
-**The 4 failures are pre-existing, not caused by these commits** (identical set at `664c4b2`): three in `test_r8_cross_tool_consistency.py::TestToolsStayConsistentAcrossTheSeasonRollover` (`test_the_traded_player_is_on_one_team_everywhere_and_keeps_last_seasons_line`, `test_the_rookie_is_a_member_with_no_history`, `test_before_the_stats_flip_the_roster_is_already_2026_27_and_the_statistics_are_not`) and `test_r93a_round4_regressions.py::test_an_older_schema_does_not_turn_cap_outlook_into_a_500`. CI passed the whole suite on 2026-10-24, so these are **suspected** to depend on today's date (2026-11-02, a day before the documented 2026-11-03 stats rollover) or on the launcher's pinned `CURRENT_SEASON`/`ROSTER_SEASON`/`CAP_LEAGUE_YEAR`. I did not investigate further; the cause is **unconfirmed**.
+**The 4 failures were caused by my test launcher, not by the code.** The launcher (copied from the W2.3-era one) pinned `ROSTER_SEASON=2025-26`. The rollover tests (`test_r8_cross_tool_consistency.py::TestToolsStayConsistentAcrossTheSeasonRollover`, three tests) and `test_r93a_round4_regressions.py::test_an_older_schema_does_not_turn_cap_outlook_into_a_500` expect the default, where the roster season follows the league year (`2026-27` since 1 July 2026; `config/__init__.py:224`). With the pin removed (`CURRENT_SEASON=2025-26`, `CAP_LEAGUE_YEAR=2026-27`, no `ROSTER_SEASON`): the 40 tests in those two files pass at the unmodified tip `664c4b2`, and the full `tests/integration` directory on this branch gives **152 passed, 14 skipped, 0 failed** (`integ3`). It is not date-dependent. The earlier 148/4 and 142/4 figures above came from the mis-pinned launcher.
 
 ## 5. Not executed, and why
 - Frontend tests: no frontend file changed. The tip's 646-pass result is from `W2_9`, not re-run.
@@ -82,7 +83,6 @@ All backend runs went through a guarded launcher (`env -i`, in-memory `DATABASE_
 - Not verified in a real browser: the evaluator page, failure notice and reveal behaviour.
 - `docs/resume-bullets.md` uses "validated impact modeling".
 - Legacy `fillna(0.0)` in `analytics/impact.py` and `analytics/features.py` (flagged in CLAUDE.md; reported, not changed).
-- 4 integration tests fail under the guarded launcher at today's date, at `664c4b2` and on this branch alike (see §4); cause unconfirmed.
 - Wave 2 is **not** declared complete: the page was never mounted, no browser/build run, nothing published, and the two new commits have no bundle.
 
 ## 9. Thesis data-readiness (read-only; no model built)
