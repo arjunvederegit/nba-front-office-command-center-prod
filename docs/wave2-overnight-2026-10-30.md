@@ -167,3 +167,6 @@ Commands, run from `backend/`: `pytest -c pyproject.toml tests/unit -q -p no:ran
 - Nothing from Wave 1 or Wave 2 is pushed or merged, no CI has run on this branch, and the backups are on one volume.
 
 **Assessment: Ready for owner review.** The scoped changes are preserved, independently tested, and show no failures; the gaps above are verification limits, not known defects. Wave 2 is not complete.
+
+## 14. Follow-up
+The independent closure audit, adversarial review of the two fixes, requirement-by-requirement status and the integration procedure are in [wave2-closure-audit-2026-11-02.md](wave2-closure-audit-2026-11-02.md). Where it differs from this report (notably Issue D, which it classes as partially complete), the closure audit is the later, more conservative assessment.
