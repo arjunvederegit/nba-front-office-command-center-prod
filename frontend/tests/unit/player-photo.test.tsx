@@ -46,7 +46,10 @@ const img = () => screen.getByRole("img") as HTMLImageElement;
 const source = () => img().getAttribute("data-headshot-source");
 
 beforeEach(() => {
+  // The official source is opt-in: these tests stub the opt-in (and fetch, via installFetch), so no
+  // test ever makes a real request to the NBA CDN. Tests of the default clear the flag explicitly.
   vi.stubEnv("NODE_ENV", "development");
+  vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", "on");
   resetFailedHeadshots();
 });
 afterEach(() => {
@@ -197,7 +200,7 @@ describe("historical views", () => {
   });
 });
 
-describe("official source off (production, test, or opted out) — existing behaviour preserved", () => {
+describe("official source off (production, test, or not opted in) — existing behaviour preserved", () => {
   for (const env of ["production", "test"] as const) {
     it(`NODE_ENV=${env}: shows the local photo and makes no official or probe request`, async () => {
       vi.stubEnv("NODE_ENV", env);
@@ -219,11 +222,20 @@ describe("official source off (production, test, or opted out) — existing beha
     });
   }
 
-  it("opt-out flag in development", async () => {
-    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", "off");
+  it("development without the opt-in flag (the default): local photo, no probe, no CDN image", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", undefined);
     installFetch({ local: [2544], official: [2544] });
     mount(<PlayerPhoto nbaPlayerId={2544} name="LeBron James" size={30} />);
     await waitFor(() => expect(source()).toBe("local"));
+    expect(calls.some((c) => c.includes("headshot-status"))).toBe(false);
+    expect(document.querySelector('img[src*="cdn.nba.com"]')).toBeNull();
+  });
+
+  it("development with the flag set to anything but `on`: still off", async () => {
+    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", "off");
+    installFetch({ local: [], official: [2544] });
+    mount(<PlayerPhoto nbaPlayerId={2544} name="LeBron James" size={64} />);
+    await waitFor(() => expect(source()).toBe("none"));
     expect(calls.some((c) => c.includes("headshot-status"))).toBe(false);
   });
 

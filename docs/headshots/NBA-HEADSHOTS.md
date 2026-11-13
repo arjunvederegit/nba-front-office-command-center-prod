@@ -1,7 +1,14 @@
-# Official NBA headshots (development-only)
+# Official NBA headshots (opt-in, development-only, off by default)
 
-Branch `feat/nba-headshots`, from the R9.3A tip (`835c463`). Frontend only: no backend, migration,
-database or environment-secret change. Not merged, not pushed.
+Built on the R9.3A tip (`835c463`). Frontend only: no backend, migration, database or
+environment-secret change.
+
+> **Unresolved usage rights.** Pivot has no licence or written permission to use NBA photographs.
+> The official source is therefore **off by default**. It runs only under `next dev` **and** only
+> after an explicit `NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS=on`; when on, the developer's own browser
+> requests images from `cdn.nba.com`. Do not switch it on for tests, demos, screenshots or any shared
+> or deployed environment. Production builds can never use it. Until permission is obtained this
+> limitation stands, and Pivot's shipped behaviour is the local photo or the neutral placeholder.
 
 ## What it does
 
@@ -65,15 +72,19 @@ past season's portrait: `precedent.tsx` (historical trades) renders no player ph
 A public CDN URL is not a licence to redistribute NBA photographs.
 
 * `officialHeadshotsEnabled()` is true only when `process.env.NODE_ENV === "development"` (inlined by
-  Next at build time, so a production bundle contains a constant `false`) and
-  `NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS !== "off"`. Test builds are off too.
+  Next at build time, so a production bundle contains a constant `false`) **and**
+  `NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS === "on"` (exact value; unset or anything else is off).
+  Test builds are off too. **The default is off**: nothing is requested from the NBA CDN unless a
+  developer opts in.
 * The probe route answers **404** whenever the gate is off — a deployed Pivot cannot be used to reach
   the CDN.
 * Production behaviour is the pre-change behaviour: local photo or silhouette; no probe request, no
   CDN request (verified on a production build, see QA).
 * The CDN host string still exists in the production bundle as a dead branch; no request is made.
-* Screenshots of this work contain NBA portraits and are therefore **not committed**.
-  They are in `/Users/arjunvedere/pivot-headshots-qa-evidence/` (local only).
+* Screenshots of this work contain NBA portraits and are therefore **not committed** (kept locally,
+  outside the repository).
+* Automated tests never reach the CDN: they run with `NODE_ENV=test`, and the tests that exercise the
+  official path stub `fetch`. Do not enable the flag for demos or QA runs.
 
 Before enabling in production: obtain written NBA/licensor permission, then replace the gate (and
 decide whether to proxy/cache under that licence).
@@ -100,7 +111,7 @@ decide whether to proxy/cache under that licence).
 `frontend/tests/unit/`: `headshots.test.ts` (URL format, invalid ids, tier, srcset, chain, historical,
 gate), `headshot-probe.test.ts` (placeholder detection with real captured headers, cache/TTL, failure
 handling, id parsing, route 404 in production), `player-photo.test.tsx` (component: official → local →
-placeholder, no loops, id change, historical, production/test/opt-out preserve existing behaviour,
+placeholder, no loops, id change, historical, production/test/unset-flag preserve existing behaviour,
 single batched probe), `headshot-integration.test.ts` (Next config has no NBA image/rewrite entry, one
 place builds URLs, every consumer uses `PlayerPhoto` with an NBA id — a new consumer must be added to
 the list).
@@ -110,13 +121,14 @@ the list).
 ```bash
 # backend (example: a COPY of a database, never your live one)
 cd backend && DATABASE_URL=sqlite:///<copy>.db PYTHONPATH=$PWD uvicorn app.main:app --port 8097
-# frontend, development mode (official headshots on)
+# frontend, development mode (default: official headshots OFF, local photo or placeholder)
 cd frontend && NEXT_PUBLIC_API_URL=http://localhost:8097 npx next dev -p 3097
+# only if you accept the rights limitation above, add NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS=on to the command
 ```
 
-Official headshots appear at `http://localhost:3097/player-explorer` etc. Add
-`NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS=off` to compare with the old behaviour. `next build && next start`
-always uses the old behaviour.
+With the flag unset, `http://localhost:3097/player-explorer` etc. show the local photo or the
+placeholder. With `NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS=on`, official headshots appear and your browser
+requests them from the NBA CDN. `next build && next start` always uses the old behaviour.
 
 ## Revert
 

@@ -129,8 +129,19 @@ describe("the route", () => {
     fetchSpy.mockRestore();
   });
 
-  it("answers per-id availability in development", async () => {
+  it("answers 404 in development unless the developer opted in, and makes no CDN request", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", undefined);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const res = await call("?ids=2544");
+    expect(res.status).toBe(404);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("answers per-id availability in development once opted in (fetch is stubbed: no real request)", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", "on");
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation(async (input) => respond(String(input).includes("/2544.") ? REAL : PLACEHOLDER));

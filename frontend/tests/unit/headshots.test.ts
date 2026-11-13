@@ -142,16 +142,31 @@ describe("rights gate", () => {
     expect(officialHeadshotsEnabled()).toBe(false);
   });
 
-  it("is on in development unless explicitly switched off", () => {
+  it("is OFF by default in development: nothing is requested unless a developer opts in", () => {
     vi.stubEnv("NODE_ENV", "development");
-    expect(officialHeadshotsEnabled()).toBe(true);
-    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", "off");
+    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", undefined);
     expect(officialHeadshotsEnabled()).toBe(false);
   });
 
-  it("cannot be forced on in production by the opt-out flag's absence or any other value", () => {
-    vi.stubEnv("NODE_ENV", "production");
+  it("is on in development only for the exact opt-in value", () => {
+    vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", "on");
-    expect(officialHeadshotsEnabled()).toBe(false);
+    expect(officialHeadshotsEnabled()).toBe(true);
+  });
+
+  it("stays off in development for every other flag value", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    for (const value of ["off", "", "ON", "On", "true", "1", "yes", " on", "on "]) {
+      vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", value);
+      expect(officialHeadshotsEnabled(), JSON.stringify(value)).toBe(false);
+    }
+  });
+
+  it("cannot be forced on in production or test by the opt-in flag", () => {
+    vi.stubEnv("NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS", "on");
+    for (const env of ["production", "test"]) {
+      vi.stubEnv("NODE_ENV", env);
+      expect(officialHeadshotsEnabled(), env).toBe(false);
+    }
   });
 });

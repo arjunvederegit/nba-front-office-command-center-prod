@@ -9,8 +9,9 @@
  * When neither has a usable image the caller draws its neutral silhouette.
  *
  * RIGHTS: a public CDN URL is not a licence to redistribute NBA photographs. The official source is
- * therefore development-only (`officialHeadshotsEnabled`) and compiles to "off" in a production
- * build, which leaves the local source — Pivot's existing public behaviour — exactly as it was.
+ * therefore opt-in and development-only (`officialHeadshotsEnabled`): off unless explicitly switched
+ * on, and it compiles to "off" in a production build, which leaves the local source — Pivot's
+ * existing public behaviour — exactly as it was.
  *
  * Swapping the preferred provider later means editing `OFFICIAL_PROVIDER` below; no consumer
  * passes a URL, so none of them changes.
@@ -77,14 +78,16 @@ export function officialHeadshotUrl(id: unknown, tier: HeadshotTier): string | n
 }
 
 /**
- * The official source is development-only. `process.env.NODE_ENV` is inlined by Next, so a
- * production bundle contains `false` here, not a runtime check an environment variable could flip.
- * Tests run with NODE_ENV "test" and so never reach the network unless they opt in by stubbing it.
- * `NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS=off` turns it off in development too.
+ * The official source is OFF by default and development-only. It needs BOTH `next dev` and an
+ * explicit `NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS=on`; any other value, or none, leaves it off.
+ * `process.env.NODE_ENV` is inlined by Next, so a production bundle contains `false` here, not a
+ * runtime check an environment variable could flip. Tests run with NODE_ENV "test" and so never
+ * reach the network unless they stub both values. NBA reuse rights are NOT cleared: switching this
+ * on makes the developer's own browser request images from the NBA CDN.
  */
 export function officialHeadshotsEnabled(): boolean {
   if (process.env.NODE_ENV !== "development") return false;
-  return process.env.NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS !== "off";
+  return process.env.NEXT_PUBLIC_PIVOT_OFFICIAL_HEADSHOTS === "on";
 }
 
 export function officialSource(id: unknown, tier: HeadshotTier): HeadshotSource | null {
